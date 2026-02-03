@@ -12,6 +12,12 @@ ArbDesk is a full-stack retail arbitrage workspace for eBay buyers. It provides 
 
 ## Local Development (Docker)
 
+0. Clone the repository:
+   ```bash
+   git clone https://github.com/mshelton110580/retailarb.git
+   cd retailarb
+   ```
+
 1. Copy environment variables:
    ```bash
    cp .env.example .env
