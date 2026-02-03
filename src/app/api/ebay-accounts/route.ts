@@ -1,0 +1,47 @@
+import { NextResponse } from "next/server";
+import { requireRole } from "@/lib/rbac";
+import { prisma } from "@/lib/db";
+import { encrypt } from "@/lib/crypto";
+import { z } from "zod";
+
+const schema = z.object({
+  ebay_username: z.string(),
+  access_token: z.string(),
+  refresh_token: z.string(),
+  expires_in: z.number(),
+  scopes: z.string()
+});
+
+export async function GET() {
+  const auth = await requireRole(["ADMIN", "RECEIVER", "VIEWER"]);
+  if (!auth.ok) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+  }
+  const accounts = await prisma.ebay_accounts.findMany({
+    select: { id: true, ebay_username: true, last_sync_at: true, created_at: true }
+  });
+  return NextResponse.json({ accounts });
+}
+
+export async function POST(req: Request) {
+  const auth = await requireRole(["ADMIN"]);
+  if (!auth.ok || !auth.session?.user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+  }
+  const body = schema.safeParse(await req.json());
+  if (!body.success) {
+    return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+  }
+  const token_expiry = new Date(Date.now() + body.data.expires_in * 1000);
+  const account = await prisma.ebay_accounts.create({
+    data: {
+      owner_user_id: auth.session.user.id,
+      ebay_username: body.data.ebay_username,
+      token_encrypted: encrypt(body.data.access_token),
+      refresh_token_encrypted: encrypt(body.data.refresh_token),
+      token_expiry,
+      scopes: body.data.scopes
+    }
+  });
+  return NextResponse.json({ account });
+}

@@ -1,0 +1,262 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  RECEIVER
+  VIEWER
+}
+
+enum TargetType {
+  AUCTION
+  BIN
+  BEST_OFFER
+}
+
+enum TargetStatus {
+  TARGETED
+  SNIPE_SCHEDULED
+  BID_ATTEMPTED
+  WON
+  LOST_OUTBID
+  ENDED_NO_WIN
+  PURCHASED
+  CANCELED
+  EXPIRED
+}
+
+enum ResolutionState {
+  UNRESOLVED
+  MATCHED
+  DISMISSED
+}
+
+enum ReturnScrapeState {
+  PENDING
+  ACTIVE
+  NEEDS_LOGIN
+  COMPLETE
+  FAILED
+}
+
+model users {
+  id            String     @id @default(cuid())
+  email         String     @unique
+  password_hash String
+  role          UserRole
+  created_at    DateTime   @default(now())
+  audit_logs    audit_log[]
+  ebay_accounts ebay_accounts[]
+  receiving     receiving_scans[] @relation("scanned_by")
+  received_units received_units[]
+}
+
+model ebay_accounts {
+  id                    String   @id @default(cuid())
+  owner_user_id         String
+  ebay_username         String
+  token_encrypted       String
+  refresh_token_encrypted String
+  token_expiry          DateTime
+  scopes                String
+  playwright_state      String?
+  created_at            DateTime @default(now())
+  last_sync_at          DateTime?
+  owner                 users    @relation(fields: [owner_user_id], references: [id])
+  targets               targets[]
+  orders                orders[]
+}
+
+model targets {
+  item_id          String @id
+  ebay_account_id  String?
+  type             TargetType
+  max_snipe_bid    Decimal? @db.Numeric(12, 2)
+  best_offer_amount Decimal? @db.Numeric(12, 2)
+  lead_seconds     Int
+  created_by       String
+  status           TargetStatus
+  status_history   Json
+  notes            String?
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+  ebay_account     ebay_accounts? @relation(fields: [ebay_account_id], references: [id])
+  listing          listings?
+  order_items      order_items[]
+}
+
+model listings {
+  item_id          String @id
+  title            String
+  end_time         DateTime?
+  current_price    Decimal? @db.Numeric(12, 2)
+  shipping_estimate Decimal? @db.Numeric(12, 2)
+  buying_options   Json?
+  raw_json         Json
+  updated_at       DateTime @updatedAt
+  target           targets @relation(fields: [item_id], references: [item_id])
+  lots             lots[]
+  received_units   received_units[]
+  returns          returns[]
+  inr_cases         inr_cases[]
+}
+
+model orders {
+  order_id       String   @id
+  ebay_account_id String
+  purchase_date  DateTime
+  order_status   String
+  totals         Json
+  ship_to_city   String?
+  ship_to_state  String?
+  ship_to_postal String?
+  order_url      String
+  updated_at     DateTime @updatedAt
+  ebay_account   ebay_accounts @relation(fields: [ebay_account_id], references: [id])
+  order_items    order_items[]
+  shipments      shipments[]
+  returns        returns[]
+  inr_cases      inr_cases[]
+}
+
+model order_items {
+  id               String  @id @default(cuid())
+  order_id         String
+  item_id          String
+  title            String
+  qty              Int
+  transaction_price Decimal @db.Numeric(12, 2)
+  shipping_cost    Decimal? @db.Numeric(12, 2)
+  final_price      Decimal? @db.Numeric(12, 2)
+  purchase_date    DateTime
+  order            orders @relation(fields: [order_id], references: [order_id])
+  target           targets? @relation(fields: [item_id], references: [item_id])
+  received_units   received_units[]
+}
+
+model shipments {
+  id               String   @id @default(cuid())
+  order_id         String
+  derived_status   String
+  estimated_min    DateTime?
+  estimated_max    DateTime?
+  scheduled_min    DateTime?
+  scheduled_max    DateTime?
+  delivered_at     DateTime?
+  last_refreshed_at DateTime?
+  order            orders   @relation(fields: [order_id], references: [order_id])
+  tracking_numbers tracking_numbers[]
+}
+
+model tracking_numbers {
+  id             String @id @default(cuid())
+  shipment_id    String
+  carrier        String?
+  tracking_number String
+  status_text    String?
+  last_seen_at   DateTime?
+  shipment       shipments @relation(fields: [shipment_id], references: [id])
+}
+
+model receiving_scans {
+  id                 String @id @default(cuid())
+  scanned_at         DateTime @default(now())
+  scanned_by_user_id String
+  tracking_last8     String
+  resolution_state   ResolutionState
+  notes              String?
+  scanner            users @relation("scanned_by", fields: [scanned_by_user_id], references: [id])
+}
+
+model received_units {
+  id                 String @id @default(cuid())
+  item_id            String
+  order_id           String
+  unit_index         Int
+  condition_status   String
+  received_at        DateTime @default(now())
+  scanned_by_user_id String
+  notes              String?
+  listing            listings @relation(fields: [item_id], references: [item_id])
+  order              orders @relation(fields: [order_id], references: [order_id])
+  scanner            users @relation(fields: [scanned_by_user_id], references: [id])
+  images             unit_images[]
+  lot_units          lot_units[]
+}
+
+model unit_images {
+  id               String @id @default(cuid())
+  received_unit_id String
+  image_path       String
+  created_at       DateTime @default(now())
+  unit             received_units @relation(fields: [received_unit_id], references: [id])
+}
+
+model lots {
+  id                 String @id @default(cuid())
+  item_id            String
+  expected_unit_count Int
+  created_at         DateTime @default(now())
+  listing            listings @relation(fields: [item_id], references: [item_id])
+  units              lot_units[]
+}
+
+model lot_units {
+  id               String @id @default(cuid())
+  lot_id           String
+  unit_index       Int
+  received_unit_id String?
+  lot              lots @relation(fields: [lot_id], references: [id])
+  received_unit    received_units? @relation(fields: [received_unit_id], references: [id])
+}
+
+model returns {
+  id               String @id @default(cuid())
+  order_id         String
+  item_id          String?
+  filed_manually_at DateTime?
+  status_scraped   String?
+  label_pdf_path   String?
+  last_scraped_at  DateTime?
+  next_scrape_at   DateTime?
+  scrape_attempts  Int @default(0)
+  scrape_state     ReturnScrapeState @default(PENDING)
+  notes            String?
+  order            orders @relation(fields: [order_id], references: [order_id])
+  listing          listings? @relation(fields: [item_id], references: [item_id])
+}
+
+model inr_cases {
+  id              String @id @default(cuid())
+  order_id        String
+  item_id         String?
+  filed_manually_at DateTime?
+  status_text     String?
+  notes           String?
+  order           orders @relation(fields: [order_id], references: [order_id])
+  listing         listings? @relation(fields: [item_id], references: [item_id])
+}
+
+model condition_templates {
+  id                      String @id @default(cuid())
+  condition_status        String
+  return_message_template String?
+  created_at              DateTime @default(now())
+}
+
+model audit_log {
+  id            String @id @default(cuid())
+  actor_user_id String?
+  action        String
+  entity_type   String
+  entity_id     String
+  payload_json  Json
+  created_at    DateTime @default(now())
+  actor         users? @relation(fields: [actor_user_id], references: [id])
+}
