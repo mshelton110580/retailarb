@@ -2,13 +2,14 @@ import PageHeader from "@/components/page-header";
 import { prisma } from "@/lib/db";
 import Link from "next/link";
 
-type BucketKey = "in_transit" | "shipped" | "delivered" | "not_checked_in" | "late" | "not_delivered" | "needs_return" | "pending";
+type BucketKey = "in_transit" | "shipped" | "delivered" | "not_checked_in" | "overdue_not_received" | "late" | "not_delivered" | "needs_return" | "pending";
 
-const cardConfig: Array<{ key: BucketKey; label: string; color: string; border: string }> = [
+const cardConfig: Array<{ key: BucketKey; label: string; color: string; border: string; description?: string }> = [
   { key: "in_transit", label: "In Transit", color: "text-blue-400", border: "border-blue-600" },
   { key: "shipped", label: "Shipped", color: "text-cyan-400", border: "border-cyan-600" },
   { key: "delivered", label: "Delivered", color: "text-green-400", border: "border-green-600" },
   { key: "not_checked_in", label: "Delivered — Not Checked In", color: "text-yellow-400", border: "border-yellow-600" },
+  { key: "overdue_not_received", label: "Overdue — Not Received", color: "text-amber-400", border: "border-amber-600", description: "Tracking uploaded, past estimated delivery, no delivery confirmation" },
   { key: "needs_return", label: "Needs Return", color: "text-red-400", border: "border-red-600" },
   { key: "late", label: "Late", color: "text-orange-400", border: "border-orange-600" },
   { key: "not_delivered", label: "Not Delivered", color: "text-red-400", border: "border-red-500" },
@@ -54,18 +55,41 @@ export default async function InventoryPage({
     shipped: [],
     delivered: [],
     not_checked_in: [],
+    overdue_not_received: [],
     late: [],
     not_delivered: [],
     needs_return: [],
     pending: []
   };
 
+  const now = new Date();
+  // Default transit window: if no estimated_max, use purchase_date + 7 days as expected delivery
+  const DEFAULT_TRANSIT_DAYS = 7;
+
   for (const shipment of shipments) {
     const orderId = shipment.order_id;
-    // Check needs_return first (checked in but bad condition)
+    const hasTracking = (shipment.tracking_numbers?.length ?? 0) > 0;
+    const notDelivered = !shipment.delivered_at;
+
+    // Check needs_return (checked in but bad condition)
     if (needsReturnOrderIds.has(orderId)) {
       buckets.needs_return.push(shipment);
     }
+
+    // Check overdue_not_received: has tracking, no delivery, past expected date
+    if (hasTracking && notDelivered) {
+      let expectedBy: Date | null = null;
+      if (shipment.estimated_max) {
+        expectedBy = new Date(shipment.estimated_max);
+      } else if (shipment.order?.purchase_date) {
+        expectedBy = new Date(shipment.order.purchase_date);
+        expectedBy.setDate(expectedBy.getDate() + DEFAULT_TRANSIT_DAYS);
+      }
+      if (expectedBy && now > expectedBy) {
+        buckets.overdue_not_received.push(shipment);
+      }
+    }
+
     switch (shipment.derived_status) {
       case "delivered":
         buckets.delivered.push(shipment);
@@ -151,6 +175,12 @@ export default async function InventoryPage({
                     )}
                     {shipment.estimated_max && !shipment.delivered_at && (
                       <span>Est. delivery: {shipment.estimated_max.toISOString().slice(0, 10)}</span>
+                    )}
+                    {!shipment.delivered_at && !shipment.estimated_max && shipment.order?.purchase_date && (
+                      <span>Purchased: {shipment.order.purchase_date.toISOString().slice(0, 10)} (est. +7 days)</span>
+                    )}
+                    {shipment.order?.purchase_date && (
+                      <span>Days since purchase: {Math.floor((Date.now() - new Date(shipment.order.purchase_date).getTime()) / (1000 * 60 * 60 * 24))}</span>
                     )}
                   </div>
                 </div>
