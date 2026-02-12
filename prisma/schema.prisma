@@ -154,6 +154,10 @@ model shipments {
   checked_in_at    DateTime?
   checked_in_by    String?
   last_refreshed_at DateTime?
+  expected_units   Int      @default(0)
+  scanned_units    Int      @default(0)
+  scan_status      String   @default("pending")
+  is_lot           Boolean  @default(false)
   order            orders   @relation(fields: [order_id], references: [order_id])
   tracking_numbers tracking_numbers[]
   checked_in_user  users?   @relation("shipment_checked_in_by", fields: [checked_in_by], references: [id])

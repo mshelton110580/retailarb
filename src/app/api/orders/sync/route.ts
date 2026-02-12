@@ -157,6 +157,9 @@ export async function POST(req: Request) {
           purchaseDate: order.createdTime ?? null
         });
 
+        // Calculate expected units from order transactions
+        const totalExpectedUnits = order.transactions.reduce((sum: number, txn: any) => sum + (parseInt(String(txn.qty)) || 1), 0);
+
         // Upsert shipment - use order_id to find existing
         const existingShipment = await prisma.shipments.findFirst({
           where: { order_id: String(order.orderId) }
@@ -173,7 +176,8 @@ export async function POST(req: Request) {
               scheduled_min: order.delivery.scheduledMin ? new Date(order.delivery.scheduledMin) : null,
               scheduled_max: order.delivery.scheduledMax ? new Date(order.delivery.scheduledMax) : null,
               delivered_at: order.delivery.actualDelivery ? new Date(order.delivery.actualDelivery) : null,
-              last_refreshed_at: new Date()
+              last_refreshed_at: new Date(),
+              expected_units: totalExpectedUnits
             }
           });
           shipmentId = existingShipment.id;
@@ -187,7 +191,8 @@ export async function POST(req: Request) {
               scheduled_min: order.delivery.scheduledMin ? new Date(order.delivery.scheduledMin) : null,
               scheduled_max: order.delivery.scheduledMax ? new Date(order.delivery.scheduledMax) : null,
               delivered_at: order.delivery.actualDelivery ? new Date(order.delivery.actualDelivery) : null,
-              last_refreshed_at: new Date()
+              last_refreshed_at: new Date(),
+              expected_units: totalExpectedUnits
             }
           });
           shipmentId = newShipment.id;

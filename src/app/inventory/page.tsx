@@ -12,7 +12,9 @@ type BucketKey =
   | "overdue_not_received"
   | "delivered_not_checked_in"
   | "cancelled"
-  | "needs_return";
+  | "needs_return"
+  | "missing_units"
+  | "check_quantity";
 
 const cardConfig: Array<{
   key: BucketKey;
@@ -35,6 +37,8 @@ const cardConfig: Array<{
   { key: "never_shipped", label: "Never Shipped", color: "text-rose-400", border: "border-rose-600", description: "No tracking info uploaded (excludes cancelled)", section: "action" },
   { key: "overdue_not_received", label: "Overdue — Not Received", color: "text-amber-400", border: "border-amber-600", description: "Has tracking, past estimated delivery, no delivery confirmation", section: "action" },
   { key: "needs_return", label: "Needs Return", color: "text-red-400", border: "border-red-600", description: "Checked in with bad condition", section: "action" },
+  { key: "missing_units", label: "Missing Units", color: "text-orange-400", border: "border-orange-600", description: "Scanned fewer units than expected quantity", section: "action" },
+  { key: "check_quantity", label: "Check Quantity (Lots)", color: "text-fuchsia-400", border: "border-fuchsia-600", description: "More units scanned than listed qty — verify lot count", section: "action" },
 ];
 
 export default async function InventoryPage({
@@ -80,7 +84,9 @@ export default async function InventoryPage({
     cancelled: [],
     never_shipped: [],
     overdue_not_received: [],
-    needs_return: []
+    needs_return: [],
+    missing_units: [],
+    check_quantity: []
   };
 
   const now = new Date();
@@ -144,6 +150,16 @@ export default async function InventoryPage({
     // Needs return: checked in with bad condition
     if (needsReturnOrderIds.has(orderId)) {
       buckets.needs_return.push(shipment);
+    }
+
+    // Missing units: scan started but fewer units scanned than expected
+    if (shipment.scan_status === "partial" && shipment.scanned_units < shipment.expected_units) {
+      buckets.missing_units.push(shipment);
+    }
+
+    // Check quantity (lots): more units scanned than listed qty
+    if (shipment.is_lot || shipment.scan_status === "check_quantity") {
+      buckets.check_quantity.push(shipment);
     }
   }
 
@@ -243,6 +259,27 @@ export default async function InventoryPage({
                       {item.title} (x{item.qty}) — ${Number(item.transaction_price).toFixed(2)}
                     </p>
                   ))}
+                  {/* Scan progress */}
+                  {shipment.scanned_units > 0 && (
+                    <div className="mt-2">
+                      <div className="flex items-center gap-2">
+                        <div className="h-1.5 flex-1 rounded-full bg-slate-800 overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${
+                              shipment.is_lot ? 'bg-fuchsia-500' :
+                              shipment.scanned_units >= shipment.expected_units ? 'bg-green-500' : 'bg-yellow-500'
+                            }`}
+                            style={{ width: `${Math.min(100, shipment.expected_units > 0 ? (shipment.scanned_units / shipment.expected_units) * 100 : 100)}%` }}
+                          />
+                        </div>
+                        <span className="text-xs text-slate-400 whitespace-nowrap">
+                          {shipment.is_lot
+                            ? `Lot: ${shipment.scanned_units} scanned (listed: ${shipment.expected_units})`
+                            : `${shipment.scanned_units}/${shipment.expected_units} units scanned`}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                   <div className="mt-1 flex gap-3 text-xs text-slate-500">
                     {shipment.tracking_numbers?.map((tn) => (
                       <span key={tn.id}>{tn.carrier}: {tn.tracking_number}</span>

@@ -53,82 +53,167 @@ export async function POST(req: Request) {
     }
   });
 
-  // If matched, create received_units for each order item and update shipment status
-  const receivedUnits: any[] = [];
-  if (matches.length > 0) {
-    for (const match of matches) {
-      const shipment = match.shipment;
-      if (!shipment?.order) continue;
+  if (matches.length === 0) {
+    return NextResponse.json({
+      scan,
+      resolution: "UNRESOLVED",
+      matchCount: 0,
+      message: "No matching tracking number found"
+    });
+  }
 
-      const orderItems = shipment.order.order_items ?? [];
+  // Process each matched shipment
+  const results: any[] = [];
 
-      for (const item of orderItems) {
-        // Check if this item has already been received for this order
-        const existing = await prisma.received_units.findFirst({
-          where: {
-            order_id: shipment.order_id,
-            item_id: item.item_id
-          }
-        });
+  for (const match of matches) {
+    const shipment = match.shipment;
+    if (!shipment?.order) continue;
 
-        if (!existing) {
-          try {
-            // Ensure target exists (listings FK requires it)
-            const existingTarget = await prisma.targets.findUnique({ where: { item_id: item.item_id } });
-            if (!existingTarget) {
-              await prisma.targets.create({
-                data: {
-                  item_id: item.item_id,
-                  type: TargetType.BIN,
-                  lead_seconds: 0,
-                  created_by: auth.session!.user!.id,
-                  status: TargetStatus.PURCHASED,
-                  status_history: [{ status: "PURCHASED", at: new Date().toISOString() }],
-                  ebay_account_id: shipment.order?.ebay_account_id ?? null
-                }
-              });
-            }
+    const orderItems = shipment.order.order_items ?? [];
 
-            // Ensure listing exists (received_units FK requires it)
-            const existingListing = await prisma.listings.findUnique({ where: { item_id: item.item_id } });
-            if (!existingListing) {
-              await prisma.listings.create({
-                data: {
-                  item_id: item.item_id,
-                  title: item.title ?? "Unknown",
-                  raw_json: {}
-                }
-              });
-            }
+    // Calculate expected units from order items qty
+    const expectedUnits = orderItems.reduce((sum, item) => sum + item.qty, 0);
 
-            const unit = await prisma.received_units.create({
-              data: {
-                item_id: item.item_id,
-                order_id: shipment.order_id,
-                order_item_id: item.id,
-                unit_index: 1,
-                condition_status: body.data.condition_status,
-                scanned_by_user_id: auth.session.user.id,
-                notes: body.data.notes ?? null
-              }
-            });
-            receivedUnits.push(unit);
-          } catch (err: any) {
-            console.error(`Failed to create received_unit for item ${item.item_id}:`, err.message);
-          }
-        }
+    // Ensure expected_units is set on the shipment
+    if (shipment.expected_units === 0 && expectedUnits > 0) {
+      await prisma.shipments.update({
+        where: { id: shipment.id },
+        data: { expected_units: expectedUnits }
+      });
+      shipment.expected_units = expectedUnits;
+    }
+
+    // Count how many units have already been scanned for this shipment
+    const existingUnits = await prisma.received_units.count({
+      where: { order_id: shipment.order_id }
+    });
+
+    const currentScannedCount = existingUnits;
+    const newUnitIndex = currentScannedCount + 1;
+
+    // Determine which order item this unit belongs to
+    // Walk through items in order, assigning units to items based on qty
+    let targetItem = orderItems[0]; // default to first item
+    let runningCount = 0;
+    for (const item of orderItems) {
+      runningCount += item.qty;
+      if (newUnitIndex <= runningCount) {
+        targetItem = item;
+        break;
       }
+    }
 
-      // Mark shipment as checked in (independent of eBay delivery status)
-      if (!shipment.checked_in_at) {
-        await prisma.shipments.update({
-          where: { id: shipment.id },
+    // Determine if this is a lot situation (scanning beyond expected qty for qty=1 items)
+    const isLot = shipment.expected_units === 1 && currentScannedCount >= 1;
+
+    try {
+      // Ensure target exists (listings FK requires it)
+      const existingTarget = await prisma.targets.findUnique({ where: { item_id: targetItem.item_id } });
+      if (!existingTarget) {
+        await prisma.targets.create({
           data: {
-            checked_in_at: new Date(),
-            checked_in_by: auth.session!.user!.id
+            item_id: targetItem.item_id,
+            type: TargetType.BIN,
+            lead_seconds: 0,
+            created_by: auth.session!.user!.id,
+            status: TargetStatus.PURCHASED,
+            status_history: [{ status: "PURCHASED", at: new Date().toISOString() }],
+            ebay_account_id: shipment.order?.ebay_account_id ?? null
           }
         });
       }
+
+      // Ensure listing exists (received_units FK requires it)
+      const existingListing = await prisma.listings.findUnique({ where: { item_id: targetItem.item_id } });
+      if (!existingListing) {
+        await prisma.listings.create({
+          data: {
+            item_id: targetItem.item_id,
+            title: targetItem.title ?? "Unknown",
+            raw_json: {}
+          }
+        });
+      }
+
+      // Create the received_unit for this scan
+      const unit = await prisma.received_units.create({
+        data: {
+          item_id: targetItem.item_id,
+          order_id: shipment.order_id,
+          order_item_id: targetItem.id,
+          unit_index: newUnitIndex,
+          condition_status: body.data.condition_status,
+          scanned_by_user_id: auth.session.user.id,
+          notes: body.data.notes ?? null
+        }
+      });
+
+      const newScannedCount = currentScannedCount + 1;
+
+      // Determine scan_status
+      let scanStatus: string;
+      if (isLot) {
+        scanStatus = "check_quantity";
+      } else if (newScannedCount >= shipment.expected_units) {
+        scanStatus = "complete";
+      } else {
+        scanStatus = "partial";
+      }
+
+      // Update shipment with scan progress
+      await prisma.shipments.update({
+        where: { id: shipment.id },
+        data: {
+          scanned_units: newScannedCount,
+          scan_status: scanStatus,
+          is_lot: isLot || shipment.is_lot,
+          checked_in_at: shipment.checked_in_at ?? new Date(),
+          checked_in_by: shipment.checked_in_by ?? auth.session!.user!.id
+        }
+      });
+
+      const remaining = isLot ? null : Math.max(0, shipment.expected_units - newScannedCount);
+
+      results.push({
+        orderId: shipment.order_id,
+        unitIndex: newUnitIndex,
+        expectedUnits: isLot ? `Lot (listed qty: ${shipment.expected_units})` : shipment.expected_units,
+        scannedSoFar: newScannedCount,
+        remaining,
+        scanStatus,
+        isLot,
+        condition: body.data.condition_status,
+        item: {
+          title: targetItem.title,
+          itemId: targetItem.item_id,
+          qty: targetItem.qty
+        },
+        allItems: orderItems.map((i) => ({
+          title: i.title,
+          qty: i.qty,
+          itemId: i.item_id
+        }))
+      });
+
+    } catch (err: any) {
+      console.error(`Failed to create received_unit for order ${shipment.order_id}:`, err.message);
+      results.push({
+        orderId: shipment.order_id,
+        error: err.message
+      });
+    }
+  }
+
+  // Build response message
+  const firstResult = results[0];
+  let message = "";
+  if (firstResult) {
+    if (firstResult.isLot) {
+      message = `Lot detected — Unit ${firstResult.unitIndex} scanned (listed qty: ${firstResult.expectedUnits}). Status: Check Quantity`;
+    } else if (firstResult.scanStatus === "complete") {
+      message = `Unit ${firstResult.unitIndex} of ${firstResult.expectedUnits} — All units checked in!`;
+    } else if (firstResult.scanStatus === "partial") {
+      message = `Unit ${firstResult.unitIndex} of ${firstResult.expectedUnits} checked in — ${firstResult.remaining} remaining`;
     }
   }
 
@@ -136,14 +221,7 @@ export async function POST(req: Request) {
     scan,
     resolution: resolutionState,
     matchCount: matches.length,
-    receivedUnits: receivedUnits.length,
-    orders: matches.map((m) => ({
-      orderId: m.shipment?.order_id,
-      items: m.shipment?.order?.order_items?.map((i) => ({
-        title: i.title,
-        qty: i.qty,
-        itemId: i.item_id
-      }))
-    }))
+    message,
+    results
   });
 }

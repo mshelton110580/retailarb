@@ -3,21 +3,32 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
-type ScanResult = {
+type ScanResultItem = {
+  orderId: string;
+  unitIndex: number;
+  expectedUnits: number | string;
+  scannedSoFar: number;
+  remaining: number | null;
+  scanStatus: string;
+  isLot: boolean;
+  condition: string;
+  item: { title: string; itemId: string; qty: number };
+  allItems: Array<{ title: string; qty: number; itemId: string }>;
+  error?: string;
+};
+
+type ScanResponse = {
   resolution: string;
   matchCount: number;
-  receivedUnits: number;
-  orders: Array<{
-    orderId: string;
-    items: Array<{ title: string; qty: number; itemId: string }>;
-  }>;
+  message: string;
+  results: ScanResultItem[];
 };
 
 export default function ReceivingForm() {
   const router = useRouter();
   const [status, setStatus] = useState<string | null>(null);
-  const [statusType, setStatusType] = useState<"success" | "warning" | "error">("success");
-  const [result, setResult] = useState<ScanResult | null>(null);
+  const [statusType, setStatusType] = useState<"success" | "warning" | "error" | "lot">("success");
+  const [result, setResult] = useState<ScanResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   const trackingRef = useRef<HTMLInputElement>(null);
@@ -26,10 +37,8 @@ export default function ReceivingForm() {
   useEffect(() => {
     trackingRef.current?.focus();
 
-    // Re-focus on tracking input if user clicks elsewhere on the page
     const handleClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      // Don't steal focus from other form controls
       if (target.tagName === "SELECT" || target.tagName === "BUTTON" || (target as HTMLInputElement).name === "notes") return;
       setTimeout(() => trackingRef.current?.focus(), 50);
     };
@@ -67,23 +76,37 @@ export default function ReceivingForm() {
 
       clearTimeout(timeoutId);
 
-      const data = await res.json();
+      const data: ScanResponse = await res.json();
 
       if (res.ok) {
         setResult(data);
-        if (data.resolution === "MATCHED") {
-          setStatus(`✓ Matched ${data.matchCount} tracking record(s). ${data.receivedUnits} item(s) checked in.`);
-          setStatusType("success");
-        } else {
+
+        if (data.resolution === "UNRESOLVED") {
           setStatus("⚠ No matching tracking number found. Scan saved as UNRESOLVED.");
           setStatusType("warning");
+        } else if (data.results?.[0]) {
+          const r = data.results[0];
+          if (r.isLot) {
+            setStatus(`📦 Lot detected — Unit ${r.unitIndex} scanned (listed qty: 1). Mark as "Check Quantity"`);
+            setStatusType("lot");
+          } else if (r.scanStatus === "complete") {
+            setStatus(`✓ Unit ${r.unitIndex} of ${r.expectedUnits} — All units checked in!`);
+            setStatusType("success");
+          } else if (r.scanStatus === "partial") {
+            setStatus(`📋 Unit ${r.unitIndex} of ${r.expectedUnits} checked in — ${r.remaining} remaining`);
+            setStatusType("warning");
+          }
+        } else {
+          setStatus(data.message || "Scan processed.");
+          setStatusType("success");
         }
+
         // Clear only the tracking field, keep condition and notes for batch scanning
         if (trackingRef.current) trackingRef.current.value = "";
         trackingRef.current?.focus();
         router.refresh();
       } else {
-        setStatus(`Error: ${data.error || "Scan failed"}`);
+        setStatus(`Error: ${(data as any).error || "Scan failed"}`);
         setStatusType("error");
         trackingRef.current?.focus();
       }
@@ -102,10 +125,9 @@ export default function ReceivingForm() {
     }
   }, [loading, router]);
 
-  // Handle Enter key on tracking input — auto-submit without needing to click button
   function handleTrackingKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter") {
-      e.preventDefault(); // Prevent default form submit which reloads page
+      e.preventDefault();
       const value = (e.target as HTMLInputElement).value;
       if (value.trim().length >= 8) {
         submitScan(value);
@@ -119,13 +141,19 @@ export default function ReceivingForm() {
     submitScan(trackingValue);
   }
 
-  const statusColor = statusType === "success" ? "text-green-400" : statusType === "warning" ? "text-yellow-400" : "text-red-400";
+  const statusColorMap = {
+    success: "text-green-400 border-green-800",
+    warning: "text-yellow-400 border-yellow-800",
+    error: "text-red-400 border-red-800",
+    lot: "text-purple-400 border-purple-800"
+  };
+  const statusColor = statusColorMap[statusType] || "text-slate-400 border-slate-800";
 
   return (
     <div className="space-y-4">
       <form ref={formRef} className="rounded-lg border border-slate-800 bg-slate-900 p-4" onSubmit={onSubmit}>
         <h2 className="text-lg font-semibold">Scan Tracking Number</h2>
-        <p className="text-xs text-slate-500 mt-1">Scan barcode or type tracking number and press Enter</p>
+        <p className="text-xs text-slate-500 mt-1">Scan barcode or type tracking number and press Enter. Scan once per unit.</p>
         <div className="mt-3 grid gap-3 md:grid-cols-3">
           <input
             ref={trackingRef}
@@ -164,24 +192,71 @@ export default function ReceivingForm() {
         >
           {loading ? "Scanning..." : "Save Scan"}
         </button>
-        {status && (
-          <p className={`mt-2 text-sm font-medium ${statusColor}`}>
-            {status}
-          </p>
-        )}
       </form>
 
-      {result?.resolution === "MATCHED" && result.orders.length > 0 && (
-        <div className="rounded-lg border border-green-800 bg-slate-900 p-4">
-          <h3 className="text-sm font-semibold text-green-400">Matched Orders</h3>
-          {result.orders.map((order, i) => (
-            <div key={i} className="mt-2 rounded border border-slate-800 p-3">
-              <p className="text-sm font-medium">Order {order.orderId}</p>
-              {order.items?.map((item, j) => (
-                <p key={j} className="text-xs text-slate-400">
-                  {item.title} (x{item.qty})
-                </p>
-              ))}
+      {/* Scan result feedback */}
+      {status && (
+        <div className={`rounded-lg border p-4 ${statusColor} bg-slate-900`}>
+          <p className="text-sm font-semibold">{status}</p>
+
+          {result?.results?.map((r, i) => (
+            <div key={i} className="mt-3 rounded border border-slate-800 p-3">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-blue-400">Order {r.orderId}</p>
+                <div className="flex gap-2">
+                  {r.isLot ? (
+                    <span className="rounded px-2 py-0.5 text-xs bg-purple-900 text-purple-300">
+                      Lot — Check Quantity
+                    </span>
+                  ) : r.scanStatus === "complete" ? (
+                    <span className="rounded px-2 py-0.5 text-xs bg-green-900 text-green-300">
+                      Complete ({r.scannedSoFar}/{r.expectedUnits})
+                    </span>
+                  ) : (
+                    <span className="rounded px-2 py-0.5 text-xs bg-yellow-900 text-yellow-300">
+                      Partial ({r.scannedSoFar}/{r.expectedUnits})
+                    </span>
+                  )}
+                  <span className="rounded px-2 py-0.5 text-xs bg-slate-800 text-slate-300">
+                    {r.condition}
+                  </span>
+                </div>
+              </div>
+
+              {/* Progress bar */}
+              {!r.isLot && typeof r.expectedUnits === "number" && r.expectedUnits > 0 && (
+                <div className="mt-2">
+                  <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${
+                        r.scanStatus === "complete" ? "bg-green-500" : "bg-yellow-500"
+                      }`}
+                      style={{ width: `${Math.min(100, (r.scannedSoFar / (r.expectedUnits as number)) * 100)}%` }}
+                    />
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {r.scannedSoFar} of {r.expectedUnits} units scanned
+                    {r.remaining !== null && r.remaining > 0 && ` — ${r.remaining} remaining`}
+                  </p>
+                </div>
+              )}
+
+              {r.isLot && (
+                <div className="mt-2">
+                  <p className="text-xs text-purple-400">
+                    {r.scannedSoFar} units scanned so far (listed qty: 1). Keep scanning to count all units in the lot.
+                  </p>
+                </div>
+              )}
+
+              {/* Item details */}
+              <div className="mt-2">
+                {r.allItems?.map((item, j) => (
+                  <p key={j} className="text-xs text-slate-400">
+                    {item.title} (listed qty: {item.qty})
+                  </p>
+                ))}
+              </div>
             </div>
           ))}
         </div>
