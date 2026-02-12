@@ -35,14 +35,15 @@ async function fetchEbayUsername(accessToken: string): Promise<string | null> {
 }
 
 export async function GET(req: Request) {
+  const baseUrl = process.env.APP_BASE_URL ?? req.url;
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) {
-    return NextResponse.redirect(new URL("/login", req.url));
+    return NextResponse.redirect(new URL("/login", baseUrl));
   }
   const { searchParams } = new URL(req.url);
   const code = searchParams.get("code");
   if (!code) {
-    return NextResponse.redirect(new URL("/ebay-accounts?error=missing_code", req.url));
+    return NextResponse.redirect(new URL("/ebay-accounts?error=missing_code", baseUrl));
   }
   try {
     const redirectUri = process.env.EBAY_REDIRECT_URI ?? "";
@@ -80,9 +81,9 @@ export async function GET(req: Request) {
         }
       });
     }
-    return NextResponse.redirect(new URL("/ebay-accounts?connected=true", req.url));
+    return NextResponse.redirect(new URL("/ebay-accounts?connected=true", baseUrl));
   } catch (error) {
     console.error("OAuth callback failed", error);
-    return NextResponse.redirect(new URL("/ebay-accounts?error=oauth_failed", req.url));
+    return NextResponse.redirect(new URL("/ebay-accounts?error=oauth_failed", baseUrl));
   }
 }
