@@ -3,6 +3,7 @@
 ArbDesk is a full-stack retail arbitrage workspace for eBay buyers. It provides targets/sniping, order sync via eBay Trading API, inventory dashboards, receiving workflows, and a returns-only scraper built on Playwright.
 
 ## Tech Stack
+
 - Next.js (App Router) + Tailwind
 - NextAuth (Credentials) with RBAC roles
 - Postgres + Prisma
@@ -10,87 +11,134 @@ ArbDesk is a full-stack retail arbitrage workspace for eBay buyers. It provides 
 - Playwright (returns-only scraping)
 - Local filesystem storage with an abstraction for future S3/R2 support
 
+## Server Setup (Ubuntu 22.04)
+
+These instructions detail how to set up the ArbDesk environment from scratch on a fresh Ubuntu 22.04 server. This is the same process used to create the live development environment.
+
+### 1. Install System Dependencies
+
+First, update your package list and install PostgreSQL, Redis, and Node.js.
+
+```bash
+sudo apt-get update -qq
+sudo apt-get install -y postgresql-14 redis-server
+```
+
+### 2. Configure PostgreSQL
+
+Start the PostgreSQL service and create a database and user for ArbDesk.
+
+```bash
+# Start PostgreSQL
+sudo pg_ctlcluster 14 main start
+
+# Create the database and user
+sudo -u postgres psql -c "CREATE DATABASE arbdesk;"
+sudo -u postgres psql -c "CREATE USER postgres WITH PASSWORD 'postgres';"
+sudo -u postgres psql -c "ALTER USER postgres WITH SUPERUSER;"
+
+# Allow password authentication for local connections
+sudo sed -i "s/local   all             all                                     peer/local   all             all                                     md5/g" /etc/postgresql/14/main/pg_hba.conf
+
+# Restart PostgreSQL to apply changes
+sudo systemctl restart postgresql
+```
+
+### 3. Configure Redis
+
+Start the Redis server as a background process.
+
+```bash
+sudo redis-server --daemonize yes
+```
+
+### 4. Clone and Set Up the Application
+
+Clone the repository and install Node.js dependencies.
+
+```bash
+# Clone the repo
+git clone https://github.com/mshelton110580/retailarb.git
+cd retailarb
+
+# Install Node.js dependencies
+npm install
+```
+
+### 5. Configure Environment Variables
+
+Create a `.env` file from the example and fill in your specific details.
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` in a text editor and configure the following:
+
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | `postgresql://postgres:postgres@127.0.0.1:5432/arbdesk` |
+| `REDIS_URL` | `redis://localhost:6379` |
+| `APP_BASE_URL` | Your public app URL (e.g., `https://arbdesk.yourdomain.com`) |
+| `ENCRYPTION_KEY` | Generate a 32-byte hex key: `openssl rand -hex 32` |
+| `NEXTAUTH_SECRET` | Generate another 32-byte hex key: `openssl rand -hex 32` |
+| `NEXTAUTH_URL` | Same as `APP_BASE_URL` |
+| `EBAY_CLIENT_ID` | Your eBay app's Client ID |
+| `EBAY_CLIENT_SECRET` | Your eBay app's Client Secret |
+| `EBAY_DEV_ID` | Your eBay app's Developer ID |
+| `EBAY_REDIRECT_URI` | Your eBay app's **RuName** (not the URL) |
+
+### 6. Run Database Migrations and Seed
+
+Apply the database schema and create the initial admin user.
+
+```bash
+# Generate Prisma client
+npx prisma generate
+
+# Apply migrations
+npx prisma migrate deploy
+
+# Seed the admin user
+npx tsx prisma/seed.ts
+```
+
+### 7. Build and Start the Application
+
+Build the Next.js app and start it in production mode.
+
+```bash
+# Build the app
+npm run build
+
+# Start the app (in the background)
+nohup npm start &
+```
+
+### 8. Set Up Cloudflare Tunnel (Optional, Recommended)
+
+To expose your local server to the internet, use a Cloudflare Tunnel.
+
+1.  Install `cloudflared`:
+    ```bash
+    curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o /tmp/cloudflared.deb
+    sudo dpkg -i /tmp/cloudflared.deb
+    ```
+2.  Get your tunnel token from the Cloudflare Zero Trust dashboard.
+3.  Start the tunnel:
+    ```bash
+    nohup cloudflared tunnel --no-autoupdate run --token YOUR_TUNNEL_TOKEN &
+    ```
+
+Your app should now be live at your `APP_BASE_URL`.
+
 ## Local Development (Docker)
 
-0. Clone the repository:
-   ```bash
-   git clone https://github.com/mshelton110580/retailarb.git
-   cd retailarb
-   ```
+For a simpler local setup, you can use the provided Docker configuration.
 
-1. Copy environment variables:
-   ```bash
-   cp .env.example .env
-   ```
-
-2. Start services:
-   ```bash
-   docker compose up --build
-   ```
-
-3. Run migrations:
-   ```bash
-   docker compose exec app npm run prisma:migrate
-   ```
-
-4. Seed the admin user:
-   ```bash
-   docker compose exec app npm run seed
-   ```
-
-5. Visit the app at http://localhost:3000
-
-## Environment Variables
-
-See `.env.example` for all variables. Key settings:
-
-- `DATABASE_URL`, `REDIS_URL`
-- `NEXTAUTH_SECRET`, `ENCRYPTION_KEY` (32+ bytes)
-- `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_REDIRECT_URI`
-- `STORAGE_PATH` for images and return labels
-- `FEATURE_OFFER_API`, `FEATURE_PLACE_OFFER`
-- `PLAYWRIGHT_HEADLESS`
-
-## Background Jobs
-
-- `sync_orders_job`: sync orders for the last 30 days (repeat every 30 min).
-- `enrich_listing_job`: enrich target listings via Browse API.
-- `snipe_job`: scheduled at `end_time - lead_seconds`.
-- `reconcile_auction_job`: marks win/loss after auction end.
-- `returns_scrape_job`: returns status and label scraping.
-- `alerts_job`: checks late/not delivered items.
-
-The worker container runs BullMQ processors and registers repeatable jobs on startup.
-
-## Production Deployment Notes
-
-1. Deploy the `app` and `worker` containers behind Cloudflare on a subdomain such as `arbdesk.example.com`.
-2. Point Cloudflare DNS to your container host (reverse proxy or tunnel).
-3. Set `EBAY_REDIRECT_URI` to `https://arbdesk.example.com/api/auth/ebay/callback`.
-4. Use persistent volumes for Postgres and `STORAGE_PATH`.
-5. Ensure Playwright dependencies are available for the worker container.
-
-## eBay API Notes
-
-- Trading API calls use OAuth access tokens via `X-EBAY-API-IAF-TOKEN`.
-- Orders are synced only via `GetOrders` and used to derive shipping status.
-- Returns are manual filing with scraping for status/label only (no Post-Order API).
-- Listing enrichment uses the Browse API.
-
-## Manual Acceptance Checklist
-
-- Admin can log in and create users.
-- eBay account connects; callback works.
-- Sync orders pulls orders with tracking and delivered timestamps.
-- Derived shipping status matches expectations.
-- Targets persist and show statuses; listing enrichment runs.
-- Snipes schedule and record attempted; reconcile marks win/loss.
-- Receiving scan matches by last 8 digits; requires photos for non-good.
-- Returns: user opens order, marks return filed, scraper captures status and downloads label.
-
-## Project Structure
-
-- `src/app`: Next.js App Router pages and API routes
-- `src/lib`: DB, auth, eBay clients, crypto, queue utilities
-- `src/worker`: BullMQ processors and Playwright returns scraper
-- `prisma`: Prisma schema, migrations, seed
+1.  Clone the repository and `cd` into it.
+2.  Copy `.env.example` to `.env` and fill in your eBay credentials.
+3.  Run `docker compose up --build`.
+4.  In a separate terminal, run migrations: `docker compose exec app npm run prisma:migrate`.
+5.  Seed the admin user: `docker compose exec app npm run seed`.
+6.  Visit the app at http://localhost:3000.
