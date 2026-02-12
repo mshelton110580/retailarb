@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
+import { useRouter } from "next/navigation";
 
 type ScanResult = {
   resolution: string;
@@ -13,9 +14,12 @@ type ScanResult = {
 };
 
 export default function ReceivingForm() {
+  const router = useRouter();
   const [status, setStatus] = useState<string | null>(null);
+  const [statusType, setStatusType] = useState<"success" | "warning" | "error">("success");
   const [result, setResult] = useState<ScanResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -31,11 +35,17 @@ export default function ReceivingForm() {
     };
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+
       const res = await fetch("/api/receiving/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: controller.signal
       });
+
+      clearTimeout(timeoutId);
 
       const data = await res.json();
 
@@ -43,23 +53,45 @@ export default function ReceivingForm() {
         setResult(data);
         if (data.resolution === "MATCHED") {
           setStatus(`Matched ${data.matchCount} tracking record(s). ${data.receivedUnits} item(s) checked in.`);
+          setStatusType("success");
         } else {
           setStatus("No matching tracking number found. Scan saved as UNRESOLVED.");
+          setStatusType("warning");
         }
-        event.currentTarget.reset();
+        formRef.current?.reset();
+        // Focus back on tracking input for rapid scanning
+        const trackingInput = formRef.current?.querySelector<HTMLInputElement>('input[name="tracking"]');
+        trackingInput?.focus();
+        // Refresh the scan list
+        router.refresh();
       } else {
         setStatus(`Error: ${data.error || "Scan failed"}`);
+        setStatusType("error");
       }
-    } catch (err) {
-      setStatus("Network error. Please try again.");
+    } catch (err: any) {
+      // The scan likely succeeded on the server but the response was interrupted
+      // (Cloudflare tunnel timeout, network hiccup, etc.)
+      if (err.name === "AbortError") {
+        setStatus("Scan is taking longer than expected. It may have succeeded — refreshing page...");
+      } else {
+        setStatus("Response interrupted, but scan may have succeeded. Refreshing page...");
+      }
+      setStatusType("warning");
+      formRef.current?.reset();
+      // Refresh after a short delay to show the updated scan list
+      setTimeout(() => {
+        router.refresh();
+      }, 1000);
     } finally {
       setLoading(false);
     }
   }
 
+  const statusColor = statusType === "success" ? "text-green-400" : statusType === "warning" ? "text-yellow-400" : "text-red-400";
+
   return (
     <div className="space-y-4">
-      <form className="rounded-lg border border-slate-800 bg-slate-900 p-4" onSubmit={onSubmit}>
+      <form ref={formRef} className="rounded-lg border border-slate-800 bg-slate-900 p-4" onSubmit={onSubmit}>
         <h2 className="text-lg font-semibold">Scan Tracking Number</h2>
         <div className="mt-3 grid gap-3 md:grid-cols-3">
           <input
@@ -97,7 +129,7 @@ export default function ReceivingForm() {
           {loading ? "Scanning..." : "Save Scan"}
         </button>
         {status && (
-          <p className={`mt-2 text-sm ${result?.resolution === "MATCHED" ? "text-green-400" : "text-yellow-400"}`}>
+          <p className={`mt-2 text-sm ${statusColor}`}>
             {status}
           </p>
         )}
