@@ -7,7 +7,7 @@ export type BrowseItem = {
   endTime?: string;
   buyingOptions?: string[];
   shippingCost?: string;
-  raw: unknown;
+  raw: any;
 };
 
 export async function getItemByLegacyId(token: string, itemId: string): Promise<BrowseItem | null> {

@@ -9,7 +9,7 @@ import { saveFile } from "../lib/storage";
 import { chromium } from "playwright";
 import { placeProxyBid } from "../lib/ebay/offer";
 
-const connection = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379");
+const connection = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", { maxRetriesPerRequest: null });
 
 const syncOrdersWorker = new Worker(
   "sync_orders_job",
@@ -170,7 +170,7 @@ const syncOrdersWorker = new Worker(
       });
     }
   },
-  { connection }
+  { connection: connection as any }
 );
 
 const enrichListingWorker = new Worker(
@@ -206,7 +206,7 @@ const enrichListingWorker = new Worker(
       }
     });
   },
-  { connection }
+  { connection: connection as any }
 );
 
 const returnsWorker = new Worker(
@@ -263,7 +263,7 @@ const returnsWorker = new Worker(
       }
     });
   },
-  { connection }
+  { connection: connection as any }
 );
 
 const snipeWorker = new Worker(
@@ -300,7 +300,7 @@ const snipeWorker = new Worker(
       }
     });
   },
-  { connection }
+  { connection: connection as any }
 );
 
 const reconcileWorker = new Worker(
@@ -341,7 +341,7 @@ const reconcileWorker = new Worker(
       }
     });
   },
-  { connection }
+  { connection: connection as any }
 );
 
 const alertsWorker = new Worker(
@@ -362,12 +362,12 @@ const alertsWorker = new Worker(
       });
     }
   },
-  { connection }
+  { connection: connection as any }
 );
 
 async function scheduleRepeatableJobs() {
-  const syncQueue = new Queue("sync_orders_job", { connection });
-  const alertsQueue = new Queue("alerts_job", { connection });
+  const syncQueue = new Queue("sync_orders_job", { connection: connection as any });
+  const alertsQueue = new Queue("alerts_job", { connection: connection as any });
   await syncQueue.add(
     "sync",
     {},

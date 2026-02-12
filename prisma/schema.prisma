@@ -77,8 +77,8 @@ model targets {
   item_id          String @id
   ebay_account_id  String?
   type             TargetType
-  max_snipe_bid    Decimal? @db.Numeric(12, 2)
-  best_offer_amount Decimal? @db.Numeric(12, 2)
+  max_snipe_bid    Decimal? @db.Decimal(12, 2)
+  best_offer_amount Decimal? @db.Decimal(12, 2)
   lead_seconds     Int
   created_by       String
   status           TargetStatus
@@ -95,8 +95,8 @@ model listings {
   item_id          String @id
   title            String
   end_time         DateTime?
-  current_price    Decimal? @db.Numeric(12, 2)
-  shipping_estimate Decimal? @db.Numeric(12, 2)
+  current_price    Decimal? @db.Decimal(12, 2)
+  shipping_estimate Decimal? @db.Decimal(12, 2)
   buying_options   Json?
   raw_json         Json
   updated_at       DateTime @updatedAt
@@ -123,6 +123,7 @@ model orders {
   shipments      shipments[]
   returns        returns[]
   inr_cases      inr_cases[]
+  received_units received_units[]
 }
 
 model order_items {
@@ -131,9 +132,9 @@ model order_items {
   item_id          String
   title            String
   qty              Int
-  transaction_price Decimal @db.Numeric(12, 2)
-  shipping_cost    Decimal? @db.Numeric(12, 2)
-  final_price      Decimal? @db.Numeric(12, 2)
+  transaction_price Decimal @db.Decimal(12, 2)
+  shipping_cost    Decimal? @db.Decimal(12, 2)
+  final_price      Decimal? @db.Decimal(12, 2)
   purchase_date    DateTime
   order            orders @relation(fields: [order_id], references: [order_id])
   target           targets? @relation(fields: [item_id], references: [item_id])
@@ -178,6 +179,7 @@ model received_units {
   id                 String @id @default(cuid())
   item_id            String
   order_id           String
+  order_item_id      String?
   unit_index         Int
   condition_status   String
   received_at        DateTime @default(now())
@@ -185,6 +187,7 @@ model received_units {
   notes              String?
   listing            listings @relation(fields: [item_id], references: [item_id])
   order              orders @relation(fields: [order_id], references: [order_id])
+  order_item         order_items? @relation(fields: [order_item_id], references: [id])
   scanner            users @relation(fields: [scanned_by_user_id], references: [id])
   images             unit_images[]
   lot_units          lot_units[]
