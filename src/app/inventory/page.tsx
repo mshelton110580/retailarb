@@ -24,11 +24,12 @@ const cardConfig: Array<{
   { key: "total_orders", label: "Total Orders", color: "text-white", border: "border-slate-500", section: "primary" },
   { key: "delivered", label: "Delivered", color: "text-green-400", border: "border-green-600", description: "eBay confirms delivery", section: "primary" },
   { key: "shipped", label: "Shipped", color: "text-blue-400", border: "border-blue-600", description: "Tracking uploaded, not yet delivered", section: "primary" },
-  { key: "never_shipped", label: "Never Shipped", color: "text-rose-400", border: "border-rose-600", description: "No tracking info uploaded", section: "primary" },
+
   // Warehouse status (mutually exclusive — these two sum to Total Orders)
   { key: "checked_in", label: "Checked In", color: "text-emerald-400", border: "border-emerald-600", description: "Scanned at warehouse", section: "warehouse" },
   { key: "not_checked_in", label: "Not Checked In", color: "text-yellow-400", border: "border-yellow-600", description: "Not yet scanned at warehouse", section: "warehouse" },
   // Action items (may overlap)
+  { key: "never_shipped", label: "Never Shipped", color: "text-rose-400", border: "border-rose-600", description: "No tracking info uploaded", section: "action" },
   { key: "overdue_not_received", label: "Overdue — Not Received", color: "text-amber-400", border: "border-amber-600", description: "Has tracking, past estimated delivery, no delivery confirmation", section: "action" },
   { key: "needs_return", label: "Needs Return", color: "text-red-400", border: "border-red-600", description: "Checked in with bad condition", section: "action" },
 ];
@@ -161,7 +162,7 @@ export default async function InventoryPage({
       {/* Primary Status — Mutually Exclusive */}
       <div>
         <h2 className="mb-2 text-sm font-medium text-slate-400 uppercase tracking-wider">Delivery Status</h2>
-        <p className="mb-3 text-xs text-slate-600">Delivered + Shipped + Never Shipped = Total Orders</p>
+        <p className="mb-3 text-xs text-slate-600">Delivered + Shipped = Total Orders (minus Never Shipped action items)</p>
         <div className="grid gap-4 md:grid-cols-4">
           {renderCards(primaryCards)}
         </div>
