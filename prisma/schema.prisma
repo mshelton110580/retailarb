@@ -229,7 +229,7 @@ model lot_units {
 
 model returns {
   id                String @id @default(cuid())
-  order_id          String
+  order_id          String?
   item_id           String?
   // eBay Post-Order API fields
   ebay_return_id    String?   @unique
@@ -258,13 +258,13 @@ model returns {
   last_synced_at    DateTime?
   created_at        DateTime  @default(now())
   updated_at        DateTime  @updatedAt
-  order             orders @relation(fields: [order_id], references: [order_id])
+  order             orders? @relation(fields: [order_id], references: [order_id])
   listing           listings? @relation(fields: [item_id], references: [item_id])
 }
 
 model inr_cases {
   id                String @id @default(cuid())
-  order_id          String
+  order_id          String?
   item_id           String?
   // eBay Post-Order API fields
   ebay_inquiry_id   String?   @unique
@@ -286,7 +286,7 @@ model inr_cases {
   last_synced_at    DateTime?
   created_at        DateTime  @default(now())
   updated_at        DateTime  @updatedAt
-  order             orders @relation(fields: [order_id], references: [order_id])
+  order             orders? @relation(fields: [order_id], references: [order_id])
   listing           listings? @relation(fields: [item_id], references: [item_id])
 }
 

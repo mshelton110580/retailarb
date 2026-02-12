@@ -66,12 +66,12 @@ export default async function ReturnsPage() {
         <h2 className="text-lg font-semibold mb-3">All Returns</h2>
         <div className="space-y-3 text-sm text-slate-300">
           {returns.length === 0 ? (
-            <p className="text-slate-500">No returns found. Click "Sync Returns & INR from eBay" to fetch data.</p>
+            <p className="text-slate-500">No returns found. Click &quot;Sync Returns &amp; INR from eBay&quot; to fetch data.</p>
           ) : (
             returns.map((ret) => {
               const orderItems = ret.order?.order_items ?? [];
               const matchedItem = orderItems.find((i) => i.item_id === ret.item_id);
-              const displayTitle = ret.listing?.title ?? matchedItem?.title ?? `Item ${ret.item_id ?? "Unknown"}`;
+              const displayTitle = ret.listing?.title ?? matchedItem?.title ?? (ret.item_id ? `Item ${ret.item_id}` : "Unknown Item");
 
               return (
                 <div key={ret.id} className="rounded border border-slate-800 p-3">
@@ -122,25 +122,34 @@ export default async function ReturnsPage() {
                         </div>
                       )}
 
-                      {/* Order link */}
+                      {/* Order link (only if we have a matching order) */}
                       <div className="flex items-center gap-3 text-xs text-slate-400">
-                        <Link href={`/orders/${ret.order_id}`} className="text-blue-400 hover:underline">
-                          Order {ret.order_id}
-                        </Link>
-                        <a
-                          href={ret.order?.order_url ?? "#"}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-slate-500 hover:text-blue-400"
-                        >
-                          eBay Order ↗
-                        </a>
+                        {ret.order_id ? (
+                          <>
+                            <Link href={`/orders/${ret.order_id}`} className="text-blue-400 hover:underline">
+                              Order {ret.order_id}
+                            </Link>
+                            {ret.order?.order_url && (
+                              <a
+                                href={ret.order.order_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-slate-500 hover:text-blue-400"
+                              >
+                                eBay Order ↗
+                              </a>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-slate-600">No matching purchase order</span>
+                        )}
                       </div>
 
                       {/* Details */}
                       <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-500">
                         {ret.return_reason && <span>Reason: {ret.return_reason}</span>}
                         {ret.buyer_login_name && <span>Buyer: {ret.buyer_login_name}</span>}
+                        {ret.seller_login_name && <span>Seller: {ret.seller_login_name}</span>}
                         {ret.refund_amount && (
                           <span className="text-yellow-400">
                             Refund: ${Number(ret.refund_amount).toFixed(2)} {ret.refund_currency ?? ""}

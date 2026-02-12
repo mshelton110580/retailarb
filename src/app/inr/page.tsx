@@ -75,12 +75,12 @@ export default async function INRPage() {
         <h2 className="text-lg font-semibold mb-3">INR Cases</h2>
         <div className="space-y-3 text-sm text-slate-300">
           {inrCases.length === 0 ? (
-            <p className="text-slate-500">No INR cases found. Click "Sync Returns & INR from eBay" to fetch data.</p>
+            <p className="text-slate-500">No INR cases found. Click &quot;Sync Returns &amp; INR from eBay&quot; to fetch data.</p>
           ) : (
             inrCases.map((inr) => {
               const orderItems = inr.order?.order_items ?? [];
               const matchedItem = orderItems.find((i) => i.item_id === inr.item_id);
-              const displayTitle = inr.listing?.title ?? matchedItem?.title ?? `Item ${inr.item_id ?? "Unknown"}`;
+              const displayTitle = inr.listing?.title ?? matchedItem?.title ?? (inr.item_id ? `Item ${inr.item_id}` : "Unknown Item");
 
               return (
                 <div key={inr.id} className="rounded border border-slate-800 p-3">
@@ -128,20 +128,26 @@ export default async function INRPage() {
                         </div>
                       )}
 
-                      {/* Order link */}
+                      {/* Order link (only if we have a matching order) */}
                       <div className="flex items-center gap-3 text-xs text-slate-400">
-                        <Link href={`/orders/${inr.order_id}`} className="text-blue-400 hover:underline">
-                          Order {inr.order_id}
-                        </Link>
-                        {inr.order?.order_url && (
-                          <a
-                            href={inr.order.order_url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-slate-500 hover:text-blue-400"
-                          >
-                            eBay Order ↗
-                          </a>
+                        {inr.order_id ? (
+                          <>
+                            <Link href={`/orders/${inr.order_id}`} className="text-blue-400 hover:underline">
+                              Order {inr.order_id}
+                            </Link>
+                            {inr.order?.order_url && (
+                              <a
+                                href={inr.order.order_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-slate-500 hover:text-blue-400"
+                              >
+                                eBay Order ↗
+                              </a>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-slate-600">No matching purchase order</span>
                         )}
                       </div>
 
@@ -183,7 +189,7 @@ export default async function INRPage() {
         <section className="rounded-lg border border-slate-800 bg-slate-900 p-4">
           <h2 className="text-lg font-semibold mb-3">Late Shipments — Consider Filing INR</h2>
           <p className="text-xs text-slate-500 mb-3">
-            These shipments are late or not delivered and don't have an INR case yet.
+            These shipments are late or not delivered and don&apos;t have an INR case yet.
           </p>
           <div className="space-y-3 text-sm text-slate-300">
             {lateShipments.map((shipment) => (

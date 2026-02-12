@@ -12,7 +12,12 @@ import {
 /**
  * POST /api/sync/returns
  * Syncs return requests and INR inquiries from eBay Post-Order API.
- * Searches the last 90 days (3 x 30-day windows, same as order sync).
+ * Searches the last 90 days (3 x 30-day windows).
+ *
+ * Note: Returns and INR inquiries are filed by BUYERS against items
+ * the user SOLD. The item_id is the listing item_id, not a purchase
+ * order item. We store all cases regardless of whether they match
+ * a purchase order in our system.
  */
 export async function POST(req: Request) {
   const auth = await requireRole(["ADMIN"]);
@@ -35,7 +40,7 @@ export async function POST(req: Request) {
       const from = new Date(to);
       from.setDate(to.getDate() - 30);
       windows.push({
-        from: (i === 2 ? from : from).toISOString(),
+        from: from.toISOString(),
         to: (i === 0 ? now : to).toISOString(),
       });
     }
@@ -48,7 +53,7 @@ export async function POST(req: Request) {
       const { token } = await getValidAccessToken(account.id);
 
       // ============================================================
-      // SYNC RETURNS
+      // SYNC RETURNS (as seller — buyers file returns against us)
       // ============================================================
       for (const window of windows) {
         try {
@@ -59,7 +64,6 @@ export async function POST(req: Request) {
             const result = await searchReturns(token, {
               dateFrom: window.from,
               dateTo: window.to,
-              role: "BUYER",
               limit: 200,
               offset,
             });
@@ -69,7 +73,6 @@ export async function POST(req: Request) {
               totalReturns++;
             }
 
-            // Check pagination
             const total = result.paginationOutput.totalEntries;
             offset += result.members.length;
             hasMore = offset < total && result.members.length > 0;
@@ -81,7 +84,7 @@ export async function POST(req: Request) {
       }
 
       // ============================================================
-      // SYNC INQUIRIES (INR)
+      // SYNC INQUIRIES (INR — buyers file INR against us)
       // ============================================================
       for (const window of windows) {
         try {
@@ -101,7 +104,6 @@ export async function POST(req: Request) {
               totalInquiries++;
             }
 
-            // Check pagination
             const total = result.paginationOutput.totalEntries;
             offset += result.members.length;
             hasMore = offset < total && result.members.length > 0;
@@ -125,48 +127,53 @@ export async function POST(req: Request) {
 }
 
 // ============================================================
-// UPSERT HELPERS
+// HELPERS: Try to resolve order_id and item_id to existing DB records
 // ============================================================
 
-async function upsertReturn(ret: EbayReturnSummary) {
-  const returnId = String(ret.returnId);
-  const itemId = String(ret.itemId ?? "");
-  const orderId = ret.orderId ? String(ret.orderId) : null;
+/** Try to find a matching order_id in our database */
+async function resolveOrderId(itemId: string | null, rawOrderId: string | null): Promise<string | null> {
+  // First try the orderId from the API directly
+  if (rawOrderId) {
+    const order = await prisma.orders.findUnique({
+      where: { order_id: rawOrderId },
+      select: { order_id: true },
+    });
+    if (order) return order.order_id;
+  }
 
-  // Try to find the order by item_id if orderId not directly available
-  let resolvedOrderId = orderId;
-  if (!resolvedOrderId && itemId) {
+  // Try to find by item_id in order_items
+  if (itemId) {
     const orderItem = await prisma.order_items.findFirst({
       where: { item_id: itemId },
       select: { order_id: true },
     });
-    resolvedOrderId = orderItem?.order_id ?? null;
+    if (orderItem) return orderItem.order_id;
   }
 
-  if (!resolvedOrderId) {
-    console.warn(`[Sync Returns] Cannot find order for return ${returnId} (item: ${itemId})`);
-    return;
-  }
+  return null;
+}
 
-  // Check if order exists in our database
-  const orderExists = await prisma.orders.findUnique({
-    where: { order_id: resolvedOrderId },
-    select: { order_id: true },
+/** Check if item_id exists as a listing (for the optional FK) */
+async function resolveListingItemId(itemId: string | null): Promise<string | null> {
+  if (!itemId) return null;
+  const listing = await prisma.listings.findUnique({
+    where: { item_id: itemId },
+    select: { item_id: true },
   });
-  if (!orderExists) {
-    console.warn(`[Sync Returns] Order ${resolvedOrderId} not in database, skipping return ${returnId}`);
-    return;
-  }
+  return listing ? itemId : null;
+}
 
-  // Check if item_id exists as a listing (for the optional relation)
-  let validItemId: string | null = null;
-  if (itemId) {
-    const listing = await prisma.listings.findUnique({
-      where: { item_id: itemId },
-      select: { item_id: true },
-    });
-    validItemId = listing ? itemId : null;
-  }
+// ============================================================
+// UPSERT RETURN
+// ============================================================
+
+async function upsertReturn(ret: EbayReturnSummary) {
+  const returnId = String(ret.returnId);
+  const itemId = ret.itemId ? String(ret.itemId) : null;
+  const rawOrderId = ret.orderId ? String(ret.orderId) : null;
+
+  const resolvedOrderId = await resolveOrderId(itemId, rawOrderId);
+  const validItemId = await resolveListingItemId(itemId);
 
   // Extract refund amount
   const refundAmount =
@@ -219,44 +226,16 @@ async function upsertReturn(ret: EbayReturnSummary) {
   }
 }
 
+// ============================================================
+// UPSERT INQUIRY (INR)
+// ============================================================
+
 async function upsertInquiry(inq: EbayInquirySummary) {
   const inquiryId = String(inq.inquiryId);
-  const itemId = String(inq.itemId ?? "");
+  const itemId = inq.itemId ? String(inq.itemId) : null;
 
-  // Find the order by item_id
-  let resolvedOrderId: string | null = null;
-  if (itemId) {
-    const orderItem = await prisma.order_items.findFirst({
-      where: { item_id: itemId },
-      select: { order_id: true },
-    });
-    resolvedOrderId = orderItem?.order_id ?? null;
-  }
-
-  if (!resolvedOrderId) {
-    console.warn(`[Sync Inquiries] Cannot find order for inquiry ${inquiryId} (item: ${itemId})`);
-    return;
-  }
-
-  // Check if order exists
-  const orderExists = await prisma.orders.findUnique({
-    where: { order_id: resolvedOrderId },
-    select: { order_id: true },
-  });
-  if (!orderExists) {
-    console.warn(`[Sync Inquiries] Order ${resolvedOrderId} not in database, skipping inquiry ${inquiryId}`);
-    return;
-  }
-
-  // Check if item_id exists as a listing
-  let validItemId: string | null = null;
-  if (itemId) {
-    const listing = await prisma.listings.findUnique({
-      where: { item_id: itemId },
-      select: { item_id: true },
-    });
-    validItemId = listing ? itemId : null;
-  }
+  const resolvedOrderId = await resolveOrderId(itemId, null);
+  const validItemId = await resolveListingItemId(itemId);
 
   const creationDateStr = inq.creationDate?.value ?? null;
   const lastModifiedStr = inq.lastModifiedDate?.value ?? null;
