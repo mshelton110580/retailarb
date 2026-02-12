@@ -31,7 +31,7 @@ export default async function ReceivingPage() {
     receivedByOrder.set(ru.order_id, arr);
   }
 
-  // Enrich scans with matched order info
+  // Enrich scans with matched order info including received unit details
   const enrichedScans = await Promise.all(
     scans.map(async (scan) => {
       const trackingMatches = await prisma.tracking_numbers.findMany({
@@ -45,16 +45,39 @@ export default async function ReceivingPage() {
         }
       });
 
-      const matchedOrders = trackingMatches
-        .filter((m) => m.shipment?.order)
-        .map((m) => ({
-          orderId: m.shipment!.order_id,
-          items: m.shipment!.order!.order_items.map((i) => ({
-            title: i.title,
-            qty: i.qty
-          })),
-          checkedIn: Boolean(m.shipment!.checked_in_at)
-        }));
+      const matchedOrders = await Promise.all(
+        trackingMatches
+          .filter((m) => m.shipment?.order)
+          .map(async (m) => {
+            // Get received units for this order to show per-unit condition
+            const units = await prisma.received_units.findMany({
+              where: { order_id: m.shipment!.order_id },
+              orderBy: { unit_index: "asc" },
+              include: { listing: { select: { title: true } } }
+            });
+
+            return {
+              orderId: m.shipment!.order_id,
+              items: m.shipment!.order!.order_items.map((i) => ({
+                title: i.title,
+                qty: i.qty,
+                price: Number(i.transaction_price).toFixed(2)
+              })),
+              checkedIn: Boolean(m.shipment!.checked_in_at),
+              expectedUnits: m.shipment!.expected_units,
+              scannedUnits: m.shipment!.scanned_units,
+              scanStatus: m.shipment!.scan_status,
+              isLot: m.shipment!.is_lot,
+              receivedUnits: units.map((u) => ({
+                unitIndex: u.unit_index,
+                title: u.listing?.title ?? "Unknown",
+                condition: u.condition_status,
+                receivedAt: u.received_at.toISOString(),
+                notes: u.notes
+              }))
+            };
+          })
+      );
 
       return {
         id: scan.id,
