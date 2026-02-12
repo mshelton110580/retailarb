@@ -141,7 +141,7 @@ export default async function INRPage({
                         <div className="flex flex-wrap items-center gap-2 mb-2">
                           {inr.ebay_inquiry_id && (
                             <a
-                              href={`https://www.ebay.com/myb/Resolution?caseId=${inr.ebay_inquiry_id}`}
+                              href={`https://www.ebay.com/ItemNotReceived/${inr.ebay_inquiry_id}`}
                               target="_blank"
                               rel="noreferrer"
                               className="rounded bg-amber-900 px-2 py-0.5 text-xs text-amber-300 hover:bg-amber-800 hover:text-amber-200 transition-colors"
