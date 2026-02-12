@@ -6,8 +6,8 @@ const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "",
   allowBooleanAttributes: true,
-  parseTagValue: true,
-  parseAttributeValue: true
+  parseTagValue: false,
+  parseAttributeValue: false
 });
 
 export type GetOrdersResult = {
