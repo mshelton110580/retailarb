@@ -6,10 +6,11 @@ type BucketKey =
   | "total_orders"
   | "delivered"
   | "shipped"
-  | "never_shipped"
   | "checked_in"
   | "not_checked_in"
+  | "never_shipped"
   | "overdue_not_received"
+  | "cancelled"
   | "needs_return";
 
 const cardConfig: Array<{
@@ -20,16 +21,16 @@ const cardConfig: Array<{
   description?: string;
   section?: string;
 }> = [
-  // Primary status (mutually exclusive — these three sum to Total Orders)
+  // Primary delivery status
   { key: "total_orders", label: "Total Orders", color: "text-white", border: "border-slate-500", section: "primary" },
   { key: "delivered", label: "Delivered", color: "text-green-400", border: "border-green-600", description: "eBay confirms delivery", section: "primary" },
   { key: "shipped", label: "Shipped", color: "text-blue-400", border: "border-blue-600", description: "Tracking uploaded, not yet delivered", section: "primary" },
-
-  // Warehouse status (mutually exclusive — these two sum to Total Orders)
+  // Warehouse status
   { key: "checked_in", label: "Checked In", color: "text-emerald-400", border: "border-emerald-600", description: "Scanned at warehouse", section: "warehouse" },
   { key: "not_checked_in", label: "Not Checked In", color: "text-yellow-400", border: "border-yellow-600", description: "Not yet scanned at warehouse", section: "warehouse" },
-  // Action items (may overlap)
-  { key: "never_shipped", label: "Never Shipped", color: "text-rose-400", border: "border-rose-600", description: "No tracking info uploaded", section: "action" },
+  // Action items
+  { key: "cancelled", label: "Cancelled", color: "text-slate-400", border: "border-slate-600", description: "Order cancelled on eBay", section: "action" },
+  { key: "never_shipped", label: "Never Shipped", color: "text-rose-400", border: "border-rose-600", description: "No tracking info uploaded (excludes cancelled)", section: "action" },
   { key: "overdue_not_received", label: "Overdue — Not Received", color: "text-amber-400", border: "border-amber-600", description: "Has tracking, past estimated delivery, no delivery confirmation", section: "action" },
   { key: "needs_return", label: "Needs Return", color: "text-red-400", border: "border-red-600", description: "Checked in with bad condition", section: "action" },
 ];
@@ -71,9 +72,10 @@ export default async function InventoryPage({
     total_orders: [],
     delivered: [],
     shipped: [],
-    never_shipped: [],
     checked_in: [],
     not_checked_in: [],
+    cancelled: [],
+    never_shipped: [],
     overdue_not_received: [],
     needs_return: []
   };
@@ -86,38 +88,49 @@ export default async function InventoryPage({
     const hasTracking = (shipment.tracking_numbers?.length ?? 0) > 0;
     const isDelivered = Boolean(shipment.delivered_at);
     const isCheckedIn = Boolean(shipment.checked_in_at);
+    const isCancelled = shipment.order?.order_status === "Cancelled";
 
     // Total orders — every shipment
     buckets.total_orders.push(shipment);
 
     // === PRIMARY STATUS (mutually exclusive) ===
-    if (isDelivered) {
+    if (isCancelled) {
+      buckets.cancelled.push(shipment);
+    } else if (isDelivered) {
       buckets.delivered.push(shipment);
     } else if (hasTracking) {
       buckets.shipped.push(shipment);
-    } else {
+    }
+    // Orders with no tracking and not cancelled go into never_shipped (action item below)
+
+    // === WAREHOUSE STATUS (mutually exclusive, excludes cancelled) ===
+    if (!isCancelled) {
+      if (isCheckedIn) {
+        buckets.checked_in.push(shipment);
+      } else {
+        buckets.not_checked_in.push(shipment);
+      }
+    }
+
+    // === ACTION ITEMS ===
+
+    // Never shipped: no tracking, not delivered, not cancelled
+    if (!hasTracking && !isDelivered && !isCancelled) {
       buckets.never_shipped.push(shipment);
     }
 
-    // === WAREHOUSE STATUS (mutually exclusive) ===
-    if (isCheckedIn) {
-      buckets.checked_in.push(shipment);
-    } else {
-      buckets.not_checked_in.push(shipment);
-    }
-
-    // === ACTION ITEMS (may overlap with primary/warehouse) ===
-
-    // Overdue: has tracking, no delivery, past expected date
-    let expectedBy: Date | null = null;
-    if (shipment.estimated_max) {
-      expectedBy = new Date(shipment.estimated_max);
-    } else if (shipment.order?.purchase_date) {
-      expectedBy = new Date(shipment.order.purchase_date);
-      expectedBy.setDate(expectedBy.getDate() + DEFAULT_TRANSIT_DAYS);
-    }
-    if (hasTracking && !isDelivered && expectedBy && now > expectedBy) {
-      buckets.overdue_not_received.push(shipment);
+    // Overdue: has tracking, no delivery, past expected date, not cancelled
+    if (!isCancelled) {
+      let expectedBy: Date | null = null;
+      if (shipment.estimated_max) {
+        expectedBy = new Date(shipment.estimated_max);
+      } else if (shipment.order?.purchase_date) {
+        expectedBy = new Date(shipment.order.purchase_date);
+        expectedBy.setDate(expectedBy.getDate() + DEFAULT_TRANSIT_DAYS);
+      }
+      if (hasTracking && !isDelivered && expectedBy && now > expectedBy) {
+        buckets.overdue_not_received.push(shipment);
+      }
     }
 
     // Needs return: checked in with bad condition
@@ -159,19 +172,19 @@ export default async function InventoryPage({
     <div className="space-y-6">
       <PageHeader title="Inventory Dashboard" />
 
-      {/* Primary Status — Mutually Exclusive */}
+      {/* Primary Delivery Status */}
       <div>
         <h2 className="mb-2 text-sm font-medium text-slate-400 uppercase tracking-wider">Delivery Status</h2>
-        <p className="mb-3 text-xs text-slate-600">Delivered + Shipped = Total Orders (minus Never Shipped action items)</p>
+        <p className="mb-3 text-xs text-slate-600">Delivered + Shipped + Cancelled + Never Shipped = Total Orders</p>
         <div className="grid gap-4 md:grid-cols-4">
           {renderCards(primaryCards)}
         </div>
       </div>
 
-      {/* Warehouse Status — Mutually Exclusive */}
+      {/* Warehouse Status */}
       <div>
         <h2 className="mb-2 text-sm font-medium text-slate-400 uppercase tracking-wider">Warehouse Status</h2>
-        <p className="mb-3 text-xs text-slate-600">Checked In + Not Checked In = Total Orders</p>
+        <p className="mb-3 text-xs text-slate-600">Checked In + Not Checked In = Total Orders (excluding cancelled)</p>
         <div className="grid gap-4 md:grid-cols-4">
           {renderCards(warehouseCards)}
         </div>
@@ -202,11 +215,13 @@ export default async function InventoryPage({
                     </Link>
                     <div className="flex gap-2">
                       <span className={`rounded px-1.5 py-0.5 text-xs ${
+                        shipment.order?.order_status === 'Cancelled' ? 'bg-slate-700 text-slate-300' :
                         shipment.delivered_at ? 'bg-green-900 text-green-300' :
                         (shipment.tracking_numbers?.length ?? 0) > 0 ? 'bg-blue-900 text-blue-300' :
                         'bg-rose-900 text-rose-300'
                       }`}>
-                        {shipment.delivered_at ? 'Delivered' :
+                        {shipment.order?.order_status === 'Cancelled' ? 'Cancelled' :
+                         shipment.delivered_at ? 'Delivered' :
                          (shipment.tracking_numbers?.length ?? 0) > 0 ? 'Shipped' :
                          'Never Shipped'}
                       </span>
