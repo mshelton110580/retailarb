@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
+import { TargetType, TargetStatus } from "@prisma/client";
 
 export async function DELETE(
   _req: Request,
@@ -28,23 +29,119 @@ export async function DELETE(
     include: { shipment: true }
   });
 
-  // Delete received_units associated with the matched orders
   const affectedOrderIds: string[] = [];
+
   for (const match of trackingMatches) {
-    if (match.shipment) {
-      affectedOrderIds.push(match.shipment.order_id);
+    if (!match.shipment) continue;
+    const shipment = match.shipment;
+    affectedOrderIds.push(shipment.order_id);
 
-      // Delete received_units for this order
-      await prisma.received_units.deleteMany({
-        where: { order_id: match.shipment.order_id }
-      });
+    // Delete received_units for this order
+    await prisma.received_units.deleteMany({
+      where: { order_id: shipment.order_id }
+    });
 
-      // Clear checked_in_at on the shipment
+    // Check if there are other scans (besides the one being deleted) for this same tracking
+    const otherScans = await prisma.receiving_scans.findMany({
+      where: {
+        tracking_last8: scan.tracking_last8,
+        id: { not: scanId }
+      }
+    });
+
+    if (otherScans.length === 0) {
+      // No other scans for this tracking — fully reset the shipment
       await prisma.shipments.update({
-        where: { id: match.shipment.id },
+        where: { id: shipment.id },
         data: {
           checked_in_at: null,
-          checked_in_by: null
+          checked_in_by: null,
+          scanned_units: 0,
+          scan_status: "pending",
+          is_lot: false
+        }
+      });
+    } else {
+      // There are still other scans for this tracking — recalculate from remaining scans
+      const remainingUnits = otherScans.length;
+      const expectedUnits = shipment.expected_units;
+      const isLot = expectedUnits === 1 && remainingUnits > 1;
+
+      let scanStatus: string;
+      if (remainingUnits === 0) {
+        scanStatus = "pending";
+      } else if (isLot) {
+        scanStatus = "check_quantity";
+      } else if (remainingUnits >= expectedUnits) {
+        scanStatus = "complete";
+      } else {
+        scanStatus = "partial";
+      }
+
+      // Re-create received_units from remaining scans
+      // We need to rebuild them since we deleted all above
+      const firstOtherScan = otherScans[0];
+      for (let i = 0; i < remainingUnits; i++) {
+        const otherScan = otherScans[i];
+        // Get the order items to find the listing/item info
+        const orderItems = await prisma.order_items.findMany({
+          where: { order_id: shipment.order_id }
+        });
+        const firstItem = orderItems[0];
+        if (!firstItem) continue;
+
+        // Ensure target and listing exist
+        const existingTarget = await prisma.targets.findUnique({
+          where: { item_id: firstItem.item_id }
+        });
+        if (!existingTarget) {
+          await prisma.targets.create({
+            data: {
+              item_id: firstItem.item_id,
+              type: TargetType.BIN,
+              status: TargetStatus.PURCHASED,
+              lead_seconds: 0,
+              created_by: shipment.checked_in_by ?? "system",
+              status_history: []
+            }
+          });
+        }
+        const existingListing = await prisma.listings.findUnique({
+          where: { item_id: firstItem.item_id }
+        });
+        if (!existingListing) {
+          await prisma.listings.create({
+            data: {
+              item_id: firstItem.item_id,
+              title: firstItem.title ?? "Unknown",
+              raw_json: {}
+            }
+          });
+        }
+
+        await prisma.received_units.create({
+          data: {
+            order_id: shipment.order_id,
+            item_id: firstItem.item_id,
+            condition_status: otherScan.notes?.includes("condition:") 
+              ? otherScan.notes.split("condition:")[1]?.trim() ?? "good"
+              : "good",
+            unit_index: i + 1,
+            notes: otherScan.notes,
+            scanned_by_user_id: shipment.checked_in_by ?? auth.session!.user!.id as string
+          }
+        });
+      }
+
+      await prisma.shipments.update({
+        where: { id: shipment.id },
+        data: {
+          scanned_units: remainingUnits,
+          scan_status: scanStatus,
+          is_lot: isLot,
+          // Keep checked_in_at if there are still scans
+          checked_in_at: firstOtherScan ? shipment.checked_in_at : null,
+          checked_in_by: firstOtherScan ? shipment.checked_in_by : null
         }
       });
     }
@@ -59,6 +156,6 @@ export async function DELETE(
     success: true,
     deletedScanId: scanId,
     affectedOrders: affectedOrderIds,
-    message: `Scan deleted. Reversed check-in for ${affectedOrderIds.length} order(s).`
+    message: `Scan deleted. Reversed check-in for ${affectedOrderIds.length} order(s). Dashboard counts updated.`
   });
 }
