@@ -109,9 +109,15 @@ export default async function ReturnsPage() {
                       {/* Status badges */}
                       <div className="flex flex-wrap items-center gap-2 mb-2">
                         {ret.ebay_return_id && (
-                          <span className="rounded bg-purple-900 px-2 py-0.5 text-xs text-purple-300">
-                            eBay #{ret.ebay_return_id}
-                          </span>
+                          <a
+                            href={`https://www.ebay.com/myb/PurchaseReturnDetail?returnId=${ret.ebay_return_id}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="rounded bg-purple-900 px-2 py-0.5 text-xs text-purple-300 hover:bg-purple-800 hover:text-purple-200 transition-colors"
+                            title="View return on eBay"
+                          >
+                            Return #{ret.ebay_return_id} ↗
+                          </a>
                         )}
                         {ret.ebay_state && (
                           <span className={`rounded px-2 py-0.5 text-xs ${
@@ -167,7 +173,7 @@ export default async function ReturnsPage() {
                         </div>
                       )}
 
-                      {/* Order link (only if we have a matching order) */}
+                      {/* Links row */}
                       <div className="flex items-center gap-3 text-xs text-slate-400">
                         {ret.order_id ? (
                           <>

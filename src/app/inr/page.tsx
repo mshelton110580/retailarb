@@ -89,20 +89,36 @@ export default async function INRPage() {
                       {/* Status badges */}
                       <div className="flex flex-wrap items-center gap-2 mb-2">
                         {inr.ebay_inquiry_id && (
-                          <span className="rounded bg-amber-900 px-2 py-0.5 text-xs text-amber-300">
-                            eBay Inquiry #{inr.ebay_inquiry_id}
-                          </span>
+                          <a
+                            href={`https://www.ebay.com/myb/Resolution?caseId=${inr.ebay_inquiry_id}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="rounded bg-amber-900 px-2 py-0.5 text-xs text-amber-300 hover:bg-amber-800 hover:text-amber-200 transition-colors"
+                            title="View inquiry on eBay"
+                          >
+                            Inquiry #{inr.ebay_inquiry_id} ↗
+                          </a>
                         )}
                         <span className={`rounded px-2 py-0.5 text-xs ${
                           statusColors[inr.ebay_status ?? ""] ?? "bg-slate-700 text-slate-300"
                         }`}>
                           {inr.ebay_status ?? inr.status_text ?? "Unknown"}
                         </span>
-                        {inr.escalated_to_case && (
+                        {inr.escalated_to_case && inr.case_id ? (
+                          <a
+                            href={`https://www.ebay.com/myb/Resolution?caseId=${inr.case_id}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="rounded bg-red-900 px-2 py-0.5 text-xs text-red-300 hover:bg-red-800 hover:text-red-200 transition-colors"
+                            title="View escalated case on eBay"
+                          >
+                            ESCALATED (Case {inr.case_id}) ↗
+                          </a>
+                        ) : inr.escalated_to_case ? (
                           <span className="rounded bg-red-900 px-2 py-0.5 text-xs text-red-300">
-                            ESCALATED {inr.case_id ? `(Case ${inr.case_id})` : ""}
+                            ESCALATED
                           </span>
-                        )}
+                        ) : null}
                       </div>
 
                       {/* Item info with eBay link */}
