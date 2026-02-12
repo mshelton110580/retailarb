@@ -6,13 +6,18 @@ export function deriveShippingStatus(input: {
   hasTracking: boolean;
   hasScheduledWindow: boolean;
   hasEstimatedWindow: boolean;
+  shippedTime?: string | null;
+  orderStatus?: string | null;
 }) {
+  // Delivered: has actual delivery time
   if (input.actualDelivery) {
     return "delivered";
   }
+  // Canceled
   if (input.cancelStatus && input.cancelStatus.startsWith("Cancel")) {
     return "canceled";
   }
+  // Check for late/not_delivered based on expected delivery window
   const expectedMax = input.scheduledMax ?? input.estimatedMax;
   if (expectedMax) {
     const expectedDate = new Date(expectedMax);
@@ -28,11 +33,17 @@ export function deriveShippingStatus(input: {
       return "late";
     }
   }
-  if (input.hasTracking || input.hasScheduledWindow) {
+  // Shipped: has tracking number, shipped time, or scheduled delivery window
+  if (input.hasTracking || input.shippedTime || input.hasScheduledWindow) {
     return "shipped";
   }
+  // Pre-shipment: has estimated delivery window but no tracking yet
   if (input.hasEstimatedWindow) {
     return "pre_shipment";
   }
-  return "unknown";
+  // If order is Completed on eBay but we have no delivery info, assume delivered
+  if (input.orderStatus === "Completed") {
+    return "delivered";
+  }
+  return "pending";
 }

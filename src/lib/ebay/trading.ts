@@ -41,6 +41,8 @@ export type GetOrdersResult = {
       scheduledMax?: string;
       actualDelivery?: string;
     };
+    shippedTime?: string;
+    paidTime?: string;
   }>;
 };
 
@@ -58,6 +60,13 @@ function buildHeaders(callName: string, token: string) {
 function safeArray<T>(value: T | T[] | undefined): T[] {
   if (!value) return [];
   return Array.isArray(value) ? value : [value];
+}
+
+function extractValue(obj: any): string | undefined {
+  if (obj === undefined || obj === null) return undefined;
+  if (typeof obj === "object" && "value" in obj) return String(obj.value);
+  if (typeof obj === "object" && "#text" in obj) return String(obj["#text"]);
+  return String(obj);
 }
 
 export async function getOrders(token: string, sinceIso: string, untilIso: string): Promise<GetOrdersResult> {
@@ -80,25 +89,70 @@ export async function getOrders(token: string, sinceIso: string, untilIso: strin
   const data = parser.parse(xml);
   const ordersRaw = data?.GetOrdersResponse?.OrderArray?.Order;
   const orders = safeArray(ordersRaw).map((order: any) => {
-    const transactions = safeArray(order.TransactionArray?.Transaction).map((transaction: any) => ({
-      itemId: transaction?.Item?.ItemID ?? "",
-      title: transaction?.Item?.Title ?? "",
-      quantity: Number(transaction?.QuantityPurchased ?? 0),
-      transactionPrice: transaction?.TransactionPrice?.value ?? "0",
-      shippingServiceCost: transaction?.ShippingServiceSelected?.ShippingServiceCost?.value
+    // Collect all tracking details from TRANSACTION level (where eBay puts them)
+    const allTrackingDetails: Array<{ carrier?: string; trackingNumber?: string }> = [];
+
+    const transactions = safeArray(order.TransactionArray?.Transaction).map((transaction: any) => {
+      const txTracking = safeArray(transaction?.ShippingDetails?.ShipmentTrackingDetails).map((detail: any) => ({
+        carrier: detail?.ShippingCarrierUsed ? String(detail.ShippingCarrierUsed) : undefined,
+        trackingNumber: detail?.ShipmentTrackingNumber ? String(detail.ShipmentTrackingNumber) : undefined
+      }));
+      allTrackingDetails.push(...txTracking);
+
+      return {
+        itemId: transaction?.Item?.ItemID ?? "",
+        title: transaction?.Item?.Title ?? "",
+        quantity: Number(transaction?.QuantityPurchased ?? 0),
+        transactionPrice: extractValue(transaction?.TransactionPrice) ?? "0",
+        shippingServiceCost: extractValue(transaction?.ShippingServiceSelected?.ShippingServiceCost)
+      };
+    });
+
+    // Also check order-level ShippingDetails for tracking (fallback)
+    const orderLevelTracking = safeArray(order?.ShippingDetails?.ShipmentTrackingDetails).map((detail: any) => ({
+      carrier: detail?.ShippingCarrierUsed ? String(detail.ShippingCarrierUsed) : undefined,
+      trackingNumber: detail?.ShipmentTrackingNumber ? String(detail.ShipmentTrackingNumber) : undefined
     }));
 
-    const shipments = safeArray(order?.ShippingDetails?.ShipmentTrackingDetails).map((detail: any) => ({
-      carrier: detail?.ShippingCarrierUsed,
-      trackingNumber: detail?.ShipmentTrackingNumber,
-      statusText: detail?.ShipmentTrackingDetails?.Status
-    }));
+    // Merge and deduplicate tracking numbers
+    const seenTracking = new Set<string>();
+    const shipments: Array<{ carrier?: string; trackingNumber?: string; statusText?: string }> = [];
+    for (const t of [...allTrackingDetails, ...orderLevelTracking]) {
+      if (t.trackingNumber && !seenTracking.has(t.trackingNumber)) {
+        seenTracking.add(t.trackingNumber);
+        shipments.push({ carrier: t.carrier, trackingNumber: t.trackingNumber, statusText: undefined });
+      }
+    }
+
+    // Delivery info from Order > ShippingServiceSelected > ShippingPackageInfo
+    const svcSelected = order?.ShippingServiceSelected;
+    const packageInfos = safeArray(svcSelected?.ShippingPackageInfo);
+
+    let actualDelivery: string | undefined;
+    let estimatedMin: string | undefined;
+    let estimatedMax: string | undefined;
+    let scheduledMin: string | undefined;
+    let scheduledMax: string | undefined;
+
+    for (const pkg of packageInfos) {
+      if (pkg?.ActualDeliveryTime && !actualDelivery) actualDelivery = String(pkg.ActualDeliveryTime);
+      if (pkg?.EstimatedDeliveryTimeMin && !estimatedMin) estimatedMin = String(pkg.EstimatedDeliveryTimeMin);
+      if (pkg?.EstimatedDeliveryTimeMax && !estimatedMax) estimatedMax = String(pkg.EstimatedDeliveryTimeMax);
+      if (pkg?.ScheduledDeliveryTimeMin && !scheduledMin) scheduledMin = String(pkg.ScheduledDeliveryTimeMin);
+      if (pkg?.ScheduledDeliveryTimeMax && !scheduledMax) scheduledMax = String(pkg.ScheduledDeliveryTimeMax);
+    }
+
+    // Fallback: check ShippingDetails level
+    if (!actualDelivery) {
+      const fallbackPkg = order?.ShippingDetails?.ShippingPackageInfo;
+      if (fallbackPkg?.ActualDeliveryTime) actualDelivery = String(fallbackPkg.ActualDeliveryTime);
+    }
 
     return {
       orderId: order?.OrderID ?? "",
       createdTime: order?.CreatedTime ?? "",
       orderStatus: order?.OrderStatus ?? "",
-      total: order?.Total?.value ?? "0",
+      total: extractValue(order?.Total) ?? "0",
       shippingAddress: {
         city: order?.ShippingAddress?.CityName,
         state: order?.ShippingAddress?.StateOrProvince,
@@ -107,12 +161,14 @@ export async function getOrders(token: string, sinceIso: string, untilIso: strin
       transactions,
       shipments,
       delivery: {
-        estimatedMin: order?.ShippingDetails?.ShippingServiceSelected?.EstimatedDeliveryTimeMin,
-        estimatedMax: order?.ShippingDetails?.ShippingServiceSelected?.EstimatedDeliveryTimeMax,
-        scheduledMin: order?.ShippingDetails?.ShippingPackageInfo?.ScheduledDeliveryTimeMin,
-        scheduledMax: order?.ShippingDetails?.ShippingPackageInfo?.ScheduledDeliveryTimeMax,
-        actualDelivery: order?.ShippingDetails?.ShippingPackageInfo?.ActualDeliveryTime
-      }
+        estimatedMin,
+        estimatedMax,
+        scheduledMin,
+        scheduledMax,
+        actualDelivery
+      },
+      shippedTime: order?.ShippedTime ? String(order.ShippedTime) : undefined,
+      paidTime: order?.PaidTime ? String(order.PaidTime) : undefined
     };
   });
 
