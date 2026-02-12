@@ -157,7 +157,7 @@ export default async function INRPage({
                           </span>
                           {inr.escalated_to_case && inr.case_id ? (
                             <a
-                              href={`https://www.ebay.com/myb/Resolution?caseId=${inr.case_id}`}
+                              href={`https://www.ebay.com/ReturnCase/${inr.case_id}`}
                               target="_blank"
                               rel="noreferrer"
                               className="rounded bg-red-900 px-2 py-0.5 text-xs text-red-300 hover:bg-red-800 hover:text-red-200 transition-colors"
