@@ -39,13 +39,22 @@ export async function POST(req: Request) {
     }
 
     const now = new Date();
-    const since = new Date(now);
-    since.setDate(now.getDate() - 30);
+    // Split 90 days into 3 x 30-day windows to stay within eBay API limits
+    const windows: Array<{ from: Date; to: Date }> = [];
+    for (let i = 2; i >= 0; i--) {
+      const to = new Date(now);
+      to.setDate(now.getDate() - i * 30);
+      const from = new Date(to);
+      from.setDate(to.getDate() - 30);
+      windows.push({ from, to: i === 0 ? now : to });
+    }
     let totalOrders = 0;
 
     for (const account of accounts) {
       const { token } = await getValidAccessToken(account.id);
-      const result = await getOrders(token, since.toISOString(), now.toISOString());
+
+      for (const window of windows) {
+        const result = await getOrders(token, window.from.toISOString(), window.to.toISOString());
 
       for (const order of result.orders) {
         // Upsert the order
@@ -210,6 +219,7 @@ export async function POST(req: Request) {
 
         totalOrders++;
       }
+      } // end windows loop
 
       // Update last sync time on the account
       await prisma.ebay_accounts.update({
