@@ -14,7 +14,9 @@ type BucketKey =
   | "cancelled"
   | "needs_return"
   | "missing_units"
-  | "check_quantity";
+  | "check_quantity"
+  | "ebay_returns"
+  | "ebay_inr";
 
 const cardConfig: Array<{
   key: BucketKey;
@@ -23,6 +25,7 @@ const cardConfig: Array<{
   border: string;
   description?: string;
   section?: string;
+  linkTo?: string;
 }> = [
   // Primary delivery status
   { key: "total_orders", label: "Total Orders", color: "text-white", border: "border-slate-500", section: "primary" },
@@ -39,6 +42,9 @@ const cardConfig: Array<{
   { key: "needs_return", label: "Needs Return", color: "text-red-400", border: "border-red-600", description: "Checked in with bad condition", section: "action" },
   { key: "missing_units", label: "Missing Units", color: "text-orange-400", border: "border-orange-600", description: "Scanned fewer units than expected quantity", section: "action" },
   { key: "check_quantity", label: "Check Quantity (Lots)", color: "text-fuchsia-400", border: "border-fuchsia-600", description: "More units scanned than listed qty — verify lot count", section: "action" },
+  // eBay Cases
+  { key: "ebay_returns", label: "eBay Returns", color: "text-red-400", border: "border-red-600", description: "Return requests synced from eBay", section: "cases", linkTo: "/returns" },
+  { key: "ebay_inr", label: "eBay INR Cases", color: "text-amber-400", border: "border-amber-600", description: "Item Not Received inquiries from eBay", section: "cases", linkTo: "/inr" },
 ];
 
 export default async function InventoryPage({
@@ -65,6 +71,28 @@ export default async function InventoryPage({
     select: { order_id: true, item_id: true, condition_status: true }
   });
 
+  // Fetch return and INR counts
+  const [returnCount, openReturnCount, inrCount, openInrCount] = await Promise.all([
+    prisma.returns.count(),
+    prisma.returns.count({
+      where: {
+        OR: [
+          { ebay_state: { notIn: ["RETURN_CLOSED", "REFUND_ISSUED"] } },
+          { ebay_state: null, scrape_state: { not: "COMPLETE" } },
+        ],
+      },
+    }),
+    prisma.inr_cases.count(),
+    prisma.inr_cases.count({
+      where: {
+        OR: [
+          { ebay_status: { not: "CLOSED" } },
+          { ebay_status: null },
+        ],
+      },
+    }),
+  ]);
+
   const receivedOrderIds = new Set(receivedUnits.map((u) => u.order_id));
   const goodConditions = new Set(["good", "new", "like_new", "like new", "acceptable", "excellent", "GOOD", "NEW", "LIKE_NEW", "ACCEPTABLE", "EXCELLENT"]);
   const needsReturnOrderIds = new Set(
@@ -86,7 +114,9 @@ export default async function InventoryPage({
     overdue_not_received: [],
     needs_return: [],
     missing_units: [],
-    check_quantity: []
+    check_quantity: [],
+    ebay_returns: [],
+    ebay_inr: [],
   };
 
   const now = new Date();
@@ -110,7 +140,6 @@ export default async function InventoryPage({
     } else if (hasTracking) {
       buckets.shipped.push(shipment);
     }
-    // Orders with no tracking and not cancelled go into never_shipped (action item below)
 
     // === WAREHOUSE STATUS (mutually exclusive, excludes cancelled) ===
     if (!isCancelled) {
@@ -142,7 +171,7 @@ export default async function InventoryPage({
       }
     }
 
-    // Delivered but not checked in: eBay says delivered, but never scanned at warehouse
+    // Delivered but not checked in
     if (isDelivered && !isCheckedIn && !isCancelled) {
       buckets.delivered_not_checked_in.push(shipment);
     }
@@ -152,28 +181,55 @@ export default async function InventoryPage({
       buckets.needs_return.push(shipment);
     }
 
-    // Missing units: scan started but fewer units scanned than expected
+    // Missing units
     if (shipment.scan_status === "partial" && shipment.scanned_units < shipment.expected_units) {
       buckets.missing_units.push(shipment);
     }
 
-    // Check quantity (lots): more units scanned than listed qty
+    // Check quantity (lots)
     if (shipment.is_lot || shipment.scan_status === "check_quantity") {
       buckets.check_quantity.push(shipment);
     }
   }
 
-  const filteredItems = activeFilter ? buckets[activeFilter] ?? [] : [];
+  const filteredItems = activeFilter && activeFilter !== "ebay_returns" && activeFilter !== "ebay_inr"
+    ? buckets[activeFilter] ?? []
+    : [];
 
-  // Group cards by section for visual separation
+  // Group cards by section
   const primaryCards = cardConfig.filter((c) => c.section === "primary");
   const warehouseCards = cardConfig.filter((c) => c.section === "warehouse");
   const actionCards = cardConfig.filter((c) => c.section === "action");
+  const caseCards = cardConfig.filter((c) => c.section === "cases");
+
+  // Override counts for eBay cases (they're not shipment-based)
+  const countOverrides: Partial<Record<BucketKey, number>> = {
+    ebay_returns: returnCount,
+    ebay_inr: inrCount,
+  };
 
   function renderCards(cards: typeof cardConfig) {
     return cards.map((card) => {
-      const count = buckets[card.key].length;
+      const count = countOverrides[card.key] ?? buckets[card.key].length;
       const isActive = activeFilter === card.key;
+
+      // For case cards, link to their dedicated pages
+      if (card.linkTo) {
+        return (
+          <Link
+            key={card.key}
+            href={card.linkTo}
+            className={`rounded-lg border p-4 transition-colors hover:bg-slate-800 cursor-pointer ${card.border} bg-slate-900`}
+          >
+            <p className={`text-sm ${card.color}`}>{card.label}</p>
+            <p className="mt-2 text-2xl font-semibold">{count}</p>
+            {card.description && (
+              <p className="mt-1 text-xs text-slate-500">{card.description}</p>
+            )}
+          </Link>
+        );
+      }
+
       return (
         <Link
           key={card.key}
@@ -222,7 +278,16 @@ export default async function InventoryPage({
         </div>
       </div>
 
-      {activeFilter && (
+      {/* eBay Cases */}
+      <div>
+        <h2 className="mb-2 text-sm font-medium text-slate-400 uppercase tracking-wider">eBay Cases</h2>
+        <p className="mb-3 text-xs text-slate-600">Returns and INR inquiries synced from eBay Post-Order API</p>
+        <div className="grid gap-4 md:grid-cols-4">
+          {renderCards(caseCards)}
+        </div>
+      </div>
+
+      {activeFilter && activeFilter !== "ebay_returns" && activeFilter !== "ebay_inr" && (
         <section className="rounded-lg border border-slate-800 bg-slate-900 p-4">
           <h2 className="mb-3 text-lg font-semibold">
             {cardConfig.find((c) => c.key === activeFilter)?.label ?? activeFilter} ({filteredItems.length})
@@ -255,9 +320,27 @@ export default async function InventoryPage({
                     </div>
                   </div>
                   {shipment.order?.order_items?.map((item) => (
-                    <p key={item.id} className="mt-1 text-xs text-slate-400">
-                      {item.title} (x{item.qty}) — ${Number(item.transaction_price).toFixed(2)}
-                    </p>
+                    <div key={item.id} className="mt-1 flex items-center gap-2 text-xs text-slate-400">
+                      <a
+                        href={`https://www.ebay.com/itm/${item.item_id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-blue-400 hover:text-blue-300 hover:underline truncate max-w-[400px]"
+                        title={item.title ?? "View on eBay"}
+                      >
+                        {item.title ?? `Item ${item.item_id}`}
+                      </a>
+                      <span>(x{item.qty})</span>
+                      <a
+                        href={`https://www.ebay.com/itm/${item.item_id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-slate-500 hover:text-blue-400"
+                        title="Open item on eBay"
+                      >
+                        ↗
+                      </a>
+                    </div>
                   ))}
                   {/* Scan progress */}
                   {shipment.scanned_units > 0 && (

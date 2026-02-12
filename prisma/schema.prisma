@@ -228,30 +228,66 @@ model lot_units {
 }
 
 model returns {
-  id               String @id @default(cuid())
-  order_id         String
-  item_id          String?
+  id                String @id @default(cuid())
+  order_id          String
+  item_id           String?
+  // eBay Post-Order API fields
+  ebay_return_id    String?   @unique
+  ebay_state        String?
+  ebay_status       String?
+  ebay_type         String?
+  return_reason     String?
+  buyer_login_name  String?
+  seller_login_name String?
+  refund_amount     Decimal?  @db.Decimal(12, 2)
+  refund_currency   String?
+  creation_date     DateTime?
+  last_modified     DateTime?
+  respond_by_date   DateTime?
+  escalated         Boolean   @default(false)
+  // Manual/scrape fields
   filed_manually_at DateTime?
-  status_scraped   String?
-  label_pdf_path   String?
-  last_scraped_at  DateTime?
-  next_scrape_at   DateTime?
-  scrape_attempts  Int @default(0)
-  scrape_state     ReturnScrapeState @default(PENDING)
-  notes            String?
-  order            orders @relation(fields: [order_id], references: [order_id])
-  listing          listings? @relation(fields: [item_id], references: [item_id])
+  status_scraped    String?
+  label_pdf_path    String?
+  last_scraped_at   DateTime?
+  next_scrape_at    DateTime?
+  scrape_attempts   Int @default(0)
+  scrape_state      ReturnScrapeState @default(PENDING)
+  notes             String?
+  // Sync tracking
+  last_synced_at    DateTime?
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+  order             orders @relation(fields: [order_id], references: [order_id])
+  listing           listings? @relation(fields: [item_id], references: [item_id])
 }
 
 model inr_cases {
-  id              String @id @default(cuid())
-  order_id        String
-  item_id         String?
+  id                String @id @default(cuid())
+  order_id          String
+  item_id           String?
+  // eBay Post-Order API fields
+  ebay_inquiry_id   String?   @unique
+  ebay_status       String?
+  ebay_state        String?
+  claim_amount      Decimal?  @db.Decimal(12, 2)
+  claim_currency    String?
+  creation_date     DateTime?
+  last_modified     DateTime?
+  respond_by_date   DateTime?
+  buyer_login_name  String?
+  escalated_to_case Boolean   @default(false)
+  case_id           String?
+  // Manual fields
   filed_manually_at DateTime?
-  status_text     String?
-  notes           String?
-  order           orders @relation(fields: [order_id], references: [order_id])
-  listing         listings? @relation(fields: [item_id], references: [item_id])
+  status_text       String?
+  notes             String?
+  // Sync tracking
+  last_synced_at    DateTime?
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+  order             orders @relation(fields: [order_id], references: [order_id])
+  listing           listings? @relation(fields: [item_id], references: [item_id])
 }
 
 model condition_templates {

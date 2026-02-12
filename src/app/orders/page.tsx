@@ -59,10 +59,41 @@ export default async function OrdersPage() {
                     target="_blank"
                     rel="noreferrer"
                   >
-                    Open order
+                    Open order on eBay
                   </a>
                 </div>
-                <div className="mt-1 flex items-center gap-2 text-xs text-slate-400">
+                {/* Item list with eBay links */}
+                {order.order_items?.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {order.order_items.map((item, idx) => (
+                      <div key={idx} className="flex items-center gap-2 text-xs">
+                        <a
+                          href={`https://www.ebay.com/itm/${item.item_id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-blue-400 hover:text-blue-300 hover:underline truncate max-w-[500px]"
+                          title={item.title ?? "View on eBay"}
+                        >
+                          {item.title ?? `Item ${item.item_id}`}
+                        </a>
+                        <span className="text-slate-500">x{item.qty}</span>
+                        {item.transaction_price && (
+                          <span className="text-slate-500">${Number(item.transaction_price).toFixed(2)}</span>
+                        )}
+                        <a
+                          href={`https://www.ebay.com/itm/${item.item_id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-slate-500 hover:text-blue-400 ml-1"
+                          title="Open item on eBay"
+                        >
+                          ↗
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="mt-2 flex items-center gap-2 text-xs text-slate-400">
                   <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium text-white ${statusColors[order.shipments?.[0]?.derived_status ?? "unknown"] ?? "bg-gray-600"}`}>
                     {statusLabels[order.shipments?.[0]?.derived_status ?? "unknown"] ?? "Unknown"}
                   </span>
@@ -74,9 +105,6 @@ export default async function OrdersPage() {
                   <span>Purchased {order.purchase_date.toISOString().slice(0, 10)}</span>
                   {order.shipments?.[0]?.delivered_at && (
                     <><span>·</span><span>Delivered {order.shipments[0].delivered_at.toISOString().slice(0, 10)}</span></>
-                  )}
-                  {order.order_items?.length > 0 && (
-                    <><span>·</span><span>{order.order_items.length} item{order.order_items.length > 1 ? "s" : ""}</span></>
                   )}
                 </div>
               </div>

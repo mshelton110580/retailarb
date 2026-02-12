@@ -20,7 +20,7 @@ type EnrichedScan = {
   notes: string | null;
   matchedOrders: Array<{
     orderId: string;
-    items: Array<{ title: string; qty: number; price: string }>;
+    items: Array<{ title: string; itemId: string; qty: number; price: string }>;
     checkedIn: boolean;
     expectedUnits: number;
     scannedUnits: number;
@@ -147,9 +147,28 @@ export default function ScanList({ scans }: { scans: EnrichedScan[] }) {
                       <div className="mt-1.5 border-l-2 border-slate-700 pl-2">
                         <p className="text-[10px] uppercase tracking-wide text-slate-500">Ordered Items</p>
                         {order.items.map((item, j) => (
-                          <p key={j} className="text-xs text-slate-400">
-                            {item.title} (x{item.qty}) — ${item.price}
-                          </p>
+                          <div key={j} className="flex items-center gap-2 text-xs text-slate-400">
+                            <a
+                              href={`https://www.ebay.com/itm/${item.itemId}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-blue-400 hover:text-blue-300 hover:underline truncate max-w-[350px]"
+                              title={item.title ?? "View on eBay"}
+                            >
+                              {item.title}
+                            </a>
+                            <span>(x{item.qty})</span>
+                            <span>${item.price}</span>
+                            <a
+                              href={`https://www.ebay.com/itm/${item.itemId}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-slate-500 hover:text-blue-400"
+                              title="Open item on eBay"
+                            >
+                              ↗
+                            </a>
+                          </div>
                         ))}
                       </div>
 

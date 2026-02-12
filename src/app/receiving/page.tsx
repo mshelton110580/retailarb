@@ -60,6 +60,7 @@ export default async function ReceivingPage() {
               orderId: m.shipment!.order_id,
               items: m.shipment!.order!.order_items.map((i) => ({
                 title: i.title,
+                itemId: i.item_id,
                 qty: i.qty,
                 price: Number(i.transaction_price).toFixed(2)
               })),
