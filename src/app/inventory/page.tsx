@@ -10,6 +10,7 @@ type BucketKey =
   | "not_checked_in"
   | "never_shipped"
   | "overdue_not_received"
+  | "delivered_not_checked_in"
   | "cancelled"
   | "needs_return";
 
@@ -29,6 +30,7 @@ const cardConfig: Array<{
   { key: "checked_in", label: "Checked In", color: "text-emerald-400", border: "border-emerald-600", description: "Scanned at warehouse", section: "warehouse" },
   { key: "not_checked_in", label: "Not Checked In", color: "text-yellow-400", border: "border-yellow-600", description: "Not yet scanned at warehouse", section: "warehouse" },
   // Action items
+  { key: "delivered_not_checked_in", label: "Delivered — Not Checked In", color: "text-purple-400", border: "border-purple-600", description: "eBay says delivered but not scanned at warehouse — possible return to sender", section: "action" },
   { key: "cancelled", label: "Cancelled", color: "text-slate-400", border: "border-slate-600", description: "Order cancelled on eBay", section: "action" },
   { key: "never_shipped", label: "Never Shipped", color: "text-rose-400", border: "border-rose-600", description: "No tracking info uploaded (excludes cancelled)", section: "action" },
   { key: "overdue_not_received", label: "Overdue — Not Received", color: "text-amber-400", border: "border-amber-600", description: "Has tracking, past estimated delivery, no delivery confirmation", section: "action" },
@@ -74,6 +76,7 @@ export default async function InventoryPage({
     shipped: [],
     checked_in: [],
     not_checked_in: [],
+    delivered_not_checked_in: [],
     cancelled: [],
     never_shipped: [],
     overdue_not_received: [],
@@ -131,6 +134,11 @@ export default async function InventoryPage({
       if (hasTracking && !isDelivered && expectedBy && now > expectedBy) {
         buckets.overdue_not_received.push(shipment);
       }
+    }
+
+    // Delivered but not checked in: eBay says delivered, but never scanned at warehouse
+    if (isDelivered && !isCheckedIn && !isCancelled) {
+      buckets.delivered_not_checked_in.push(shipment);
     }
 
     // Needs return: checked in with bad condition
