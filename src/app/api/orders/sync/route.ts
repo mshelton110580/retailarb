@@ -50,7 +50,7 @@ export async function POST(req: Request) {
       for (const order of result.orders) {
         // Upsert the order
         await prisma.orders.upsert({
-          where: { order_id: order.orderId },
+          where: { order_id: String(order.orderId) },
           update: {
             order_status: order.orderStatus,
             totals: { total: order.total },
@@ -59,7 +59,7 @@ export async function POST(req: Request) {
             ship_to_postal: order.shippingAddress?.postalCode ?? null,
           },
           create: {
-            order_id: order.orderId,
+            order_id: String(order.orderId),
             ebay_account_id: account.id,
             purchase_date: new Date(order.createdTime),
             order_status: order.orderStatus,
@@ -67,19 +67,20 @@ export async function POST(req: Request) {
             ship_to_city: order.shippingAddress?.city ?? null,
             ship_to_state: order.shippingAddress?.state ?? null,
             ship_to_postal: order.shippingAddress?.postalCode ?? null,
-            order_url: `https://order.ebay.com/ord/show?orderId=${order.orderId}`,
+            order_url: `https://order.ebay.com/ord/show?orderId=${String(order.orderId)}`,
           }
         });
 
         // Upsert order items and targets
         for (const tx of order.transactions) {
+          const itemId = String(tx.itemId);
           // Upsert target
           const existingTarget = await prisma.targets.findUnique({
-            where: { item_id: tx.itemId }
+            where: { item_id: itemId }
           });
           if (existingTarget) {
             await prisma.targets.update({
-              where: { item_id: tx.itemId },
+              where: { item_id: itemId },
               data: {
                 status: "PURCHASED",
                 status_history: [
@@ -91,7 +92,7 @@ export async function POST(req: Request) {
           } else {
             await prisma.targets.create({
               data: {
-                item_id: tx.itemId,
+                item_id: itemId,
                 type: "BIN",
                 max_snipe_bid: null,
                 best_offer_amount: null,
@@ -105,14 +106,14 @@ export async function POST(req: Request) {
 
           // Upsert order item - use order_id + item_id as a lookup
           const existingItem = await prisma.order_items.findFirst({
-            where: { order_id: order.orderId, item_id: tx.itemId }
+            where: { order_id: String(order.orderId), item_id: itemId }
           });
           if (existingItem) {
             await prisma.order_items.update({
               where: { id: existingItem.id },
               data: {
-                title: tx.title,
-                qty: tx.quantity,
+                title: String(tx.title),
+                qty: Number(tx.quantity),
                 transaction_price: Number(tx.transactionPrice),
                 shipping_cost: tx.shippingServiceCost ? Number(tx.shippingServiceCost) : null,
                 purchase_date: new Date(order.createdTime)
@@ -121,8 +122,8 @@ export async function POST(req: Request) {
           } else {
             await prisma.order_items.create({
               data: {
-                order_id: order.orderId,
-                item_id: tx.itemId,
+                order_id: String(order.orderId),
+                item_id: itemId,
                 title: tx.title,
                 qty: tx.quantity,
                 transaction_price: Number(tx.transactionPrice),
@@ -146,7 +147,7 @@ export async function POST(req: Request) {
 
         // Upsert shipment - use order_id to find existing
         const existingShipment = await prisma.shipments.findFirst({
-          where: { order_id: order.orderId }
+          where: { order_id: String(order.orderId) }
         });
         let shipmentId: string;
         if (existingShipment) {
@@ -166,7 +167,7 @@ export async function POST(req: Request) {
         } else {
           const newShipment = await prisma.shipments.create({
             data: {
-              order_id: order.orderId,
+              order_id: String(order.orderId),
               derived_status: derivedStatus,
               estimated_min: order.delivery.estimatedMin ? new Date(order.delivery.estimatedMin) : null,
               estimated_max: order.delivery.estimatedMax ? new Date(order.delivery.estimatedMax) : null,
