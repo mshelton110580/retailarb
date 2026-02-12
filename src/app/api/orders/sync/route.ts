@@ -163,23 +163,16 @@ export async function POST(req: Request) {
         });
         let shipmentId: string;
         if (existingShipment) {
-          // Don't downgrade status if order was manually received via scan
-          const hasReceivedUnits = await prisma.received_units.findFirst({
-            where: { order_id: String(order.orderId) }
-          });
-          const shouldKeepDelivered = hasReceivedUnits && existingShipment.derived_status === "delivered";
-
+          // Delivery status always comes from eBay; check-in status is separate
           await prisma.shipments.update({
             where: { id: existingShipment.id },
             data: {
-              derived_status: shouldKeepDelivered ? "delivered" : derivedStatus,
+              derived_status: derivedStatus,
               estimated_min: order.delivery.estimatedMin ? new Date(order.delivery.estimatedMin) : null,
               estimated_max: order.delivery.estimatedMax ? new Date(order.delivery.estimatedMax) : null,
               scheduled_min: order.delivery.scheduledMin ? new Date(order.delivery.scheduledMin) : null,
               scheduled_max: order.delivery.scheduledMax ? new Date(order.delivery.scheduledMax) : null,
-              delivered_at: shouldKeepDelivered
-                ? existingShipment.delivered_at
-                : (order.delivery.actualDelivery ? new Date(order.delivery.actualDelivery) : null),
+              delivered_at: order.delivery.actualDelivery ? new Date(order.delivery.actualDelivery) : null,
               last_refreshed_at: new Date()
             }
           });

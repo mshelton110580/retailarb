@@ -66,6 +66,9 @@ export default async function OrdersPage() {
                   <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium text-white ${statusColors[order.shipments?.[0]?.derived_status ?? "unknown"] ?? "bg-gray-600"}`}>
                     {statusLabels[order.shipments?.[0]?.derived_status ?? "unknown"] ?? "Unknown"}
                   </span>
+                  <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${order.shipments?.[0]?.checked_in_at ? 'bg-emerald-700 text-emerald-100' : 'bg-slate-700 text-slate-300'}`}>
+                    {order.shipments?.[0]?.checked_in_at ? `Checked In ${order.shipments[0].checked_in_at.toISOString().slice(0, 10)}` : 'Not Checked In'}
+                  </span>
                   <span>eBay: {order.order_status}</span>
                   <span>·</span>
                   <span>Purchased {order.purchase_date.toISOString().slice(0, 10)}</span>

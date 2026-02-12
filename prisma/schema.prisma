@@ -55,6 +55,7 @@ model users {
   ebay_accounts ebay_accounts[]
   receiving     receiving_scans[] @relation("scanned_by")
   received_units received_units[]
+  shipments_checked_in shipments[] @relation("shipment_checked_in_by")
 }
 
 model ebay_accounts {
@@ -150,9 +151,12 @@ model shipments {
   scheduled_min    DateTime?
   scheduled_max    DateTime?
   delivered_at     DateTime?
+  checked_in_at    DateTime?
+  checked_in_by    String?
   last_refreshed_at DateTime?
   order            orders   @relation(fields: [order_id], references: [order_id])
   tracking_numbers tracking_numbers[]
+  checked_in_user  users?   @relation("shipment_checked_in_by", fields: [checked_in_by], references: [id])
 }
 
 model tracking_numbers {

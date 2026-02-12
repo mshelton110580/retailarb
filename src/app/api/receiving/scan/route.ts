@@ -119,13 +119,13 @@ export async function POST(req: Request) {
         }
       }
 
-      // Update shipment derived_status to "delivered" if it wasn't already
-      if (shipment.derived_status !== "delivered") {
+      // Mark shipment as checked in (independent of eBay delivery status)
+      if (!shipment.checked_in_at) {
         await prisma.shipments.update({
           where: { id: shipment.id },
           data: {
-            derived_status: "delivered",
-            delivered_at: new Date()
+            checked_in_at: new Date(),
+            checked_in_by: auth.session!.user!.id
           }
         });
       }

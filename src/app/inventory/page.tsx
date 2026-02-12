@@ -2,13 +2,14 @@ import PageHeader from "@/components/page-header";
 import { prisma } from "@/lib/db";
 import Link from "next/link";
 
-type BucketKey = "in_transit" | "shipped" | "delivered" | "not_checked_in" | "overdue_not_received" | "never_shipped" | "late" | "not_delivered" | "needs_return" | "pending";
+type BucketKey = "in_transit" | "shipped" | "delivered" | "checked_in" | "not_checked_in" | "overdue_not_received" | "never_shipped" | "late" | "not_delivered" | "needs_return" | "pending";
 
 const cardConfig: Array<{ key: BucketKey; label: string; color: string; border: string; description?: string }> = [
   { key: "in_transit", label: "In Transit", color: "text-blue-400", border: "border-blue-600" },
   { key: "shipped", label: "Shipped", color: "text-cyan-400", border: "border-cyan-600" },
-  { key: "delivered", label: "Delivered", color: "text-green-400", border: "border-green-600" },
-  { key: "not_checked_in", label: "Delivered — Not Checked In", color: "text-yellow-400", border: "border-yellow-600" },
+  { key: "delivered", label: "Delivered (eBay)", color: "text-green-400", border: "border-green-600" },
+  { key: "checked_in", label: "Checked In", color: "text-emerald-400", border: "border-emerald-600", description: "Scanned and received at warehouse" },
+  { key: "not_checked_in", label: "Not Checked In", color: "text-yellow-400", border: "border-yellow-600", description: "Delivered per eBay but not yet scanned" },
   { key: "overdue_not_received", label: "Overdue — Not Received", color: "text-amber-400", border: "border-amber-600", description: "Tracking uploaded, past estimated delivery, no delivery confirmation" },
   { key: "never_shipped", label: "Never Shipped", color: "text-rose-400", border: "border-rose-600", description: "No tracking info after estimated delivery date" },
   { key: "needs_return", label: "Needs Return", color: "text-red-400", border: "border-red-600" },
@@ -55,6 +56,7 @@ export default async function InventoryPage({
     in_transit: [],
     shipped: [],
     delivered: [],
+    checked_in: [],
     not_checked_in: [],
     overdue_not_received: [],
     never_shipped: [],
@@ -72,6 +74,12 @@ export default async function InventoryPage({
     const orderId = shipment.order_id;
     const hasTracking = (shipment.tracking_numbers?.length ?? 0) > 0;
     const notDelivered = !shipment.delivered_at;
+    const isCheckedIn = Boolean(shipment.checked_in_at);
+
+    // Checked in (scanned at warehouse)
+    if (isCheckedIn) {
+      buckets.checked_in.push(shipment);
+    }
 
     // Check needs_return (checked in but bad condition)
     if (needsReturnOrderIds.has(orderId)) {
@@ -100,7 +108,7 @@ export default async function InventoryPage({
     switch (shipment.derived_status) {
       case "delivered":
         buckets.delivered.push(shipment);
-        if (!receivedOrderIds.has(orderId)) {
+        if (!isCheckedIn) {
           buckets.not_checked_in.push(shipment);
         }
         break;
@@ -170,7 +178,14 @@ export default async function InventoryPage({
                     <Link className="font-medium text-blue-400" href={`/orders/${shipment.order_id}`}>
                       Order {shipment.order_id}
                     </Link>
-                    <span className="text-xs text-slate-500">{shipment.derived_status}</span>
+                    <div className="flex gap-2">
+                      <span className={`rounded px-1.5 py-0.5 text-xs ${shipment.derived_status === 'delivered' ? 'bg-green-900 text-green-300' : shipment.derived_status === 'shipped' ? 'bg-blue-900 text-blue-300' : 'bg-slate-700 text-slate-300'}`}>
+                        eBay: {shipment.derived_status}
+                      </span>
+                      <span className={`rounded px-1.5 py-0.5 text-xs ${shipment.checked_in_at ? 'bg-emerald-900 text-emerald-300' : 'bg-yellow-900 text-yellow-300'}`}>
+                        {shipment.checked_in_at ? `Checked in: ${shipment.checked_in_at.toISOString().slice(0, 10)}` : 'Not checked in'}
+                      </span>
+                    </div>
                   </div>
                   {shipment.order?.order_items?.map((item) => (
                     <p key={item.id} className="mt-1 text-xs text-slate-400">
