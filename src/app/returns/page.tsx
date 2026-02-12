@@ -10,21 +10,58 @@ export default async function ReturnsPage() {
       order: { include: { order_items: true } },
       listing: { select: { title: true } },
     },
-    orderBy: { created_at: "desc" },
+    orderBy: { creation_date: "desc" },
   });
 
+  // Closed states from the eBay Post-Order API
+  const CLOSED_STATES = ["CLOSED"];
+
+  // Calculate summary counts using actual eBay state/status values
+  const totalReturns = returns.length;
+
+  // Open/Active: any return whose ebay_state is NOT "CLOSED"
+  const openReturns = returns.filter(
+    (r) => r.ebay_state && !CLOSED_STATES.includes(r.ebay_state)
+  ).length;
+
+  // Refunded: has a refund amount (actual refund was issued)
+  const refundedReturns = returns.filter(
+    (r) => r.refund_amount !== null && Number(r.refund_amount) > 0
+  ).length;
+
+  // Escalated: ebay_status is "ESCALATED" or the escalated boolean is true
+  const escalatedReturns = returns.filter(
+    (r) => r.escalated || r.ebay_status === "ESCALATED"
+  ).length;
+
   const stateColors: Record<string, string> = {
+    // eBay Post-Order API states
+    CLOSED: "bg-slate-700 text-slate-300",
+    ITEM_READY_TO_SHIP: "bg-yellow-900 text-yellow-300",
+    ITEM_SHIPPED: "bg-cyan-900 text-cyan-300",
+    ITEM_DELIVERED: "bg-blue-900 text-blue-300",
+    REFUND_ISSUED: "bg-green-900 text-green-300",
+    LESS_THAN_A_FULL_REFUND_ISSUED: "bg-orange-900 text-orange-300",
     RETURN_STARTED: "bg-yellow-900 text-yellow-300",
     RETURN_DELIVERED: "bg-blue-900 text-blue-300",
-    REFUND_ISSUED: "bg-green-900 text-green-300",
     RETURN_CLOSED: "bg-slate-700 text-slate-300",
     RETURN_ESCALATED: "bg-red-900 text-red-300",
     RETURN_REQUESTED: "bg-orange-900 text-orange-300",
     RETURN_SHIPPED: "bg-cyan-900 text-cyan-300",
+    // Scrape states
     PENDING: "bg-slate-700 text-slate-300",
     ACTIVE: "bg-yellow-900 text-yellow-300",
     COMPLETE: "bg-green-900 text-green-300",
     FAILED: "bg-red-900 text-red-300",
+  };
+
+  const statusColors: Record<string, string> = {
+    CLOSED: "bg-slate-700 text-slate-300",
+    ESCALATED: "bg-red-900 text-red-300",
+    READY_FOR_SHIPPING: "bg-yellow-900 text-yellow-300",
+    LESS_THAN_A_FULL_REFUND_ISSUED: "bg-orange-900 text-orange-300",
+    REFUND_ISSUED: "bg-green-900 text-green-300",
+    WAITING_FOR_RETURN_SHIPPING: "bg-cyan-900 text-cyan-300",
   };
 
   return (
@@ -37,27 +74,19 @@ export default async function ReturnsPage() {
       <div className="grid gap-4 md:grid-cols-4">
         <div className="rounded-lg border border-slate-800 bg-slate-900 p-4">
           <p className="text-sm text-slate-400">Total Returns</p>
-          <p className="mt-1 text-2xl font-semibold">{returns.length}</p>
+          <p className="mt-1 text-2xl font-semibold">{totalReturns}</p>
         </div>
         <div className="rounded-lg border border-slate-800 bg-slate-900 p-4">
           <p className="text-sm text-yellow-400">Open / Active</p>
-          <p className="mt-1 text-2xl font-semibold">
-            {returns.filter((r) =>
-              r.ebay_state && !["RETURN_CLOSED", "REFUND_ISSUED"].includes(r.ebay_state)
-            ).length}
-          </p>
+          <p className="mt-1 text-2xl font-semibold">{openReturns}</p>
         </div>
         <div className="rounded-lg border border-slate-800 bg-slate-900 p-4">
           <p className="text-sm text-green-400">Refunded</p>
-          <p className="mt-1 text-2xl font-semibold">
-            {returns.filter((r) => r.ebay_state === "REFUND_ISSUED").length}
-          </p>
+          <p className="mt-1 text-2xl font-semibold">{refundedReturns}</p>
         </div>
         <div className="rounded-lg border border-slate-800 bg-slate-900 p-4">
           <p className="text-sm text-red-400">Escalated</p>
-          <p className="mt-1 text-2xl font-semibold">
-            {returns.filter((r) => r.escalated).length}
-          </p>
+          <p className="mt-1 text-2xl font-semibold">{escalatedReturns}</p>
         </div>
       </div>
 
@@ -84,17 +113,33 @@ export default async function ReturnsPage() {
                             eBay #{ret.ebay_return_id}
                           </span>
                         )}
-                        <span className={`rounded px-2 py-0.5 text-xs ${
-                          stateColors[ret.ebay_state ?? ret.scrape_state] ?? "bg-slate-700 text-slate-300"
-                        }`}>
-                          {ret.ebay_state ?? ret.scrape_state}
-                        </span>
+                        {ret.ebay_state && (
+                          <span className={`rounded px-2 py-0.5 text-xs ${
+                            stateColors[ret.ebay_state] ?? "bg-slate-700 text-slate-300"
+                          }`}>
+                            {ret.ebay_state}
+                          </span>
+                        )}
+                        {ret.ebay_status && ret.ebay_status !== ret.ebay_state && (
+                          <span className={`rounded px-2 py-0.5 text-xs ${
+                            statusColors[ret.ebay_status] ?? "bg-slate-700 text-slate-300"
+                          }`}>
+                            {ret.ebay_status}
+                          </span>
+                        )}
+                        {!ret.ebay_state && ret.scrape_state && (
+                          <span className={`rounded px-2 py-0.5 text-xs ${
+                            stateColors[ret.scrape_state] ?? "bg-slate-700 text-slate-300"
+                          }`}>
+                            {ret.scrape_state}
+                          </span>
+                        )}
                         {ret.ebay_type && (
                           <span className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-300">
                             {ret.ebay_type}
                           </span>
                         )}
-                        {ret.escalated && (
+                        {(ret.escalated || ret.ebay_status === "ESCALATED") && (
                           <span className="rounded bg-red-900 px-2 py-0.5 text-xs text-red-300">ESCALATED</span>
                         )}
                       </div>
