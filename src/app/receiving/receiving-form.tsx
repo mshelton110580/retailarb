@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 type ScanResult = {
@@ -20,18 +20,38 @@ export default function ReceivingForm() {
   const [result, setResult] = useState<ScanResult | null>(null);
   const [loading, setLoading] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
+  const trackingRef = useRef<HTMLInputElement>(null);
 
-  async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  // Keep tracking input focused at all times for barcode scanner
+  useEffect(() => {
+    trackingRef.current?.focus();
+
+    // Re-focus on tracking input if user clicks elsewhere on the page
+    const handleClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      // Don't steal focus from other form controls
+      if (target.tagName === "SELECT" || target.tagName === "BUTTON" || (target as HTMLInputElement).name === "notes") return;
+      setTimeout(() => trackingRef.current?.focus(), 50);
+    };
+
+    document.addEventListener("click", handleClick);
+    return () => document.removeEventListener("click", handleClick);
+  }, []);
+
+  const submitScan = useCallback(async (trackingValue: string) => {
+    if (!trackingValue.trim() || loading) return;
+
     setLoading(true);
     setStatus(null);
     setResult(null);
 
-    const form = new FormData(event.currentTarget);
+    const conditionSelect = formRef.current?.querySelector<HTMLSelectElement>('select[name="condition_status"]');
+    const notesInput = formRef.current?.querySelector<HTMLInputElement>('input[name="notes"]');
+
     const payload = {
-      tracking: form.get("tracking"),
-      condition_status: form.get("condition_status"),
-      notes: form.get("notes") || undefined
+      tracking: trackingValue.trim(),
+      condition_status: conditionSelect?.value || "good",
+      notes: notesInput?.value || undefined
     };
 
     try {
@@ -52,39 +72,51 @@ export default function ReceivingForm() {
       if (res.ok) {
         setResult(data);
         if (data.resolution === "MATCHED") {
-          setStatus(`Matched ${data.matchCount} tracking record(s). ${data.receivedUnits} item(s) checked in.`);
+          setStatus(`✓ Matched ${data.matchCount} tracking record(s). ${data.receivedUnits} item(s) checked in.`);
           setStatusType("success");
         } else {
-          setStatus("No matching tracking number found. Scan saved as UNRESOLVED.");
+          setStatus("⚠ No matching tracking number found. Scan saved as UNRESOLVED.");
           setStatusType("warning");
         }
-        formRef.current?.reset();
-        // Focus back on tracking input for rapid scanning
-        const trackingInput = formRef.current?.querySelector<HTMLInputElement>('input[name="tracking"]');
-        trackingInput?.focus();
-        // Refresh the scan list
+        // Clear only the tracking field, keep condition and notes for batch scanning
+        if (trackingRef.current) trackingRef.current.value = "";
+        trackingRef.current?.focus();
         router.refresh();
       } else {
         setStatus(`Error: ${data.error || "Scan failed"}`);
         setStatusType("error");
+        trackingRef.current?.focus();
       }
     } catch (err: any) {
-      // The scan likely succeeded on the server but the response was interrupted
-      // (Cloudflare tunnel timeout, network hiccup, etc.)
       if (err.name === "AbortError") {
-        setStatus("Scan is taking longer than expected. It may have succeeded — refreshing page...");
+        setStatus("⏳ Scan is taking longer than expected. It may have succeeded — refreshing...");
       } else {
-        setStatus("Response interrupted, but scan may have succeeded. Refreshing page...");
+        setStatus("⚠ Response interrupted, but scan may have succeeded. Refreshing...");
       }
       setStatusType("warning");
-      formRef.current?.reset();
-      // Refresh after a short delay to show the updated scan list
-      setTimeout(() => {
-        router.refresh();
-      }, 1000);
+      if (trackingRef.current) trackingRef.current.value = "";
+      trackingRef.current?.focus();
+      setTimeout(() => router.refresh(), 1000);
     } finally {
       setLoading(false);
     }
+  }, [loading, router]);
+
+  // Handle Enter key on tracking input — auto-submit without needing to click button
+  function handleTrackingKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter") {
+      e.preventDefault(); // Prevent default form submit which reloads page
+      const value = (e.target as HTMLInputElement).value;
+      if (value.trim().length >= 8) {
+        submitScan(value);
+      }
+    }
+  }
+
+  function onSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trackingValue = trackingRef.current?.value || "";
+    submitScan(trackingValue);
   }
 
   const statusColor = statusType === "success" ? "text-green-400" : statusType === "warning" ? "text-yellow-400" : "text-red-400";
@@ -93,13 +125,17 @@ export default function ReceivingForm() {
     <div className="space-y-4">
       <form ref={formRef} className="rounded-lg border border-slate-800 bg-slate-900 p-4" onSubmit={onSubmit}>
         <h2 className="text-lg font-semibold">Scan Tracking Number</h2>
+        <p className="text-xs text-slate-500 mt-1">Scan barcode or type tracking number and press Enter</p>
         <div className="mt-3 grid gap-3 md:grid-cols-3">
           <input
-            className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
+            ref={trackingRef}
+            className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-mono"
             name="tracking"
             placeholder="Scan or enter tracking number"
             autoFocus
+            autoComplete="off"
             required
+            onKeyDown={handleTrackingKeyDown}
           />
           <select
             className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
@@ -129,7 +165,7 @@ export default function ReceivingForm() {
           {loading ? "Scanning..." : "Save Scan"}
         </button>
         {status && (
-          <p className={`mt-2 text-sm ${statusColor}`}>
+          <p className={`mt-2 text-sm font-medium ${statusColor}`}>
             {status}
           </p>
         )}
