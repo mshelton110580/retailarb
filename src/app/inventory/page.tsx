@@ -9,7 +9,7 @@ const cardConfig: Array<{ key: BucketKey; label: string; color: string; border: 
   { key: "shipped", label: "Shipped", color: "text-cyan-400", border: "border-cyan-600" },
   { key: "delivered", label: "Delivered (eBay)", color: "text-green-400", border: "border-green-600" },
   { key: "checked_in", label: "Checked In", color: "text-emerald-400", border: "border-emerald-600", description: "Scanned and received at warehouse" },
-  { key: "not_checked_in", label: "Not Checked In", color: "text-yellow-400", border: "border-yellow-600", description: "Delivered per eBay but not yet scanned" },
+  { key: "not_checked_in", label: "Not Checked In", color: "text-yellow-400", border: "border-yellow-600", description: "Orders not yet scanned at warehouse" },
   { key: "overdue_not_received", label: "Overdue — Not Received", color: "text-amber-400", border: "border-amber-600", description: "Tracking uploaded, past estimated delivery, no delivery confirmation" },
   { key: "never_shipped", label: "Never Shipped", color: "text-rose-400", border: "border-rose-600", description: "No tracking info after estimated delivery date" },
   { key: "needs_return", label: "Needs Return", color: "text-red-400", border: "border-red-600" },
@@ -76,9 +76,11 @@ export default async function InventoryPage({
     const notDelivered = !shipment.delivered_at;
     const isCheckedIn = Boolean(shipment.checked_in_at);
 
-    // Checked in (scanned at warehouse)
+    // Check-in status is independent of eBay delivery status
     if (isCheckedIn) {
       buckets.checked_in.push(shipment);
+    } else {
+      buckets.not_checked_in.push(shipment);
     }
 
     // Check needs_return (checked in but bad condition)
@@ -108,9 +110,6 @@ export default async function InventoryPage({
     switch (shipment.derived_status) {
       case "delivered":
         buckets.delivered.push(shipment);
-        if (!isCheckedIn) {
-          buckets.not_checked_in.push(shipment);
-        }
         break;
       case "shipped":
         buckets.shipped.push(shipment);
