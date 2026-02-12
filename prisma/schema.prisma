@@ -240,6 +240,8 @@ model returns {
   buyer_login_name  String?
   seller_login_name String?
   refund_amount     Decimal?  @db.Decimal(12, 2)
+  estimated_refund  Decimal?  @db.Decimal(12, 2)
+  actual_refund     Decimal?  @db.Decimal(12, 2)
   refund_currency   String?
   creation_date     DateTime?
   last_modified     DateTime?

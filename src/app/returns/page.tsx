@@ -24,9 +24,9 @@ export default async function ReturnsPage() {
     (r) => r.ebay_state && !CLOSED_STATES.includes(r.ebay_state)
   ).length;
 
-  // Refunded: has a refund amount (actual refund was issued)
+  // Refunded: only count returns where an actual refund was issued (not just estimated)
   const refundedReturns = returns.filter(
-    (r) => r.refund_amount !== null && Number(r.refund_amount) > 0
+    (r) => r.actual_refund !== null && Number(r.actual_refund) > 0
   ).length;
 
   // Escalated: ebay_status is "ESCALATED" or the escalated boolean is true, BUT only if not closed
@@ -195,11 +195,15 @@ export default async function ReturnsPage() {
                         {ret.return_reason && <span>Reason: {ret.return_reason}</span>}
                         {ret.buyer_login_name && <span>Buyer: {ret.buyer_login_name}</span>}
                         {ret.seller_login_name && <span>Seller: {ret.seller_login_name}</span>}
-                        {ret.refund_amount && (
-                          <span className="text-yellow-400">
-                            Refund: ${Number(ret.refund_amount).toFixed(2)} {ret.refund_currency ?? ""}
+                        {ret.actual_refund ? (
+                          <span className="text-green-400">
+                            Refunded: ${Number(ret.actual_refund).toFixed(2)} {ret.refund_currency ?? ""}
                           </span>
-                        )}
+                        ) : ret.estimated_refund ? (
+                          <span className="text-yellow-400">
+                            Est. Refund: ${Number(ret.estimated_refund).toFixed(2)} {ret.refund_currency ?? ""}
+                          </span>
+                        ) : null}
                         {ret.creation_date && (
                           <span>Created: {ret.creation_date.toISOString().slice(0, 10)}</span>
                         )}

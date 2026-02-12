@@ -180,11 +180,11 @@ async function upsertReturn(ret: EbayReturnSummary) {
   const resolvedOrderId = await resolveOrderId(itemId, rawOrderId);
   const validItemId = await resolveListingItemId(itemId);
 
-  // Extract refund amount — prefer actual over estimated
-  const refundAmount =
-    ret.buyerTotalRefund?.actualRefundAmount?.value ??
-    ret.buyerTotalRefund?.estimatedRefundAmount?.value ??
-    null;
+  // Extract refund amounts — store actual and estimated separately
+  const actualRefund = ret.buyerTotalRefund?.actualRefundAmount?.value ?? null;
+  const estimatedRefund = ret.buyerTotalRefund?.estimatedRefundAmount?.value ?? null;
+  // refund_amount keeps the best available (actual if present, else estimated)
+  const refundAmount = actualRefund ?? estimatedRefund ?? null;
   const refundCurrency =
     ret.buyerTotalRefund?.actualRefundAmount?.currency ??
     ret.buyerTotalRefund?.estimatedRefundAmount?.currency ??
@@ -210,6 +210,8 @@ async function upsertReturn(ret: EbayReturnSummary) {
     buyer_login_name: ret.buyerLoginName ?? null,
     seller_login_name: ret.sellerLoginName ?? null,
     refund_amount: refundAmount,
+    actual_refund: actualRefund,
+    estimated_refund: estimatedRefund,
     refund_currency: refundCurrency,
     creation_date: creationDateStr ? new Date(creationDateStr) : null,
     respond_by_date: respondByStr ? new Date(respondByStr) : null,
