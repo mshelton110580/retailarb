@@ -4,7 +4,28 @@ import { prisma } from "@/lib/db";
 import Link from "next/link";
 import ReturnActions from "./return-actions";
 
-export default async function ReturnsPage() {
+const CLOSED_STATES = ["CLOSED"];
+
+type FilterType = "all" | "open" | "refunded" | "escalated";
+
+function isOpen(r: { ebay_state: string | null }) {
+  return r.ebay_state != null && !CLOSED_STATES.includes(r.ebay_state);
+}
+function isRefunded(r: { actual_refund: unknown }) {
+  return r.actual_refund !== null && Number(r.actual_refund) > 0;
+}
+function isEscalated(r: { escalated: boolean; ebay_status: string | null; ebay_state: string | null }) {
+  return (r.escalated || r.ebay_status === "ESCALATED") && !CLOSED_STATES.includes(r.ebay_state ?? "");
+}
+
+export default async function ReturnsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ filter?: string }>;
+}) {
+  const params = await searchParams;
+  const filter = (params.filter ?? "all") as FilterType;
+
   const returns = await prisma.returns.findMany({
     include: {
       order: { include: { order_items: true } },
@@ -13,29 +34,30 @@ export default async function ReturnsPage() {
     orderBy: { creation_date: "desc" },
   });
 
-  // Closed states from the eBay Post-Order API
-  const CLOSED_STATES = ["CLOSED"];
-
-  // Calculate summary counts using actual eBay state/status values
+  // Counts
   const totalReturns = returns.length;
+  const openCount = returns.filter(isOpen).length;
+  const refundedCount = returns.filter(isRefunded).length;
+  const escalatedCount = returns.filter(isEscalated).length;
 
-  // Open/Active: any return whose ebay_state is NOT "CLOSED"
-  const openReturns = returns.filter(
-    (r) => r.ebay_state && !CLOSED_STATES.includes(r.ebay_state)
-  ).length;
+  // Apply filter
+  const filtered =
+    filter === "open"
+      ? returns.filter(isOpen)
+      : filter === "refunded"
+        ? returns.filter(isRefunded)
+        : filter === "escalated"
+          ? returns.filter(isEscalated)
+          : returns;
 
-  // Refunded: only count returns where an actual refund was issued (not just estimated)
-  const refundedReturns = returns.filter(
-    (r) => r.actual_refund !== null && Number(r.actual_refund) > 0
-  ).length;
-
-  // Escalated: ebay_status is "ESCALATED" or the escalated boolean is true, BUT only if not closed
-  const escalatedReturns = returns.filter(
-    (r) => (r.escalated || r.ebay_status === "ESCALATED") && !CLOSED_STATES.includes(r.ebay_state ?? "")
-  ).length;
+  const filterLabels: Record<FilterType, string> = {
+    all: "All Returns",
+    open: "Open / Active Returns",
+    refunded: "Refunded Returns",
+    escalated: "Escalated Returns",
+  };
 
   const stateColors: Record<string, string> = {
-    // eBay Post-Order API states
     CLOSED: "bg-slate-700 text-slate-300",
     ITEM_READY_TO_SHIP: "bg-yellow-900 text-yellow-300",
     ITEM_SHIPPED: "bg-cyan-900 text-cyan-300",
@@ -48,7 +70,6 @@ export default async function ReturnsPage() {
     RETURN_ESCALATED: "bg-red-900 text-red-300",
     RETURN_REQUESTED: "bg-orange-900 text-orange-300",
     RETURN_SHIPPED: "bg-cyan-900 text-cyan-300",
-    // Scrape states
     PENDING: "bg-slate-700 text-slate-300",
     ACTIVE: "bg-yellow-900 text-yellow-300",
     COMPLETE: "bg-green-900 text-green-300",
@@ -64,40 +85,57 @@ export default async function ReturnsPage() {
     WAITING_FOR_RETURN_SHIPPING: "bg-cyan-900 text-cyan-300",
   };
 
+  const cards: { key: FilterType; label: string; count: number; color: string; activeRing: string }[] = [
+    { key: "all", label: "Total Returns", count: totalReturns, color: "text-slate-400", activeRing: "ring-slate-500" },
+    { key: "open", label: "Open / Active", count: openCount, color: "text-yellow-400", activeRing: "ring-yellow-500" },
+    { key: "refunded", label: "Refunded", count: refundedCount, color: "text-green-400", activeRing: "ring-green-500" },
+    { key: "escalated", label: "Escalated", count: escalatedCount, color: "text-red-400", activeRing: "ring-red-500" },
+  ];
+
   return (
     <div className="space-y-6">
       <PageHeader title="Returns">
         <SyncReturnsButton />
       </PageHeader>
 
-      {/* Summary */}
+      {/* Summary Cards — clickable filters */}
       <div className="grid gap-4 md:grid-cols-4">
-        <div className="rounded-lg border border-slate-800 bg-slate-900 p-4">
-          <p className="text-sm text-slate-400">Total Returns</p>
-          <p className="mt-1 text-2xl font-semibold">{totalReturns}</p>
-        </div>
-        <div className="rounded-lg border border-slate-800 bg-slate-900 p-4">
-          <p className="text-sm text-yellow-400">Open / Active</p>
-          <p className="mt-1 text-2xl font-semibold">{openReturns}</p>
-        </div>
-        <div className="rounded-lg border border-slate-800 bg-slate-900 p-4">
-          <p className="text-sm text-green-400">Refunded</p>
-          <p className="mt-1 text-2xl font-semibold">{refundedReturns}</p>
-        </div>
-        <div className="rounded-lg border border-slate-800 bg-slate-900 p-4">
-          <p className="text-sm text-red-400">Escalated</p>
-          <p className="mt-1 text-2xl font-semibold">{escalatedReturns}</p>
-        </div>
+        {cards.map((card) => (
+          <Link
+            key={card.key}
+            href={card.key === "all" ? "/returns" : `/returns?filter=${card.key}`}
+            className={`rounded-lg border bg-slate-900 p-4 transition-all hover:bg-slate-800 cursor-pointer ${
+              filter === card.key
+                ? `ring-2 ${card.activeRing} border-transparent`
+                : "border-slate-800"
+            }`}
+          >
+            <p className={`text-sm ${card.color}`}>{card.label}</p>
+            <p className="mt-1 text-2xl font-semibold">{card.count}</p>
+          </Link>
+        ))}
       </div>
+
+      {/* Active filter indicator */}
+      {filter !== "all" && (
+        <div className="flex items-center gap-2 text-sm text-slate-400">
+          <span>Showing: <strong className="text-slate-200">{filterLabels[filter]}</strong> ({filtered.length})</span>
+          <Link href="/returns" className="text-blue-400 hover:underline text-xs">Clear filter</Link>
+        </div>
+      )}
 
       {/* Returns List */}
       <section className="rounded-lg border border-slate-800 bg-slate-900 p-4">
-        <h2 className="text-lg font-semibold mb-3">All Returns</h2>
+        <h2 className="text-lg font-semibold mb-3">{filterLabels[filter]}</h2>
         <div className="space-y-3 text-sm text-slate-300">
-          {returns.length === 0 ? (
-            <p className="text-slate-500">No returns found. Click &quot;Sync Returns &amp; INR from eBay&quot; to fetch data.</p>
+          {filtered.length === 0 ? (
+            <p className="text-slate-500">
+              {returns.length === 0
+                ? 'No returns found. Click "Sync Returns & INR from eBay" to fetch data.'
+                : "No returns match this filter."}
+            </p>
           ) : (
-            returns.map((ret) => {
+            filtered.map((ret) => {
               const orderItems = ret.order?.order_items ?? [];
               const matchedItem = orderItems.find((i) => i.item_id === ret.item_id);
               const displayTitle = ret.listing?.title ?? matchedItem?.title ?? (ret.item_id ? `Item ${ret.item_id}` : "Unknown Item");
@@ -145,7 +183,7 @@ export default async function ReturnsPage() {
                             {ret.ebay_type}
                           </span>
                         )}
-                        {(ret.escalated || ret.ebay_status === "ESCALATED") && !CLOSED_STATES.includes(ret.ebay_state ?? "") && (
+                        {isEscalated(ret) && (
                           <span className="rounded bg-red-900 px-2 py-0.5 text-xs text-red-300">ESCALATED</span>
                         )}
                       </div>
