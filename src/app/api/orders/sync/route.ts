@@ -153,7 +153,8 @@ export async function POST(req: Request) {
           hasScheduledWindow: Boolean(order.delivery.scheduledMin || order.delivery.scheduledMax),
           hasEstimatedWindow: Boolean(order.delivery.estimatedMin || order.delivery.estimatedMax),
           shippedTime: order.shippedTime ?? null,
-          orderStatus: order.orderStatus
+          orderStatus: order.orderStatus,
+          purchaseDate: order.createdTime ?? null
         });
 
         // Upsert shipment - use order_id to find existing

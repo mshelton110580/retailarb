@@ -2,7 +2,7 @@ import PageHeader from "@/components/page-header";
 import { prisma } from "@/lib/db";
 import Link from "next/link";
 
-type BucketKey = "in_transit" | "shipped" | "delivered" | "not_checked_in" | "overdue_not_received" | "late" | "not_delivered" | "needs_return" | "pending";
+type BucketKey = "in_transit" | "shipped" | "delivered" | "not_checked_in" | "overdue_not_received" | "never_shipped" | "late" | "not_delivered" | "needs_return" | "pending";
 
 const cardConfig: Array<{ key: BucketKey; label: string; color: string; border: string; description?: string }> = [
   { key: "in_transit", label: "In Transit", color: "text-blue-400", border: "border-blue-600" },
@@ -10,6 +10,7 @@ const cardConfig: Array<{ key: BucketKey; label: string; color: string; border: 
   { key: "delivered", label: "Delivered", color: "text-green-400", border: "border-green-600" },
   { key: "not_checked_in", label: "Delivered — Not Checked In", color: "text-yellow-400", border: "border-yellow-600" },
   { key: "overdue_not_received", label: "Overdue — Not Received", color: "text-amber-400", border: "border-amber-600", description: "Tracking uploaded, past estimated delivery, no delivery confirmation" },
+  { key: "never_shipped", label: "Never Shipped", color: "text-rose-400", border: "border-rose-600", description: "No tracking info after estimated delivery date" },
   { key: "needs_return", label: "Needs Return", color: "text-red-400", border: "border-red-600" },
   { key: "late", label: "Late", color: "text-orange-400", border: "border-orange-600" },
   { key: "not_delivered", label: "Not Delivered", color: "text-red-400", border: "border-red-500" },
@@ -56,6 +57,7 @@ export default async function InventoryPage({
     delivered: [],
     not_checked_in: [],
     overdue_not_received: [],
+    never_shipped: [],
     late: [],
     not_delivered: [],
     needs_return: [],
@@ -76,18 +78,23 @@ export default async function InventoryPage({
       buckets.needs_return.push(shipment);
     }
 
+    // Determine expected delivery date
+    let expectedBy: Date | null = null;
+    if (shipment.estimated_max) {
+      expectedBy = new Date(shipment.estimated_max);
+    } else if (shipment.order?.purchase_date) {
+      expectedBy = new Date(shipment.order.purchase_date);
+      expectedBy.setDate(expectedBy.getDate() + DEFAULT_TRANSIT_DAYS);
+    }
+
     // Check overdue_not_received: has tracking, no delivery, past expected date
-    if (hasTracking && notDelivered) {
-      let expectedBy: Date | null = null;
-      if (shipment.estimated_max) {
-        expectedBy = new Date(shipment.estimated_max);
-      } else if (shipment.order?.purchase_date) {
-        expectedBy = new Date(shipment.order.purchase_date);
-        expectedBy.setDate(expectedBy.getDate() + DEFAULT_TRANSIT_DAYS);
-      }
-      if (expectedBy && now > expectedBy) {
-        buckets.overdue_not_received.push(shipment);
-      }
+    if (hasTracking && notDelivered && expectedBy && now > expectedBy) {
+      buckets.overdue_not_received.push(shipment);
+    }
+
+    // Check never_shipped: no tracking at all, past expected delivery date
+    if (!hasTracking && notDelivered && expectedBy && now > expectedBy) {
+      buckets.never_shipped.push(shipment);
     }
 
     switch (shipment.derived_status) {
@@ -110,6 +117,10 @@ export default async function InventoryPage({
         break;
       case "not_delivered":
         buckets.not_delivered.push(shipment);
+        break;
+      case "not_received":
+        // Derived from shipping.ts: no tracking, past expected date
+        buckets.never_shipped.push(shipment);
         break;
       case "pending":
         buckets.pending.push(shipment);

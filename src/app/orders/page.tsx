@@ -10,6 +10,7 @@ const statusColors: Record<string, string> = {
   pending: "bg-gray-600",
   late: "bg-orange-600",
   not_delivered: "bg-red-600",
+  not_received: "bg-rose-600",
   canceled: "bg-red-800",
   unknown: "bg-gray-600"
 };
@@ -21,6 +22,7 @@ const statusLabels: Record<string, string> = {
   pending: "Pending",
   late: "Late",
   not_delivered: "Not Delivered",
+  not_received: "Never Shipped",
   canceled: "Canceled",
   unknown: "Unknown"
 };
