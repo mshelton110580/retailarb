@@ -148,7 +148,7 @@ export default async function ReturnsPage({
                       <div className="flex flex-wrap items-center gap-2 mb-2">
                         {ret.ebay_return_id && (
                           <a
-                            href={`https://www.ebay.com/myb/PurchaseReturnDetail?returnId=${ret.ebay_return_id}`}
+                            href={`https://www.ebay.com/rt/ReturnDetails?returnId=${ret.ebay_return_id}`}
                             target="_blank"
                             rel="noreferrer"
                             className="rounded bg-purple-900 px-2 py-0.5 text-xs text-purple-300 hover:bg-purple-800 hover:text-purple-200 transition-colors"
