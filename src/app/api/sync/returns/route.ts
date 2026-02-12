@@ -12,12 +12,10 @@ import {
 /**
  * POST /api/sync/returns
  * Syncs return requests and INR inquiries from eBay Post-Order API.
- * Searches the last 90 days (3 x 30-day windows).
+ * Searches the last 90 days in a single call (limit=200, paginated).
  *
- * Note: Returns and INR inquiries are filed by BUYERS against items
- * the user SOLD. The item_id is the listing item_id, not a purchase
- * order item. We store all cases regardless of whether they match
- * a purchase order in our system.
+ * Returns are searched with role=BUYER since this is a buyer account.
+ * All cases are stored regardless of whether they match a purchase order.
  */
 export async function POST(req: Request) {
   const auth = await requireRole(["ADMIN"]);
@@ -32,86 +30,89 @@ export async function POST(req: Request) {
     }
 
     const now = new Date();
-    // Build 90-day windows (3 x 30 days) for searching
-    const windows: Array<{ from: string; to: string }> = [];
-    for (let i = 2; i >= 0; i--) {
-      const to = new Date(now);
-      to.setDate(now.getDate() - i * 30);
-      const from = new Date(to);
-      from.setDate(to.getDate() - 30);
-      windows.push({
-        from: from.toISOString(),
-        to: (i === 0 ? now : to).toISOString(),
-      });
-    }
+    const ninetyDaysAgo = new Date(now);
+    ninetyDaysAgo.setDate(now.getDate() - 90);
+
+    const dateFrom = ninetyDaysAgo.toISOString();
+    const dateTo = now.toISOString();
 
     let totalReturns = 0;
     let totalInquiries = 0;
     const errors: string[] = [];
 
     for (const account of accounts) {
+      // Get a fresh token for each account
       const { token } = await getValidAccessToken(account.id);
 
       // ============================================================
-      // SYNC RETURNS (as seller — buyers file returns against us)
+      // SYNC RETURNS (role=BUYER — we are the buyer)
       // ============================================================
-      for (const window of windows) {
-        try {
-          let offset = 0;
-          let hasMore = true;
+      try {
+        let offset = 0;
+        let hasMore = true;
 
-          while (hasMore) {
-            const result = await searchReturns(token, {
-              dateFrom: window.from,
-              dateTo: window.to,
-              limit: 200,
-              offset,
-            });
+        while (hasMore) {
+          const result = await searchReturns(token, {
+            dateFrom,
+            dateTo,
+            role: "BUYER",
+            limit: 200,
+            offset,
+          });
 
-            for (const ret of result.members) {
+          console.log(`[Sync Returns] Got ${result.members.length} returns (offset=${offset}, total=${result.paginationOutput.totalEntries})`);
+
+          for (const ret of result.members) {
+            try {
               await upsertReturn(ret);
               totalReturns++;
+            } catch (err: any) {
+              console.error(`[Sync Returns] Failed to upsert return ${ret.returnId}:`, err.message);
             }
-
-            const total = result.paginationOutput.totalEntries;
-            offset += result.members.length;
-            hasMore = offset < total && result.members.length > 0;
           }
-        } catch (err: any) {
-          console.error(`[Sync Returns] Window ${window.from} - ${window.to} failed:`, err.message);
-          errors.push(`Returns ${window.from.slice(0, 10)}: ${err.message}`);
+
+          const total = result.paginationOutput.totalEntries;
+          offset += result.members.length;
+          hasMore = offset < total && result.members.length > 0;
         }
+      } catch (err: any) {
+        console.error(`[Sync Returns] Failed:`, err.message);
+        errors.push(`Returns: ${err.message}`);
       }
 
       // ============================================================
-      // SYNC INQUIRIES (INR — buyers file INR against us)
+      // SYNC INQUIRIES (INR)
       // ============================================================
-      for (const window of windows) {
-        try {
-          let offset = 0;
-          let hasMore = true;
+      try {
+        let offset = 0;
+        let hasMore = true;
 
-          while (hasMore) {
-            const result = await searchInquiries(token, {
-              dateFrom: window.from,
-              dateTo: window.to,
-              limit: 200,
-              offset,
-            });
+        while (hasMore) {
+          const result = await searchInquiries(token, {
+            dateFrom,
+            dateTo,
+            limit: 200,
+            offset,
+          });
 
-            for (const inq of result.members) {
+          console.log(`[Sync Inquiries] Got ${result.members.length} inquiries (offset=${offset}, total=${result.paginationOutput.totalEntries})`);
+
+          for (const inq of result.members) {
+            try {
               await upsertInquiry(inq);
               totalInquiries++;
+            } catch (err: any) {
+              console.error(`[Sync Inquiries] Failed to upsert inquiry ${inq.inquiryId}:`, err.message);
             }
-
-            const total = result.paginationOutput.totalEntries;
-            offset += result.members.length;
-            hasMore = offset < total && result.members.length > 0;
           }
-        } catch (err: any) {
-          console.error(`[Sync Inquiries] Window ${window.from} - ${window.to} failed:`, err.message);
-          errors.push(`Inquiries ${window.from.slice(0, 10)}: ${err.message}`);
+
+          const total = result.paginationOutput.totalEntries;
+          offset += result.members.length;
+          hasMore = offset < total && result.members.length > 0;
         }
+      } catch (err: any) {
+        console.error(`[Sync Inquiries] Failed:`, err.message);
+        errors.push(`Inquiries: ${err.message}`);
       }
     }
 
@@ -169,23 +170,35 @@ async function resolveListingItemId(itemId: string | null): Promise<string | nul
 
 async function upsertReturn(ret: EbayReturnSummary) {
   const returnId = String(ret.returnId);
-  const itemId = ret.itemId ? String(ret.itemId) : null;
+
+  // Extract nested fields from the actual API response structure
+  const itemId = ret.creationInfo?.item?.itemId
+    ? String(ret.creationInfo.item.itemId)
+    : null;
   const rawOrderId = ret.orderId ? String(ret.orderId) : null;
 
   const resolvedOrderId = await resolveOrderId(itemId, rawOrderId);
   const validItemId = await resolveListingItemId(itemId);
 
-  // Extract refund amount
+  // Extract refund amount — prefer actual over estimated
   const refundAmount =
     ret.buyerTotalRefund?.actualRefundAmount?.value ??
     ret.buyerTotalRefund?.estimatedRefundAmount?.value ??
-    ret.totalRefundAmount?.value ??
     null;
   const refundCurrency =
     ret.buyerTotalRefund?.actualRefundAmount?.currency ??
     ret.buyerTotalRefund?.estimatedRefundAmount?.currency ??
-    ret.totalRefundAmount?.currency ??
     null;
+
+  // Extract dates from nested structure
+  const creationDateStr = ret.creationInfo?.creationDate?.value ?? null;
+  const respondByStr =
+    ret.buyerResponseDue?.respondByDate?.value ??
+    ret.sellerResponseDue?.respondByDate?.value ??
+    null;
+
+  // Extract return reason from creationInfo
+  const returnReason = ret.creationInfo?.reason ?? null;
 
   const data = {
     order_id: resolvedOrderId,
@@ -193,17 +206,21 @@ async function upsertReturn(ret: EbayReturnSummary) {
     ebay_state: ret.state ?? null,
     ebay_status: ret.status ?? null,
     ebay_type: ret.currentType ?? null,
-    return_reason: (ret as any).returnReason ?? null,
+    return_reason: returnReason,
     buyer_login_name: ret.buyerLoginName ?? null,
     seller_login_name: ret.sellerLoginName ?? null,
     refund_amount: refundAmount,
     refund_currency: refundCurrency,
-    creation_date: ret.creationDate ? new Date(ret.creationDate) : null,
-    last_modified: ret.lastModifiedDate ? new Date(ret.lastModifiedDate) : null,
-    respond_by_date: ret.respondByDate ? new Date(ret.respondByDate) : null,
-    escalated: ret.escalationInfo?.escalateStatus === "ESCALATED",
+    creation_date: creationDateStr ? new Date(creationDateStr) : null,
+    respond_by_date: respondByStr ? new Date(respondByStr) : null,
+    escalated: false, // The response structure doesn't have a simple escalated flag; check status instead
     last_synced_at: new Date(),
   };
+
+  // Check if status indicates escalation
+  if (ret.status === "ESCALATED" || ret.state === "ESCALATED") {
+    data.escalated = true;
+  }
 
   const existing = await prisma.returns.findUnique({
     where: { ebay_return_id: returnId },

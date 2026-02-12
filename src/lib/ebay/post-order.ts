@@ -2,7 +2,7 @@
  * eBay Post-Order API v2 client
  * Handles Search Returns, Search Inquiries, and Search Cases
  * Base URL: https://api.ebay.com/post-order/v2/
- * Auth: OAuth user token (same as Trading API)
+ * Auth: OAuth user token with IAF prefix
  */
 
 const POST_ORDER_BASE = "https://api.ebay.com/post-order/v2";
@@ -17,45 +17,60 @@ function buildHeaders(token: string) {
 }
 
 // ============================================================
-// RETURN TYPES
+// RETURN TYPES (matching actual API response structure)
 // ============================================================
 
 export type EbayReturnSummary = {
   returnId: string;
-  currentType: string;
-  state: string;
-  status: string;
-  creationDate: string;
-  lastModifiedDate: string;
-  buyerLoginName: string;
-  sellerLoginName: string;
-  itemId: string;
-  transactionId: string;
   orderId?: string;
-  returnReason?: string;
-  totalRefundAmount?: {
-    value: number;
-    currency: string;
+  buyerLoginName?: string;
+  sellerLoginName?: string;
+  currentType?: string;
+  state?: string;
+  status?: string;
+  creationInfo?: {
+    item?: {
+      itemId?: string;
+      transactionId?: string;
+      returnQuantity?: number;
+    };
+    type?: string;
+    reason?: string;
+    reasonType?: string;
+    comments?: {
+      content?: string;
+    };
+    creationDate?: {
+      value?: string;
+    };
+  };
+  sellerTotalRefund?: {
+    estimatedRefundAmount?: { value: number; currency: string };
+    actualRefundAmount?: { value: number; currency: string };
   };
   buyerTotalRefund?: {
-    actualRefundAmount?: {
-      value: number;
-      currency: string;
-    };
-    estimatedRefundAmount?: {
-      value: number;
-      currency: string;
-    };
+    estimatedRefundAmount?: { value: number; currency: string };
+    actualRefundAmount?: { value: number; currency: string };
   };
-  respondByDate?: string;
+  sellerResponseDue?: {
+    activityDue?: string;
+    respondByDate?: { value?: string };
+  };
+  buyerResponseDue?: {
+    activityDue?: string;
+    respondByDate?: { value?: string };
+  };
   escalationInfo?: {
-    escalateStatus: string;
-    caseId?: string;
+    buyerEscalationEligibilityInfo?: { eligible?: boolean };
+    sellerEscalationEligibilityInfo?: { eligible?: boolean };
   };
+  sellerAvailableOptions?: Array<{ actionType?: string; actionURL?: string }>;
+  buyerAvailableOptions?: Array<{ actionType?: string; actionURL?: string }>;
 };
 
 export type SearchReturnsResponse = {
   members: EbayReturnSummary[];
+  total?: number;
   paginationOutput: {
     totalEntries: number;
     totalPages: number;
@@ -66,21 +81,21 @@ export type SearchReturnsResponse = {
 
 export type EbayInquirySummary = {
   inquiryId: string;
-  inquiryStatusEnum: string;
-  itemId: string;
+  inquiryStatusEnum?: string;
+  itemId?: string;
   transactionId?: string;
-  buyer: string;
+  buyer?: string;
   seller?: string;
-  creationDate: {
-    value: string;
+  creationDate?: {
+    value?: string;
     formattedValue?: string;
   };
   lastModifiedDate?: {
-    value: string;
+    value?: string;
     formattedValue?: string;
   };
   respondByDate?: {
-    value: string;
+    value?: string;
     formattedValue?: string;
   };
   claimAmount?: {
@@ -88,7 +103,7 @@ export type EbayInquirySummary = {
     currency: string;
   };
   escalationInfo?: {
-    escalateStatus: string;
+    escalateStatus?: string;
     caseId?: string;
   };
 };
@@ -147,8 +162,9 @@ export async function searchReturns(
   // Normalize: API might return empty response or missing members
   return {
     members: data.members ?? [],
+    total: data.total,
     paginationOutput: data.paginationOutput ?? {
-      totalEntries: 0,
+      totalEntries: data.total ?? 0,
       totalPages: 0,
       offset: 0,
       limit: 200,
