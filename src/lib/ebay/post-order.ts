@@ -9,7 +9,7 @@ const POST_ORDER_BASE = "https://api.ebay.com/post-order/v2";
 
 function buildHeaders(token: string) {
   return {
-    Authorization: `Bearer ${token}`,
+    Authorization: `IAF ${token}`,
     "Content-Type": "application/json",
     Accept: "application/json",
     "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
