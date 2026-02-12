@@ -29,9 +29,9 @@ export default async function ReturnsPage() {
     (r) => r.refund_amount !== null && Number(r.refund_amount) > 0
   ).length;
 
-  // Escalated: ebay_status is "ESCALATED" or the escalated boolean is true
+  // Escalated: ebay_status is "ESCALATED" or the escalated boolean is true, BUT only if not closed
   const escalatedReturns = returns.filter(
-    (r) => r.escalated || r.ebay_status === "ESCALATED"
+    (r) => (r.escalated || r.ebay_status === "ESCALATED") && !CLOSED_STATES.includes(r.ebay_state ?? "")
   ).length;
 
   const stateColors: Record<string, string> = {
@@ -139,7 +139,7 @@ export default async function ReturnsPage() {
                             {ret.ebay_type}
                           </span>
                         )}
-                        {(ret.escalated || ret.ebay_status === "ESCALATED") && (
+                        {(ret.escalated || ret.ebay_status === "ESCALATED") && !CLOSED_STATES.includes(ret.ebay_state ?? "") && (
                           <span className="rounded bg-red-900 px-2 py-0.5 text-xs text-red-300">ESCALATED</span>
                         )}
                       </div>
