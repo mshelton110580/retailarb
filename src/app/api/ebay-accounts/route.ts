@@ -23,6 +23,20 @@ export async function GET() {
   return NextResponse.json({ accounts });
 }
 
+export async function DELETE(req: Request) {
+  const auth = await requireRole(["ADMIN"]);
+  if (!auth.ok) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+  }
+  const { searchParams } = new URL(req.url);
+  const id = searchParams.get("id");
+  if (!id) {
+    return NextResponse.json({ error: "Missing account id" }, { status: 400 });
+  }
+  await prisma.ebay_accounts.delete({ where: { id } });
+  return NextResponse.json({ ok: true });
+}
+
 export async function POST(req: Request) {
   const auth = await requireRole(["ADMIN"]);
   if (!auth.ok || !auth.session?.user) {
