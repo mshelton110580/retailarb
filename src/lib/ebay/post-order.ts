@@ -141,7 +141,7 @@ export async function searchReturns(
   if (options.role) params.set("role", options.role);
   params.set("limit", String(options.limit ?? 200));
   params.set("offset", String(options.offset ?? 0));
-  params.set("sort", "Descending");
+  // Note: sort param causes HTTP 500 when combined with role=BUYER
 
   const url = `${POST_ORDER_BASE}/return/search?${params.toString()}`;
   console.log(`[Post-Order] Searching returns: ${url}`);
