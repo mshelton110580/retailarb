@@ -4,10 +4,30 @@ import { prisma } from "@/lib/db";
 import Link from "next/link";
 import INRAction from "./inr-action";
 
-type FilterType = "all" | "open" | "escalated" | "late";
+type FilterType = "all" | "open" | "closed_refund" | "closed_no_refund" | "cs_closed" | "escalated" | "late";
 
+// All statuses that indicate the case is closed
+const CLOSED_STATUSES = ["CLOSED", "CS_CLOSED", "OTHER"];
+
+function isClosed(c: { ebay_status: string | null }) {
+  return c.ebay_status != null && CLOSED_STATUSES.includes(c.ebay_status);
+}
 function isOpen(c: { ebay_status: string | null }) {
-  return c.ebay_status != null && c.ebay_status !== "CLOSED";
+  // Open = has a status but not any closed status, OR null status (unknown/pending)
+  if (c.ebay_status == null) return true;
+  return !CLOSED_STATUSES.includes(c.ebay_status);
+}
+function isClosedWithRefund(c: { ebay_status: string | null; claim_amount: unknown }) {
+  // Closed (not CS_CLOSED) with a claim amount = full refund
+  return c.ebay_status === "CLOSED" && Number(c.claim_amount ?? 0) > 0;
+}
+function isClosedNoOrPartialRefund(c: { ebay_status: string | null; claim_amount: unknown }) {
+  // Closed with no claim amount, or OTHER status
+  return (c.ebay_status === "CLOSED" && (c.claim_amount == null || Number(c.claim_amount) === 0))
+    || c.ebay_status === "OTHER";
+}
+function isCsClosed(c: { ebay_status: string | null }) {
+  return c.ebay_status === "CS_CLOSED";
 }
 function isEscalated(c: { escalated_to_case: boolean }) {
   return c.escalated_to_case;
@@ -53,23 +73,21 @@ export default async function INRPage({
   });
 
   // Filter out shipments where the order already has an INR case
-  // Check both: order_id match AND item_id match via ebay_item_id
   const lateShipments = allLateShipments.filter((shipment) => {
-    // If the order_id is directly linked to an INR case, exclude it
     if (inrOrderIds.has(shipment.order_id)) return false;
-
-    // If any of the order's item_ids match an INR case's ebay_item_id, exclude it
     const orderItemIds = shipment.order?.order_items?.map((i) => i.item_id) ?? [];
     for (const itemId of orderItemIds) {
       if (inrItemIds.has(itemId)) return false;
     }
-
     return true;
   });
 
   // Counts
   const totalCount = inrCases.length;
   const openCount = inrCases.filter(isOpen).length;
+  const closedRefundCount = inrCases.filter(isClosedWithRefund).length;
+  const closedNoRefundCount = inrCases.filter(isClosedNoOrPartialRefund).length;
+  const csClosedCount = inrCases.filter(isCsClosed).length;
   const escalatedCount = inrCases.filter(isEscalated).length;
   const lateCount = lateShipments.length;
 
@@ -77,17 +95,26 @@ export default async function INRPage({
   const filteredCases =
     filter === "open"
       ? inrCases.filter(isOpen)
-      : filter === "escalated"
-        ? inrCases.filter(isEscalated)
-        : filter === "late"
-          ? [] // late filter shows late shipments section only
-          : inrCases;
+      : filter === "closed_refund"
+        ? inrCases.filter(isClosedWithRefund)
+        : filter === "closed_no_refund"
+          ? inrCases.filter(isClosedNoOrPartialRefund)
+          : filter === "cs_closed"
+            ? inrCases.filter(isCsClosed)
+            : filter === "escalated"
+              ? inrCases.filter(isEscalated)
+              : filter === "late"
+                ? []
+                : inrCases;
 
   const showLateShipments = filter === "all" || filter === "late";
 
   const filterLabels: Record<FilterType, string> = {
     all: "All INR Cases",
     open: "Open INR Cases",
+    closed_refund: "Closed — Full Refund",
+    closed_no_refund: "Closed — No/Partial Refund",
+    cs_closed: "Closed by Customer Service",
     escalated: "Escalated INR Cases",
     late: "Late Shipments (No INR)",
   };
@@ -96,6 +123,8 @@ export default async function INRPage({
     OPEN: "bg-yellow-900 text-yellow-300",
     ON_HOLD: "bg-orange-900 text-orange-300",
     CLOSED: "bg-slate-700 text-slate-300",
+    CS_CLOSED: "bg-purple-900 text-purple-300",
+    OTHER: "bg-slate-700 text-slate-300",
     WAITING_FOR_SELLER_RESPONSE: "bg-red-900 text-red-300",
     WAITING_FOR_BUYER_RESPONSE: "bg-blue-900 text-blue-300",
     ESCALATED: "bg-red-900 text-red-300",
@@ -104,8 +133,11 @@ export default async function INRPage({
   const cards: { key: FilterType; label: string; count: number; color: string; activeRing: string }[] = [
     { key: "all", label: "Total INR Cases", count: totalCount, color: "text-slate-400", activeRing: "ring-slate-500" },
     { key: "open", label: "Open", count: openCount, color: "text-yellow-400", activeRing: "ring-yellow-500" },
-    { key: "escalated", label: "Escalated to Case", count: escalatedCount, color: "text-red-400", activeRing: "ring-red-500" },
-    { key: "late", label: "Late Shipments (No INR)", count: lateCount, color: "text-amber-400", activeRing: "ring-amber-500" },
+    { key: "closed_refund", label: "Closed (Full Refund)", count: closedRefundCount, color: "text-green-400", activeRing: "ring-green-500" },
+    { key: "closed_no_refund", label: "Closed (No/Partial Refund)", count: closedNoRefundCount, color: "text-red-400", activeRing: "ring-red-500" },
+    { key: "cs_closed", label: "CS Closed", count: csClosedCount, color: "text-purple-400", activeRing: "ring-purple-500" },
+    { key: "escalated", label: "Escalated", count: escalatedCount, color: "text-orange-400", activeRing: "ring-orange-500" },
+    { key: "late", label: "Late (No INR)", count: lateCount, color: "text-amber-400", activeRing: "ring-amber-500" },
   ];
 
   return (
@@ -115,7 +147,7 @@ export default async function INRPage({
       </PageHeader>
 
       {/* Summary Cards — clickable filters */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-4 lg:grid-cols-7">
         {cards.map((card) => (
           <Link
             key={card.key}
@@ -126,7 +158,7 @@ export default async function INRPage({
                 : "border-slate-800"
             }`}
           >
-            <p className={`text-sm ${card.color}`}>{card.label}</p>
+            <p className={`text-xs ${card.color}`}>{card.label}</p>
             <p className="mt-1 text-2xl font-semibold">{card.count}</p>
           </Link>
         ))}
@@ -154,12 +186,10 @@ export default async function INRPage({
             ) : (
               filteredCases.map((inr) => {
                 const orderItems = inr.order?.order_items ?? [];
-                // Match using ebay_item_id (raw eBay item ID) against order_items
                 const matchedItem = inr.ebay_item_id
                   ? orderItems.find((i) => i.item_id === inr.ebay_item_id)
                   : null;
                 const displayTitle = inr.listing?.title ?? matchedItem?.title ?? (inr.ebay_item_id ? `Item ${inr.ebay_item_id}` : "Unknown Item");
-                // Use ebay_item_id for eBay links
                 const linkItemId = inr.ebay_item_id ?? inr.item_id;
 
                 return (
@@ -174,9 +204,9 @@ export default async function INRPage({
                               target="_blank"
                               rel="noreferrer"
                               className="rounded bg-amber-900 px-2 py-0.5 text-xs text-amber-300 hover:bg-amber-800 hover:text-amber-200 transition-colors"
-                              title="View inquiry on eBay"
+                              title="View on eBay"
                             >
-                              Inquiry #{inr.ebay_inquiry_id} ↗
+                              {inr.ebay_inquiry_id.startsWith("case-") ? `Case #${inr.case_id ?? inr.ebay_inquiry_id.replace("case-", "")}` : `Inquiry #${inr.ebay_inquiry_id}`} ↗
                             </a>
                           )}
                           <span className={`rounded px-2 py-0.5 text-xs ${
@@ -199,6 +229,12 @@ export default async function INRPage({
                               ESCALATED
                             </span>
                           ) : null}
+                          {/* Refund indicator */}
+                          {isClosed(inr) && inr.claim_amount && Number(inr.claim_amount) > 0 && (
+                            <span className="rounded bg-green-900 px-2 py-0.5 text-xs text-green-300">
+                              Refund: ${Number(inr.claim_amount).toFixed(2)}
+                            </span>
+                          )}
                         </div>
 
                         {/* Item info with eBay link */}
@@ -250,7 +286,7 @@ export default async function INRPage({
                         {/* Details */}
                         <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-500">
                           {inr.buyer_login_name && <span>Buyer: {inr.buyer_login_name}</span>}
-                          {inr.claim_amount && (
+                          {inr.claim_amount && !isClosed(inr) && (
                             <span className="text-yellow-400">
                               Claim: ${Number(inr.claim_amount).toFixed(2)} {inr.claim_currency ?? ""}
                             </span>
