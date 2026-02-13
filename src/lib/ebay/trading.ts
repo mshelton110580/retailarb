@@ -69,26 +69,8 @@ function extractValue(obj: any): string | undefined {
   return String(obj);
 }
 
-export async function getOrders(token: string, sinceIso: string, untilIso: string): Promise<GetOrdersResult> {
-  const body = `<?xml version="1.0" encoding="utf-8"?>
-  <GetOrdersRequest xmlns="urn:ebay:apis:eBLBaseComponents">
-    <OrderRole>Buyer</OrderRole>
-    <OrderStatus>All</OrderStatus>
-    <CreateTimeFrom>${sinceIso}</CreateTimeFrom>
-    <CreateTimeTo>${untilIso}</CreateTimeTo>
-    <DetailLevel>ReturnAll</DetailLevel>
-  </GetOrdersRequest>`;
-
-  const response = await fetch(tradingEndpoint, {
-    method: "POST",
-    headers: buildHeaders("GetOrders", token),
-    body
-  });
-
-  const xml = await response.text();
-  const data = parser.parse(xml);
-  const ordersRaw = data?.GetOrdersResponse?.OrderArray?.Order;
-  const orders = safeArray(ordersRaw).map((order: any) => {
+function parseOrdersFromResponse(ordersRaw: any): GetOrdersResult["orders"] {
+  return safeArray(ordersRaw).map((order: any) => {
     // Collect all tracking details from TRANSACTION level (where eBay puts them)
     const allTrackingDetails: Array<{ carrier?: string; trackingNumber?: string }> = [];
 
@@ -171,6 +153,73 @@ export async function getOrders(token: string, sinceIso: string, untilIso: strin
       paidTime: order?.PaidTime ? String(order.PaidTime) : undefined
     };
   });
+}
 
-  return { raw: data, orders };
+/**
+ * Fetch orders from eBay Trading API with full pagination.
+ * eBay returns max 100 orders per page. This function loops
+ * through all pages and returns the complete list.
+ */
+export async function getOrders(token: string, sinceIso: string, untilIso: string): Promise<GetOrdersResult> {
+  const allOrders: GetOrdersResult["orders"] = [];
+  let pageNumber = 1;
+  let totalPages = 1;
+  let rawData: unknown = null;
+
+  while (pageNumber <= totalPages) {
+    const body = `<?xml version="1.0" encoding="utf-8"?>
+    <GetOrdersRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+      <OrderRole>Buyer</OrderRole>
+      <OrderStatus>All</OrderStatus>
+      <CreateTimeFrom>${sinceIso}</CreateTimeFrom>
+      <CreateTimeTo>${untilIso}</CreateTimeTo>
+      <DetailLevel>ReturnAll</DetailLevel>
+      <Pagination>
+        <EntriesPerPage>100</EntriesPerPage>
+        <PageNumber>${pageNumber}</PageNumber>
+      </Pagination>
+    </GetOrdersRequest>`;
+
+    const response = await fetch(tradingEndpoint, {
+      method: "POST",
+      headers: buildHeaders("GetOrders", token),
+      body
+    });
+
+    const xml = await response.text();
+    const data = parser.parse(xml);
+
+    if (pageNumber === 1) {
+      rawData = data;
+    }
+
+    // Extract pagination info
+    const paginationResult = data?.GetOrdersResponse?.PaginationResult;
+    if (paginationResult) {
+      totalPages = Number(paginationResult.TotalNumberOfPages ?? 1);
+      const totalEntries = Number(paginationResult.TotalNumberOfEntries ?? 0);
+      console.log(`[GetOrders] Page ${pageNumber}/${totalPages} (total entries: ${totalEntries})`);
+    } else {
+      console.log(`[GetOrders] Page ${pageNumber} — no pagination info in response`);
+    }
+
+    // Check for errors
+    const ack = data?.GetOrdersResponse?.Ack;
+    if (ack === "Failure") {
+      const errorMsg = data?.GetOrdersResponse?.Errors?.ShortMessage ?? "Unknown error";
+      console.error(`[GetOrders] API error on page ${pageNumber}: ${errorMsg}`);
+      break;
+    }
+
+    const ordersRaw = data?.GetOrdersResponse?.OrderArray?.Order;
+    const pageOrders = parseOrdersFromResponse(ordersRaw);
+    allOrders.push(...pageOrders);
+
+    console.log(`[GetOrders] Page ${pageNumber}: got ${pageOrders.length} orders (running total: ${allOrders.length})`);
+
+    pageNumber++;
+  }
+
+  console.log(`[GetOrders] Finished: ${allOrders.length} total orders across ${pageNumber - 1} pages`);
+  return { raw: rawData, orders: allOrders };
 }

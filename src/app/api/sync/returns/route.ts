@@ -12,7 +12,7 @@ import {
 /**
  * POST /api/sync/returns
  * Syncs return requests and INR inquiries from eBay Post-Order API.
- * Searches the last 90 days in a single call (limit=200, paginated).
+ * Searches the last 1 year in 90-day windows with full pagination.
  *
  * Returns are searched with role=BUYER since this is a buyer account.
  * All cases are stored regardless of whether they match a purchase order.
@@ -30,11 +30,19 @@ export async function POST(req: Request) {
     }
 
     const now = new Date();
-    const ninetyDaysAgo = new Date(now);
-    ninetyDaysAgo.setDate(now.getDate() - 90);
 
-    const dateFrom = ninetyDaysAgo.toISOString();
-    const dateTo = now.toISOString();
+    // Build 90-day windows going back 1 year (4 windows)
+    const windows: Array<{ from: string; to: string }> = [];
+    for (let i = 3; i >= 0; i--) {
+      const to = new Date(now);
+      to.setDate(now.getDate() - i * 90);
+      const from = new Date(to);
+      from.setDate(to.getDate() - 90);
+      windows.push({
+        from: from.toISOString(),
+        to: i === 0 ? now.toISOString() : to.toISOString(),
+      });
+    }
 
     let totalReturns = 0;
     let totalInquiries = 0;
@@ -46,73 +54,79 @@ export async function POST(req: Request) {
 
       // ============================================================
       // SYNC RETURNS (role=BUYER — we are the buyer)
+      // Paginate through all pages for each date window
       // ============================================================
-      try {
-        let offset = 0;
-        let hasMore = true;
+      for (const window of windows) {
+        try {
+          let offset = 0;
+          let hasMore = true;
 
-        while (hasMore) {
-          const result = await searchReturns(token, {
-            dateFrom,
-            dateTo,
-            role: "BUYER",
-            limit: 200,
-            offset,
-          });
+          while (hasMore) {
+            const result = await searchReturns(token, {
+              dateFrom: window.from,
+              dateTo: window.to,
+              role: "BUYER",
+              limit: 200,
+              offset,
+            });
 
-          console.log(`[Sync Returns] Got ${result.members.length} returns (offset=${offset}, total=${result.paginationOutput.totalEntries})`);
+            console.log(`[Sync Returns] Window ${window.from.slice(0,10)} to ${window.to.slice(0,10)}: Got ${result.members.length} returns (offset=${offset}, total=${result.paginationOutput.totalEntries})`);
 
-          for (const ret of result.members) {
-            try {
-              await upsertReturn(ret);
-              totalReturns++;
-            } catch (err: any) {
-              console.error(`[Sync Returns] Failed to upsert return ${ret.returnId}:`, err.message);
+            for (const ret of result.members) {
+              try {
+                await upsertReturn(ret);
+                totalReturns++;
+              } catch (err: any) {
+                console.error(`[Sync Returns] Failed to upsert return ${ret.returnId}:`, err.message);
+              }
             }
-          }
 
-          const total = result.paginationOutput.totalEntries;
-          offset += result.members.length;
-          hasMore = offset < total && result.members.length > 0;
+            const total = result.paginationOutput.totalEntries;
+            offset += result.members.length;
+            hasMore = offset < total && result.members.length > 0;
+          }
+        } catch (err: any) {
+          console.error(`[Sync Returns] Window ${window.from.slice(0,10)} to ${window.to.slice(0,10)} failed:`, err.message);
+          errors.push(`Returns (${window.from.slice(0,10)}): ${err.message}`);
         }
-      } catch (err: any) {
-        console.error(`[Sync Returns] Failed:`, err.message);
-        errors.push(`Returns: ${err.message}`);
       }
 
       // ============================================================
       // SYNC INQUIRIES (INR)
+      // Paginate through all pages for each date window
       // ============================================================
-      try {
-        let offset = 0;
-        let hasMore = true;
+      for (const window of windows) {
+        try {
+          let offset = 0;
+          let hasMore = true;
 
-        while (hasMore) {
-          const result = await searchInquiries(token, {
-            dateFrom,
-            dateTo,
-            limit: 200,
-            offset,
-          });
+          while (hasMore) {
+            const result = await searchInquiries(token, {
+              dateFrom: window.from,
+              dateTo: window.to,
+              limit: 200,
+              offset,
+            });
 
-          console.log(`[Sync Inquiries] Got ${result.members.length} inquiries (offset=${offset}, total=${result.paginationOutput.totalEntries})`);
+            console.log(`[Sync Inquiries] Window ${window.from.slice(0,10)} to ${window.to.slice(0,10)}: Got ${result.members.length} inquiries (offset=${offset}, total=${result.paginationOutput.totalEntries})`);
 
-          for (const inq of result.members) {
-            try {
-              await upsertInquiry(inq);
-              totalInquiries++;
-            } catch (err: any) {
-              console.error(`[Sync Inquiries] Failed to upsert inquiry ${inq.inquiryId}:`, err.message);
+            for (const inq of result.members) {
+              try {
+                await upsertInquiry(inq);
+                totalInquiries++;
+              } catch (err: any) {
+                console.error(`[Sync Inquiries] Failed to upsert inquiry ${inq.inquiryId}:`, err.message);
+              }
             }
-          }
 
-          const total = result.paginationOutput.totalEntries;
-          offset += result.members.length;
-          hasMore = offset < total && result.members.length > 0;
+            const total = result.paginationOutput.totalEntries;
+            offset += result.members.length;
+            hasMore = offset < total && result.members.length > 0;
+          }
+        } catch (err: any) {
+          console.error(`[Sync Inquiries] Window ${window.from.slice(0,10)} to ${window.to.slice(0,10)} failed:`, err.message);
+          errors.push(`Inquiries (${window.from.slice(0,10)}): ${err.message}`);
         }
-      } catch (err: any) {
-        console.error(`[Sync Inquiries] Failed:`, err.message);
-        errors.push(`Inquiries: ${err.message}`);
       }
     }
 
