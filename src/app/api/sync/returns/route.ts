@@ -31,18 +31,20 @@ export async function POST(req: Request) {
 
     const now = new Date();
 
-    // Build 90-day windows going back 1 year (4 windows)
+    // Build 90-day windows from the earliest date (July 25, 2023) to now.
+    const EARLIEST_DATE = new Date("2023-07-25T00:00:00.000Z");
     const windows: Array<{ from: string; to: string }> = [];
-    for (let i = 3; i >= 0; i--) {
-      const to = new Date(now);
-      to.setDate(now.getDate() - i * 90);
-      const from = new Date(to);
-      from.setDate(to.getDate() - 90);
+    let windowStart = new Date(EARLIEST_DATE);
+    while (windowStart < now) {
+      const windowEnd = new Date(windowStart);
+      windowEnd.setDate(windowStart.getDate() + 90);
       windows.push({
-        from: from.toISOString(),
-        to: i === 0 ? now.toISOString() : to.toISOString(),
+        from: windowStart.toISOString(),
+        to: windowEnd > now ? now.toISOString() : windowEnd.toISOString(),
       });
+      windowStart = new Date(windowEnd);
     }
+    console.log(`[Return/INR Sync] ${windows.length} windows from ${EARLIEST_DATE.toISOString()} to ${now.toISOString()}`);
 
     let totalReturns = 0;
     let totalInquiries = 0;

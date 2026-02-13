@@ -41,15 +41,20 @@ export async function POST(req: Request) {
     const now = new Date();
 
     // eBay Trading API GetOrders supports max 100 days per call.
-    // Split into 90-day windows going back 1 year (4 windows).
+    // Build 90-day windows from the earliest date (July 25, 2023) to now.
+    const EARLIEST_DATE = new Date("2023-07-25T00:00:00.000Z");
     const windows: Array<{ from: Date; to: Date }> = [];
-    for (let i = 3; i >= 0; i--) {
-      const to = new Date(now);
-      to.setDate(now.getDate() - i * 90);
-      const from = new Date(to);
-      from.setDate(to.getDate() - 90);
-      windows.push({ from, to: i === 0 ? now : to });
+    let windowStart = new Date(EARLIEST_DATE);
+    while (windowStart < now) {
+      const windowEnd = new Date(windowStart);
+      windowEnd.setDate(windowStart.getDate() + 90);
+      windows.push({
+        from: new Date(windowStart),
+        to: windowEnd > now ? now : new Date(windowEnd),
+      });
+      windowStart = new Date(windowEnd);
     }
+    console.log(`[Order Sync] ${windows.length} windows from ${EARLIEST_DATE.toISOString()} to ${now.toISOString()}`);
 
     let totalOrders = 0;
 
