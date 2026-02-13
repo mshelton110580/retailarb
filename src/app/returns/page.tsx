@@ -137,8 +137,11 @@ export default async function ReturnsPage({
           ) : (
             filtered.map((ret) => {
               const orderItems = ret.order?.order_items ?? [];
-              const matchedItem = orderItems.find((i) => i.item_id === ret.item_id);
-              const displayTitle = ret.listing?.title ?? matchedItem?.title ?? (ret.item_id ? `Item ${ret.item_id}` : "Unknown Item");
+              const matchedItem = ret.ebay_item_id
+                ? orderItems.find((i) => i.item_id === ret.ebay_item_id)
+                : null;
+              const displayTitle = ret.listing?.title ?? matchedItem?.title ?? (ret.ebay_item_id ? `Item ${ret.ebay_item_id}` : "Unknown Item");
+              const linkItemId = ret.ebay_item_id ?? ret.item_id;
 
               return (
                 <div key={ret.id} className="rounded border border-slate-800 p-3">
@@ -189,10 +192,10 @@ export default async function ReturnsPage({
                       </div>
 
                       {/* Item info with eBay link */}
-                      {ret.item_id && (
+                      {linkItemId && (
                         <div className="flex items-center gap-2 mb-1">
                           <a
-                            href={`https://www.ebay.com/itm/${ret.item_id}`}
+                            href={`https://www.ebay.com/itm/${linkItemId}`}
                             target="_blank"
                             rel="noreferrer"
                             className="text-blue-400 hover:text-blue-300 hover:underline truncate max-w-[400px]"
@@ -200,7 +203,7 @@ export default async function ReturnsPage({
                             {displayTitle}
                           </a>
                           <a
-                            href={`https://www.ebay.com/itm/${ret.item_id}`}
+                            href={`https://www.ebay.com/itm/${linkItemId}`}
                             target="_blank"
                             rel="noreferrer"
                             className="text-slate-500 hover:text-blue-400 flex-shrink-0"

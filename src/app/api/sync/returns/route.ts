@@ -196,7 +196,6 @@ async function upsertReturn(ret: EbayReturnSummary) {
   const rawOrderId = ret.orderId ? String(ret.orderId) : null;
 
   const resolvedOrderId = await resolveOrderId(itemId, rawOrderId);
-  const validItemId = await resolveListingItemId(itemId);
 
   // Extract refund amounts — store actual and estimated separately
   const actualRefund = ret.buyerTotalRefund?.actualRefundAmount?.value ?? null;
@@ -220,7 +219,7 @@ async function upsertReturn(ret: EbayReturnSummary) {
 
   const data = {
     order_id: resolvedOrderId,
-    item_id: validItemId,
+    ebay_item_id: itemId,
     ebay_state: ret.state ?? null,
     ebay_status: ret.status ?? null,
     ebay_type: ret.currentType ?? null,
@@ -270,12 +269,8 @@ async function upsertReturn(ret: EbayReturnSummary) {
 async function upsertInquiry(inq: EbayInquirySummary) {
   const inquiryId = String(inq.inquiryId);
   const itemId = inq.itemId ? String(inq.itemId) : null;
-  
-  // Debug: log what we're extracting
-  console.log(`[Sync INR] Inquiry ${inquiryId}: itemId=${itemId}, buyer=${inq.buyer}, status=${inq.inquiryStatusEnum}, raw keys=${Object.keys(inq).join(',')}`);
 
   const resolvedOrderId = await resolveOrderId(itemId, null);
-  const validItemId = await resolveListingItemId(itemId);
 
   const creationDateStr = inq.creationDate?.value ?? null;
   const lastModifiedStr = inq.lastModifiedDate?.value ?? null;
@@ -283,7 +278,7 @@ async function upsertInquiry(inq: EbayInquirySummary) {
 
   const data = {
     order_id: resolvedOrderId,
-    item_id: validItemId,
+    ebay_item_id: itemId,
     ebay_status: inq.inquiryStatusEnum ?? null,
     ebay_state: inq.inquiryStatusEnum ?? null,
     claim_amount: inq.claimAmount?.value ?? null,

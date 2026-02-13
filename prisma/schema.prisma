@@ -231,6 +231,7 @@ model returns {
   id                String @id @default(cuid())
   order_id          String?
   item_id           String?
+  ebay_item_id      String?   // Raw eBay item ID from API (no FK constraint)
   // eBay Post-Order API fields
   ebay_return_id    String?   @unique
   ebay_state        String?
@@ -268,6 +269,7 @@ model inr_cases {
   id                String @id @default(cuid())
   order_id          String?
   item_id           String?
+  ebay_item_id      String?   // Raw eBay item ID from API (no FK constraint)
   // eBay Post-Order API fields
   ebay_inquiry_id   String?   @unique
   ebay_status       String?

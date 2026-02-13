@@ -29,18 +29,39 @@ export default async function INRPage({
     orderBy: { created_at: "desc" },
   });
 
-  const lateShipments = await prisma.shipments.findMany({
+  // Build a set of all ebay_item_ids that have INR cases (for cross-referencing)
+  const inrItemIds = new Set<string>();
+  const inrOrderIds = new Set<string>();
+  for (const inr of inrCases) {
+    if (inr.ebay_item_id) inrItemIds.add(inr.ebay_item_id);
+    if (inr.order_id) inrOrderIds.add(inr.order_id);
+  }
+
+  // Get late/not_delivered shipments
+  const allLateShipments = await prisma.shipments.findMany({
     where: {
-      derived_status: { in: ["late", "not_delivered"] },
-      order: {
-        inr_cases: { none: {} },
-      },
+      derived_status: { in: ["late", "not_delivered", "not_received"] },
     },
     include: {
       order: { include: { order_items: true } },
       tracking_numbers: true,
     },
     orderBy: { last_refreshed_at: "desc" },
+  });
+
+  // Filter out shipments where the order already has an INR case
+  // Check both: order_id match AND item_id match via ebay_item_id
+  const lateShipments = allLateShipments.filter((shipment) => {
+    // If the order_id is directly linked to an INR case, exclude it
+    if (inrOrderIds.has(shipment.order_id)) return false;
+
+    // If any of the order's item_ids match an INR case's ebay_item_id, exclude it
+    const orderItemIds = shipment.order?.order_items?.map((i) => i.item_id) ?? [];
+    for (const itemId of orderItemIds) {
+      if (inrItemIds.has(itemId)) return false;
+    }
+
+    return true;
   });
 
   // Counts
@@ -130,8 +151,13 @@ export default async function INRPage({
             ) : (
               filteredCases.map((inr) => {
                 const orderItems = inr.order?.order_items ?? [];
-                const matchedItem = orderItems.find((i) => i.item_id === inr.item_id);
-                const displayTitle = inr.listing?.title ?? matchedItem?.title ?? (inr.item_id ? `Item ${inr.item_id}` : "Unknown Item");
+                // Match using ebay_item_id (raw eBay item ID) against order_items
+                const matchedItem = inr.ebay_item_id
+                  ? orderItems.find((i) => i.item_id === inr.ebay_item_id)
+                  : null;
+                const displayTitle = inr.listing?.title ?? matchedItem?.title ?? (inr.ebay_item_id ? `Item ${inr.ebay_item_id}` : "Unknown Item");
+                // Use ebay_item_id for eBay links
+                const linkItemId = inr.ebay_item_id ?? inr.item_id;
 
                 return (
                   <div key={inr.id} className="rounded border border-slate-800 p-3">
@@ -173,10 +199,10 @@ export default async function INRPage({
                         </div>
 
                         {/* Item info with eBay link */}
-                        {inr.item_id && (
+                        {linkItemId && (
                           <div className="flex items-center gap-2 mb-1">
                             <a
-                              href={`https://www.ebay.com/itm/${inr.item_id}`}
+                              href={`https://www.ebay.com/itm/${linkItemId}`}
                               target="_blank"
                               rel="noreferrer"
                               className="text-blue-400 hover:text-blue-300 hover:underline truncate max-w-[400px]"
@@ -184,7 +210,7 @@ export default async function INRPage({
                               {displayTitle}
                             </a>
                             <a
-                              href={`https://www.ebay.com/itm/${inr.item_id}`}
+                              href={`https://www.ebay.com/itm/${linkItemId}`}
                               target="_blank"
                               rel="noreferrer"
                               className="text-slate-500 hover:text-blue-400 flex-shrink-0"
