@@ -3,6 +3,7 @@ import SyncReturnsButton from "@/components/sync-returns-button";
 import { prisma } from "@/lib/db";
 import Link from "next/link";
 import ReturnActions from "./return-actions";
+import { JsonValue } from "@prisma/client/runtime/library";
 
 type FilterType =
   | "all"
@@ -16,16 +17,33 @@ type FilterType =
 const CLOSED_STATES = ["CLOSED"];
 
 /**
+ * Get the order total from the order's totals JSON.
+ */
+function getOrderTotal(totals: JsonValue | undefined | null): number | null {
+  if (!totals) return null;
+  const t = totals as { total?: string };
+  if (t.total == null) return null;
+  const val = Number(t.total);
+  return isNaN(val) ? null : val;
+}
+
+/**
  * Determine the refund classification for a return.
  *
- * Uses actual_refund (the real refund issued) vs estimated_refund (what the buyer expected):
+ * For non-escalated closed returns, uses actual_refund vs estimated_refund:
  *   - actual_refund = estimated_refund → Full Refund
  *   - 0 < actual_refund < estimated_refund → Partial Refund
- *   - actual_refund is null/0 → No Refund (item not returned on time, window expired, etc.)
+ *   - actual_refund is null/0 → No Refund
+ *
+ * For escalated returns:
+ *   - If actual_refund data exists, use it (same as above)
+ *   - If no actual_refund, fall back to order_total:
+ *     - order_total = 0 → Full Refund
+ *     - order_total > 0 → No Refund (returned too late, no refund issued)
+ *     - No order data → Escalated (can't determine, older than 90-day window)
  *
  * Special statuses:
- *   - LESS_THAN_A_FULL_REFUND_ISSUED → Partial Refund (even if still open)
- *   - ESCALATED with no actual_refund → Escalated (eBay decided outcome, no refund data available)
+ *   - LESS_THAN_A_FULL_REFUND_ISSUED → Partial Refund
  */
 function getReturnRefundType(ret: {
   actual_refund: unknown;
@@ -33,9 +51,11 @@ function getReturnRefundType(ret: {
   ebay_status: string | null;
   ebay_state: string | null;
   escalated: boolean;
+  orderTotals: JsonValue | undefined | null;
 }): "full" | "partial" | "none" | "escalated" | "open" {
   const actual = ret.actual_refund !== null ? Number(ret.actual_refund) : null;
   const estimated = ret.estimated_refund !== null ? Number(ret.estimated_refund) : null;
+  const isEsc = ret.escalated || ret.ebay_status === "ESCALATED";
 
   // If the status explicitly says partial refund
   if (ret.ebay_status === "LESS_THAN_A_FULL_REFUND_ISSUED") {
@@ -44,14 +64,11 @@ function getReturnRefundType(ret: {
 
   // If still open/active (not closed state)
   if (ret.ebay_state != null && !CLOSED_STATES.includes(ret.ebay_state)) {
-    // Escalated returns that are still open (state not CLOSED)
-    if (ret.escalated || ret.ebay_status === "ESCALATED") {
-      return "escalated";
-    }
+    if (isEsc) return "escalated";
     return "open";
   }
 
-  // Closed returns — classify by actual refund
+  // Closed returns — classify by actual refund first
   if (actual !== null && actual > 0) {
     if (estimated !== null && estimated > 0 && actual < estimated) {
       return "partial";
@@ -59,9 +76,15 @@ function getReturnRefundType(ret: {
     return "full";
   }
 
-  // Closed with no actual refund
-  // Check if escalated (eBay handled it, refund data may not be in return record)
-  if (ret.escalated || ret.ebay_status === "ESCALATED") {
+  // No actual_refund data — for escalated returns, use order_total as fallback
+  if (isEsc) {
+    const orderTotal = getOrderTotal(ret.orderTotals);
+    if (orderTotal !== null) {
+      if (orderTotal === 0) return "full";
+      // order_total > 0 means no refund was issued (returned too late, etc.)
+      return "none";
+    }
+    // No order data available (older than 90-day sync window)
     return "escalated";
   }
 
@@ -87,7 +110,10 @@ export default async function ReturnsPage({
   // Enrich each return with its refund type
   const enrichedReturns = returns.map((ret) => ({
     ...ret,
-    refundType: getReturnRefundType(ret),
+    refundType: getReturnRefundType({
+      ...ret,
+      orderTotals: ret.order?.totals ?? null,
+    }),
   }));
 
   // Filter groups
