@@ -4,18 +4,67 @@ import { prisma } from "@/lib/db";
 import Link from "next/link";
 import ReturnActions from "./return-actions";
 
+type FilterType =
+  | "all"
+  | "open"
+  | "closed_full_refund"
+  | "closed_partial_refund"
+  | "closed_no_refund"
+  | "escalated";
+
+// States that indicate the return is still active (not closed)
 const CLOSED_STATES = ["CLOSED"];
 
-type FilterType = "all" | "open" | "refunded" | "escalated";
+/**
+ * Determine the refund classification for a return.
+ *
+ * Uses actual_refund (the real refund issued) vs estimated_refund (what the buyer expected):
+ *   - actual_refund = estimated_refund → Full Refund
+ *   - 0 < actual_refund < estimated_refund → Partial Refund
+ *   - actual_refund is null/0 → No Refund (item not returned on time, window expired, etc.)
+ *
+ * Special statuses:
+ *   - LESS_THAN_A_FULL_REFUND_ISSUED → Partial Refund (even if still open)
+ *   - ESCALATED with no actual_refund → Escalated (eBay decided outcome, no refund data available)
+ */
+function getReturnRefundType(ret: {
+  actual_refund: unknown;
+  estimated_refund: unknown;
+  ebay_status: string | null;
+  ebay_state: string | null;
+}): "full" | "partial" | "none" | "escalated" | "open" {
+  const actual = ret.actual_refund !== null ? Number(ret.actual_refund) : null;
+  const estimated = ret.estimated_refund !== null ? Number(ret.estimated_refund) : null;
 
-function isOpen(r: { ebay_state: string | null }) {
-  return r.ebay_state != null && !CLOSED_STATES.includes(r.ebay_state);
-}
-function isRefunded(r: { actual_refund: unknown }) {
-  return r.actual_refund !== null && Number(r.actual_refund) > 0;
-}
-function isEscalated(r: { escalated: boolean; ebay_status: string | null; ebay_state: string | null }) {
-  return (r.escalated || r.ebay_status === "ESCALATED") && !CLOSED_STATES.includes(r.ebay_state ?? "");
+  // If the status explicitly says partial refund
+  if (ret.ebay_status === "LESS_THAN_A_FULL_REFUND_ISSUED") {
+    return "partial";
+  }
+
+  // If still open/active (not closed state)
+  if (ret.ebay_state != null && !CLOSED_STATES.includes(ret.ebay_state)) {
+    // Escalated returns that are still open (state not CLOSED)
+    if (ret.escalated || ret.ebay_status === "ESCALATED") {
+      return "escalated";
+    }
+    return "open";
+  }
+
+  // Closed returns — classify by actual refund
+  if (actual !== null && actual > 0) {
+    if (estimated !== null && estimated > 0 && actual < estimated) {
+      return "partial";
+    }
+    return "full";
+  }
+
+  // Closed with no actual refund
+  // Check if escalated (eBay handled it, refund data may not be in return record)
+  if (ret.escalated || ret.ebay_status === "ESCALATED") {
+    return "escalated";
+  }
+
+  return "none";
 }
 
 export default async function ReturnsPage({
@@ -34,26 +83,47 @@ export default async function ReturnsPage({
     orderBy: { creation_date: "desc" },
   });
 
+  // Enrich each return with its refund type
+  const enrichedReturns = returns.map((ret) => ({
+    ...ret,
+    refundType: getReturnRefundType(ret),
+  }));
+
+  // Filter groups
+  const openReturns = enrichedReturns.filter((r) => r.refundType === "open");
+  const closedFullRefund = enrichedReturns.filter((r) => r.refundType === "full");
+  const closedPartialRefund = enrichedReturns.filter((r) => r.refundType === "partial");
+  const closedNoRefund = enrichedReturns.filter((r) => r.refundType === "none");
+  const escalatedReturns = enrichedReturns.filter((r) => r.refundType === "escalated");
+
   // Counts
-  const totalReturns = returns.length;
-  const openCount = returns.filter(isOpen).length;
-  const refundedCount = returns.filter(isRefunded).length;
-  const escalatedCount = returns.filter(isEscalated).length;
+  const totalReturns = enrichedReturns.length;
+  const openCount = openReturns.length;
+  const closedFullRefundCount = closedFullRefund.length;
+  const closedPartialRefundCount = closedPartialRefund.length;
+  const closedNoRefundCount = closedNoRefund.length;
+  const escalatedCount = escalatedReturns.length;
 
   // Apply filter
   const filtered =
     filter === "open"
-      ? returns.filter(isOpen)
-      : filter === "refunded"
-        ? returns.filter(isRefunded)
-        : filter === "escalated"
-          ? returns.filter(isEscalated)
-          : returns;
+      ? openReturns
+      : filter === "closed_full_refund"
+        ? closedFullRefund
+        : filter === "closed_partial_refund"
+          ? closedPartialRefund
+          : filter === "closed_no_refund"
+            ? closedNoRefund
+            : filter === "escalated"
+              ? escalatedReturns
+              : enrichedReturns;
 
   const filterLabels: Record<FilterType, string> = {
     all: "All Returns",
     open: "Open / Active Returns",
-    refunded: "Refunded Returns",
+    closed_full_refund: "Closed — Full Refund",
+    closed_partial_refund: "Closed — Partial Refund",
+    closed_no_refund: "Closed — No Refund",
     escalated: "Escalated Returns",
   };
 
@@ -88,8 +158,10 @@ export default async function ReturnsPage({
   const cards: { key: FilterType; label: string; count: number; color: string; activeRing: string }[] = [
     { key: "all", label: "Total Returns", count: totalReturns, color: "text-slate-400", activeRing: "ring-slate-500" },
     { key: "open", label: "Open / Active", count: openCount, color: "text-yellow-400", activeRing: "ring-yellow-500" },
-    { key: "refunded", label: "Refunded", count: refundedCount, color: "text-green-400", activeRing: "ring-green-500" },
-    { key: "escalated", label: "Escalated", count: escalatedCount, color: "text-red-400", activeRing: "ring-red-500" },
+    { key: "closed_full_refund", label: "Closed (Full Refund)", count: closedFullRefundCount, color: "text-green-400", activeRing: "ring-green-500" },
+    { key: "closed_partial_refund", label: "Closed (Partial Refund)", count: closedPartialRefundCount, color: "text-orange-400", activeRing: "ring-orange-500" },
+    { key: "closed_no_refund", label: "Closed (No Refund)", count: closedNoRefundCount, color: "text-red-400", activeRing: "ring-red-500" },
+    { key: "escalated", label: "Escalated", count: escalatedCount, color: "text-purple-400", activeRing: "ring-purple-500" },
   ];
 
   return (
@@ -99,7 +171,7 @@ export default async function ReturnsPage({
       </PageHeader>
 
       {/* Summary Cards — clickable filters */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
         {cards.map((card) => (
           <Link
             key={card.key}
@@ -110,7 +182,7 @@ export default async function ReturnsPage({
                 : "border-slate-800"
             }`}
           >
-            <p className={`text-sm ${card.color}`}>{card.label}</p>
+            <p className={`text-xs ${card.color}`}>{card.label}</p>
             <p className="mt-1 text-2xl font-semibold">{card.count}</p>
           </Link>
         ))}
@@ -130,7 +202,7 @@ export default async function ReturnsPage({
         <div className="space-y-3 text-sm text-slate-300">
           {filtered.length === 0 ? (
             <p className="text-slate-500">
-              {returns.length === 0
+              {enrichedReturns.length === 0
                 ? 'No returns found. Click "Sync Returns & INR from eBay" to fetch data.'
                 : "No returns match this filter."}
             </p>
@@ -186,8 +258,27 @@ export default async function ReturnsPage({
                             {ret.ebay_type}
                           </span>
                         )}
-                        {isEscalated(ret) && (
-                          <span className="rounded bg-red-900 px-2 py-0.5 text-xs text-red-300">ESCALATED</span>
+                        {/* Refund type badge */}
+                        {ret.refundType === "full" && (
+                          <span className="rounded bg-green-900 px-2 py-0.5 text-xs text-green-300">
+                            Full Refund: ${Number(ret.actual_refund).toFixed(2)}
+                          </span>
+                        )}
+                        {ret.refundType === "partial" && (
+                          <span className="rounded bg-orange-900 px-2 py-0.5 text-xs text-orange-300">
+                            Partial Refund: ${Number(ret.actual_refund ?? ret.refund_amount).toFixed(2)}
+                            {ret.estimated_refund ? ` / $${Number(ret.estimated_refund).toFixed(2)}` : ""}
+                          </span>
+                        )}
+                        {ret.refundType === "none" && (
+                          <span className="rounded bg-red-900 px-2 py-0.5 text-xs text-red-300">
+                            No Refund
+                          </span>
+                        )}
+                        {ret.refundType === "escalated" && (
+                          <span className="rounded bg-red-900 px-2 py-0.5 text-xs text-red-300">
+                            ESCALATED
+                          </span>
                         )}
                       </div>
 
@@ -242,15 +333,11 @@ export default async function ReturnsPage({
                         {ret.return_reason && <span>Reason: {ret.return_reason}</span>}
                         {ret.buyer_login_name && <span>Buyer: {ret.buyer_login_name}</span>}
                         {ret.seller_login_name && <span>Seller: {ret.seller_login_name}</span>}
-                        {ret.actual_refund ? (
-                          <span className="text-green-400">
-                            Refunded: ${Number(ret.actual_refund).toFixed(2)} {ret.refund_currency ?? ""}
-                          </span>
-                        ) : ret.estimated_refund ? (
+                        {ret.refundType === "open" && ret.estimated_refund && (
                           <span className="text-yellow-400">
                             Est. Refund: ${Number(ret.estimated_refund).toFixed(2)} {ret.refund_currency ?? ""}
                           </span>
-                        ) : null}
+                        )}
                         {ret.creation_date && (
                           <span>Created: {ret.creation_date.toISOString().slice(0, 10)}</span>
                         )}
