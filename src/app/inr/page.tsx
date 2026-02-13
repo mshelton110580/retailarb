@@ -37,10 +37,13 @@ export default async function INRPage({
     if (inr.order_id) inrOrderIds.add(inr.order_id);
   }
 
-  // Get late/not_delivered shipments
+  // Get late/not_delivered shipments (exclude canceled orders)
   const allLateShipments = await prisma.shipments.findMany({
     where: {
       derived_status: { in: ["late", "not_delivered", "not_received"] },
+      order: {
+        order_status: { not: "Cancelled" },
+      },
     },
     include: {
       order: { include: { order_items: true } },
