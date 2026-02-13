@@ -65,9 +65,14 @@ function getRefundType(c: INRCase): "full" | "partial" | "none" {
       // Order total is zero — fully refunded
       return "full";
     }
-    // Order total > 0 — check if a claim was filed
+    // Order total > 0 — check claim against total
     if (claimAmt > 0) {
-      // A claim was filed but balance remains — partial refund
+      if (claimAmt >= orderTotal) {
+        // Claim covers the full order total (listing + shipping) — full refund
+        // The order total may not have been adjusted to 0 yet
+        return "full";
+      }
+      // Claim is less than order total — partial refund
       return "partial";
     }
     // No claim filed — no refund
