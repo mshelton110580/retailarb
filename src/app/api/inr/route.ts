@@ -18,6 +18,18 @@ export async function POST(req: Request) {
   if (!body.success) {
     return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
   }
+
+  // Prevent duplicate: check if this order already has an INR case
+  const existing = await prisma.inr_cases.findFirst({
+    where: { order_id: body.data.order_id },
+  });
+  if (existing) {
+    return NextResponse.json(
+      { error: "INR case already exists for this order", existing: existing.id },
+      { status: 409 }
+    );
+  }
+
   const inrCase = await prisma.inr_cases.create({
     data: {
       order_id: body.data.order_id,

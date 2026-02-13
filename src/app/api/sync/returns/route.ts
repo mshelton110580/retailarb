@@ -347,6 +347,22 @@ async function upsertInquiry(inq: EbayInquirySummary) {
       data,
     });
   } else {
+    // Clean up any stale manual INR records for this order before creating the synced one
+    if (resolvedOrderId) {
+      await prisma.inr_cases.deleteMany({
+        where: {
+          order_id: resolvedOrderId,
+          ebay_inquiry_id: { equals: null },
+        },
+      });
+      // Also delete manual records with empty string ebay_inquiry_id
+      await prisma.inr_cases.deleteMany({
+        where: {
+          order_id: resolvedOrderId,
+          ebay_inquiry_id: "",
+        },
+      });
+    }
     await prisma.inr_cases.create({
       data: {
         ...data,
@@ -425,6 +441,22 @@ async function upsertCase(cs: EbayCaseSummary) {
       data,
     });
   } else {
+    // Clean up any stale manual INR records for this order before creating the synced one
+    const effectiveOrderId = resolvedOrderId ?? existingByCase?.order_id;
+    if (effectiveOrderId) {
+      await prisma.inr_cases.deleteMany({
+        where: {
+          order_id: effectiveOrderId,
+          ebay_inquiry_id: { equals: null },
+        },
+      });
+      await prisma.inr_cases.deleteMany({
+        where: {
+          order_id: effectiveOrderId,
+          ebay_inquiry_id: "",
+        },
+      });
+    }
     await prisma.inr_cases.create({
       data: {
         ...data,

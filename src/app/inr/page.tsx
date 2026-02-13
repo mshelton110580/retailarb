@@ -72,8 +72,17 @@ export default async function INRPage({
     orderBy: { last_refreshed_at: "desc" },
   });
 
-  // Filter out shipments where the order already has an INR case
+  // Helper: check if an order has been fully refunded (total = 0)
+  const isRefunded = (shipment: typeof allLateShipments[number]) => {
+    const total = shipment.order?.totals as { total?: string } | null;
+    return total?.total === "0.0" || total?.total === "0" || total?.total === "0.00";
+  };
+
+  // Filter out shipments where the order already has an INR case OR has been fully refunded
   const lateShipments = allLateShipments.filter((shipment) => {
+    // Skip if already refunded — no INR needed
+    if (isRefunded(shipment)) return false;
+    // Skip if order already has an INR case
     if (inrOrderIds.has(shipment.order_id)) return false;
     const orderItemIds = shipment.order?.order_items?.map((i) => i.item_id) ?? [];
     for (const itemId of orderItemIds) {
