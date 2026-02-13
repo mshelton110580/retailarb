@@ -32,6 +32,7 @@ function getReturnRefundType(ret: {
   estimated_refund: unknown;
   ebay_status: string | null;
   ebay_state: string | null;
+  escalated: boolean;
 }): "full" | "partial" | "none" | "escalated" | "open" {
   const actual = ret.actual_refund !== null ? Number(ret.actual_refund) : null;
   const estimated = ret.estimated_refund !== null ? Number(ret.estimated_refund) : null;
