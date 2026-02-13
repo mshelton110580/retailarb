@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import Link from "next/link";
 import INRAction from "./inr-action";
 import { Decimal } from "@prisma/client/runtime/library";
+import { JsonValue } from "@prisma/client/runtime/library";
 
 type FilterType = "all" | "open" | "closed_full_refund" | "closed_partial_refund" | "closed_no_refund" | "escalated" | "late";
 
@@ -14,7 +15,10 @@ type INRCase = {
   ebay_status: string | null;
   claim_amount: Decimal | null;
   escalated_to_case: boolean;
-  order: { order_items: { item_id: string; transaction_price: Decimal | null }[] } | null;
+  order: {
+    totals: JsonValue;
+    order_items: { item_id: string; transaction_price: Decimal | null }[];
+  } | null;
   ebay_item_id: string | null;
 };
 
@@ -28,28 +32,51 @@ function isOpen(c: INRCase) {
 }
 
 /**
- * Determine refund type for a closed case by comparing claim_amount to item price.
- * - "full": claim_amount >= transaction_price, or claim_amount > 0 with no price to compare
- * - "partial": claim_amount > 0 but less than transaction_price
- * - "none": claim_amount is null or 0
+ * Get the order total (listing price + shipping) from the order's totals JSON.
+ * Returns null if no order or no total available.
+ */
+function getOrderTotal(c: INRCase): number | null {
+  if (!c.order?.totals) return null;
+  const totals = c.order.totals as { total?: string };
+  if (totals.total == null) return null;
+  const val = Number(totals.total);
+  return isNaN(val) ? null : val;
+}
+
+/**
+ * Determine refund type for a closed case.
+ *
+ * Uses the eBay order total as the remaining balance after any refund:
+ *   - order_total = 0       → Full Refund (entire amount refunded)
+ *   - order_total > 0       → need to check if a refund was issued at all
+ *     - claim_amount > 0    → Partial Refund (buyer claimed but balance remains)
+ *     - claim_amount = 0    → No Refund
+ *
+ * For cases without an order in the database (older than 90-day sync window),
+ * fall back to claim_amount: if > 0, assume full refund; if 0, no refund.
  */
 function getRefundType(c: INRCase): "full" | "partial" | "none" {
   const claimAmt = Number(c.claim_amount ?? 0);
-  if (claimAmt <= 0) return "none";
+  const orderTotal = getOrderTotal(c);
 
-  // Try to find the matching order item to compare prices
-  if (c.ebay_item_id && c.order?.order_items) {
-    const matchedItem = c.order.order_items.find((i) => i.item_id === c.ebay_item_id);
-    if (matchedItem?.transaction_price) {
-      const itemPrice = Number(matchedItem.transaction_price);
-      if (itemPrice > 0 && claimAmt < itemPrice) {
-        return "partial";
-      }
+  // If we have an order total, use it as the remaining balance
+  if (orderTotal !== null) {
+    if (orderTotal === 0) {
+      // Order total is zero — fully refunded
+      return "full";
     }
+    // Order total > 0 — check if a claim was filed
+    if (claimAmt > 0) {
+      // A claim was filed but balance remains — partial refund
+      return "partial";
+    }
+    // No claim filed — no refund
+    return "none";
   }
 
-  // Has a claim amount but no item price to compare — treat as full refund
-  return "full";
+  // No order in database — fall back to claim_amount as best indicator
+  if (claimAmt > 0) return "full"; // assume full refund for older cases with a claim
+  return "none";
 }
 
 function isClosedFullRefund(c: INRCase) {
@@ -236,6 +263,8 @@ export default async function INRPage({
                 const displayTitle = inr.listing?.title ?? matchedItem?.title ?? (inr.ebay_item_id ? `Item ${inr.ebay_item_id}` : "Unknown Item");
                 const linkItemId = inr.ebay_item_id ?? inr.item_id;
                 const refundType = isClosed(inr) ? getRefundType(inr) : null;
+                const orderTotal = getOrderTotal(inr);
+                const claimAmt = Number(inr.claim_amount ?? 0);
 
                 return (
                   <div key={inr.id} className="rounded border border-slate-800 p-3">
@@ -277,13 +306,12 @@ export default async function INRPage({
                           {/* Refund indicator for closed cases */}
                           {refundType === "full" && (
                             <span className="rounded bg-green-900 px-2 py-0.5 text-xs text-green-300">
-                              Full Refund: ${Number(inr.claim_amount).toFixed(2)}
+                              Full Refund{claimAmt > 0 ? `: $${claimAmt.toFixed(2)}` : ""}
                             </span>
                           )}
                           {refundType === "partial" && (
                             <span className="rounded bg-orange-900 px-2 py-0.5 text-xs text-orange-300">
-                              Partial Refund: ${Number(inr.claim_amount).toFixed(2)}
-                              {matchedItem?.transaction_price ? ` / $${Number(matchedItem.transaction_price).toFixed(2)}` : ""}
+                              Partial Refund{orderTotal !== null ? ` ($${orderTotal.toFixed(2)} remaining)` : ""}
                             </span>
                           )}
                           {refundType === "none" && (
