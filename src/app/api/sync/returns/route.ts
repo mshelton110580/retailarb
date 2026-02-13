@@ -442,7 +442,7 @@ async function upsertCase(cs: EbayCaseSummary) {
     });
   } else {
     // Clean up any stale manual INR records for this order before creating the synced one
-    const effectiveOrderId = resolvedOrderId ?? existingByCase?.order_id;
+    const effectiveOrderId = resolvedOrderId;
     if (effectiveOrderId) {
       await prisma.inr_cases.deleteMany({
         where: {
