@@ -270,6 +270,9 @@ async function upsertReturn(ret: EbayReturnSummary) {
 async function upsertInquiry(inq: EbayInquirySummary) {
   const inquiryId = String(inq.inquiryId);
   const itemId = inq.itemId ? String(inq.itemId) : null;
+  
+  // Debug: log what we're extracting
+  console.log(`[Sync INR] Inquiry ${inquiryId}: itemId=${itemId}, buyer=${inq.buyer}, status=${inq.inquiryStatusEnum}, raw keys=${Object.keys(inq).join(',')}`);
 
   const resolvedOrderId = await resolveOrderId(itemId, null);
   const validItemId = await resolveListingItemId(itemId);

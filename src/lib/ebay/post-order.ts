@@ -191,6 +191,7 @@ export async function searchInquiries(
   if (options.dateFrom) params.set("inquiry_creation_date_range_from", options.dateFrom);
   if (options.dateTo) params.set("inquiry_creation_date_range_to", options.dateTo);
   if (options.inquiryStatus) params.set("inquiry_status", options.inquiryStatus);
+  params.set("fieldgroups", "FULL");
   params.set("limit", String(options.limit ?? 200));
   params.set("offset", String(options.offset ?? 0));
   params.set("sort", "Descending");
@@ -210,6 +211,12 @@ export async function searchInquiries(
   }
 
   const data = await response.json();
+
+  // Debug: log the first inquiry to see what fields are available
+  if (data.members && data.members.length > 0 && options.offset === 0) {
+    console.log(`[Post-Order] First inquiry keys:`, Object.keys(data.members[0]));
+    console.log(`[Post-Order] First inquiry sample:`, JSON.stringify(data.members[0], null, 2));
+  }
 
   return {
     members: data.members ?? [],
