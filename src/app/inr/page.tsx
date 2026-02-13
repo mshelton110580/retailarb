@@ -3,33 +3,68 @@ import SyncReturnsButton from "@/components/sync-returns-button";
 import { prisma } from "@/lib/db";
 import Link from "next/link";
 import INRAction from "./inr-action";
+import { Decimal } from "@prisma/client/runtime/library";
 
-type FilterType = "all" | "open" | "closed_refund" | "closed_no_refund" | "cs_closed" | "escalated" | "late";
+type FilterType = "all" | "open" | "closed_full_refund" | "closed_partial_refund" | "closed_no_refund" | "escalated" | "late";
 
-// All statuses that indicate the case is closed
+// All statuses that indicate the case is closed (regardless of how it was closed)
 const CLOSED_STATUSES = ["CLOSED", "CS_CLOSED", "OTHER"];
 
-function isClosed(c: { ebay_status: string | null }) {
+type INRCase = {
+  ebay_status: string | null;
+  claim_amount: Decimal | null;
+  escalated_to_case: boolean;
+  order: { order_items: { item_id: string; transaction_price: Decimal | null }[] } | null;
+  ebay_item_id: string | null;
+};
+
+function isClosed(c: INRCase) {
   return c.ebay_status != null && CLOSED_STATUSES.includes(c.ebay_status);
 }
-function isOpen(c: { ebay_status: string | null }) {
-  // Open = has a status but not any closed status, OR null status (unknown/pending)
+
+function isOpen(c: INRCase) {
   if (c.ebay_status == null) return true;
   return !CLOSED_STATUSES.includes(c.ebay_status);
 }
-function isClosedWithRefund(c: { ebay_status: string | null; claim_amount: unknown }) {
-  // Closed (not CS_CLOSED) with a claim amount = full refund
-  return c.ebay_status === "CLOSED" && Number(c.claim_amount ?? 0) > 0;
+
+/**
+ * Determine refund type for a closed case by comparing claim_amount to item price.
+ * - "full": claim_amount >= transaction_price, or claim_amount > 0 with no price to compare
+ * - "partial": claim_amount > 0 but less than transaction_price
+ * - "none": claim_amount is null or 0
+ */
+function getRefundType(c: INRCase): "full" | "partial" | "none" {
+  const claimAmt = Number(c.claim_amount ?? 0);
+  if (claimAmt <= 0) return "none";
+
+  // Try to find the matching order item to compare prices
+  if (c.ebay_item_id && c.order?.order_items) {
+    const matchedItem = c.order.order_items.find((i) => i.item_id === c.ebay_item_id);
+    if (matchedItem?.transaction_price) {
+      const itemPrice = Number(matchedItem.transaction_price);
+      if (itemPrice > 0 && claimAmt < itemPrice) {
+        return "partial";
+      }
+    }
+  }
+
+  // Has a claim amount but no item price to compare — treat as full refund
+  return "full";
 }
-function isClosedNoOrPartialRefund(c: { ebay_status: string | null; claim_amount: unknown }) {
-  // Closed with no claim amount, or OTHER status
-  return (c.ebay_status === "CLOSED" && (c.claim_amount == null || Number(c.claim_amount) === 0))
-    || c.ebay_status === "OTHER";
+
+function isClosedFullRefund(c: INRCase) {
+  return isClosed(c) && getRefundType(c) === "full";
 }
-function isCsClosed(c: { ebay_status: string | null }) {
-  return c.ebay_status === "CS_CLOSED";
+
+function isClosedPartialRefund(c: INRCase) {
+  return isClosed(c) && getRefundType(c) === "partial";
 }
-function isEscalated(c: { escalated_to_case: boolean }) {
+
+function isClosedNoRefund(c: INRCase) {
+  return isClosed(c) && getRefundType(c) === "none";
+}
+
+function isEscalated(c: INRCase) {
   return c.escalated_to_case;
 }
 
@@ -73,7 +108,7 @@ export default async function INRPage({
   });
 
   // Helper: check if an order has been fully refunded (total = 0)
-  const isRefunded = (shipment: typeof allLateShipments[number]) => {
+  const isOrderRefunded = (shipment: typeof allLateShipments[number]) => {
     const total = shipment.order?.totals as { total?: string } | null;
     return total?.total === "0.0" || total?.total === "0" || total?.total === "0.00";
   };
@@ -81,7 +116,7 @@ export default async function INRPage({
   // Filter out shipments where the order already has an INR case OR has been fully refunded
   const lateShipments = allLateShipments.filter((shipment) => {
     // Skip if already refunded — no INR needed
-    if (isRefunded(shipment)) return false;
+    if (isOrderRefunded(shipment)) return false;
     // Skip if order already has an INR case
     if (inrOrderIds.has(shipment.order_id)) return false;
     const orderItemIds = shipment.order?.order_items?.map((i) => i.item_id) ?? [];
@@ -94,9 +129,9 @@ export default async function INRPage({
   // Counts
   const totalCount = inrCases.length;
   const openCount = inrCases.filter(isOpen).length;
-  const closedRefundCount = inrCases.filter(isClosedWithRefund).length;
-  const closedNoRefundCount = inrCases.filter(isClosedNoOrPartialRefund).length;
-  const csClosedCount = inrCases.filter(isCsClosed).length;
+  const closedFullRefundCount = inrCases.filter(isClosedFullRefund).length;
+  const closedPartialRefundCount = inrCases.filter(isClosedPartialRefund).length;
+  const closedNoRefundCount = inrCases.filter(isClosedNoRefund).length;
   const escalatedCount = inrCases.filter(isEscalated).length;
   const lateCount = lateShipments.length;
 
@@ -104,12 +139,12 @@ export default async function INRPage({
   const filteredCases =
     filter === "open"
       ? inrCases.filter(isOpen)
-      : filter === "closed_refund"
-        ? inrCases.filter(isClosedWithRefund)
-        : filter === "closed_no_refund"
-          ? inrCases.filter(isClosedNoOrPartialRefund)
-          : filter === "cs_closed"
-            ? inrCases.filter(isCsClosed)
+      : filter === "closed_full_refund"
+        ? inrCases.filter(isClosedFullRefund)
+        : filter === "closed_partial_refund"
+          ? inrCases.filter(isClosedPartialRefund)
+          : filter === "closed_no_refund"
+            ? inrCases.filter(isClosedNoRefund)
             : filter === "escalated"
               ? inrCases.filter(isEscalated)
               : filter === "late"
@@ -121,9 +156,9 @@ export default async function INRPage({
   const filterLabels: Record<FilterType, string> = {
     all: "All INR Cases",
     open: "Open INR Cases",
-    closed_refund: "Closed — Full Refund",
-    closed_no_refund: "Closed — No/Partial Refund",
-    cs_closed: "Closed by Customer Service",
+    closed_full_refund: "Closed — Full Refund",
+    closed_partial_refund: "Closed — Partial Refund",
+    closed_no_refund: "Closed — No Refund",
     escalated: "Escalated INR Cases",
     late: "Late Shipments (No INR)",
   };
@@ -142,10 +177,10 @@ export default async function INRPage({
   const cards: { key: FilterType; label: string; count: number; color: string; activeRing: string }[] = [
     { key: "all", label: "Total INR Cases", count: totalCount, color: "text-slate-400", activeRing: "ring-slate-500" },
     { key: "open", label: "Open", count: openCount, color: "text-yellow-400", activeRing: "ring-yellow-500" },
-    { key: "closed_refund", label: "Closed (Full Refund)", count: closedRefundCount, color: "text-green-400", activeRing: "ring-green-500" },
-    { key: "closed_no_refund", label: "Closed (No/Partial Refund)", count: closedNoRefundCount, color: "text-red-400", activeRing: "ring-red-500" },
-    { key: "cs_closed", label: "CS Closed", count: csClosedCount, color: "text-purple-400", activeRing: "ring-purple-500" },
-    { key: "escalated", label: "Escalated", count: escalatedCount, color: "text-orange-400", activeRing: "ring-orange-500" },
+    { key: "closed_full_refund", label: "Closed (Full Refund)", count: closedFullRefundCount, color: "text-green-400", activeRing: "ring-green-500" },
+    { key: "closed_partial_refund", label: "Closed (Partial Refund)", count: closedPartialRefundCount, color: "text-orange-400", activeRing: "ring-orange-500" },
+    { key: "closed_no_refund", label: "Closed (No Refund)", count: closedNoRefundCount, color: "text-red-400", activeRing: "ring-red-500" },
+    { key: "escalated", label: "Escalated", count: escalatedCount, color: "text-purple-400", activeRing: "ring-purple-500" },
     { key: "late", label: "Late (No INR)", count: lateCount, color: "text-amber-400", activeRing: "ring-amber-500" },
   ];
 
@@ -200,6 +235,7 @@ export default async function INRPage({
                   : null;
                 const displayTitle = inr.listing?.title ?? matchedItem?.title ?? (inr.ebay_item_id ? `Item ${inr.ebay_item_id}` : "Unknown Item");
                 const linkItemId = inr.ebay_item_id ?? inr.item_id;
+                const refundType = isClosed(inr) ? getRefundType(inr) : null;
 
                 return (
                   <div key={inr.id} className="rounded border border-slate-800 p-3">
@@ -238,10 +274,21 @@ export default async function INRPage({
                               ESCALATED
                             </span>
                           ) : null}
-                          {/* Refund indicator */}
-                          {isClosed(inr) && inr.claim_amount && Number(inr.claim_amount) > 0 && (
+                          {/* Refund indicator for closed cases */}
+                          {refundType === "full" && (
                             <span className="rounded bg-green-900 px-2 py-0.5 text-xs text-green-300">
-                              Refund: ${Number(inr.claim_amount).toFixed(2)}
+                              Full Refund: ${Number(inr.claim_amount).toFixed(2)}
+                            </span>
+                          )}
+                          {refundType === "partial" && (
+                            <span className="rounded bg-orange-900 px-2 py-0.5 text-xs text-orange-300">
+                              Partial Refund: ${Number(inr.claim_amount).toFixed(2)}
+                              {matchedItem?.transaction_price ? ` / $${Number(matchedItem.transaction_price).toFixed(2)}` : ""}
+                            </span>
+                          )}
+                          {refundType === "none" && (
+                            <span className="rounded bg-red-900 px-2 py-0.5 text-xs text-red-300">
+                              No Refund
                             </span>
                           )}
                         </div>
