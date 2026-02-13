@@ -230,6 +230,92 @@ export async function searchInquiries(
 }
 
 // ============================================================
+// SEARCH CASES (escalated INR / direct cases)
+// ============================================================
+
+export type EbayCaseSummary = {
+  caseId: string;
+  buyer?: string;
+  seller?: string;
+  caseStatusEnum?: string;
+  itemId?: number;
+  claimAmount?: {
+    value: number;
+    currency: string;
+  };
+  creationDate?: {
+    value?: string;
+  };
+  lastModifiedDate?: {
+    value?: string;
+  };
+  respondByDate?: {
+    value?: string;
+  };
+};
+
+export type SearchCasesResponse = {
+  members: EbayCaseSummary[];
+  paginationOutput: {
+    totalEntries: number;
+    totalPages: number;
+    offset: number;
+    limit: number;
+  };
+};
+
+export async function searchCases(
+  token: string,
+  options: {
+    dateFrom?: string;
+    dateTo?: string;
+    caseStatus?: string;
+    limit?: number;
+    offset?: number;
+  } = {}
+): Promise<SearchCasesResponse> {
+  const params = new URLSearchParams();
+
+  if (options.dateFrom) params.set("case_creation_date_range_from", options.dateFrom);
+  if (options.dateTo) params.set("case_creation_date_range_to", options.dateTo);
+  if (options.caseStatus) params.set("case_status_filter", options.caseStatus);
+  params.set("limit", String(options.limit ?? 200));
+  params.set("offset", String(options.offset ?? 0));
+  params.set("sort", "Descending");
+
+  const url = `${POST_ORDER_BASE}/casemanagement/search?${params.toString()}`;
+  console.log(`[Post-Order] Searching cases: ${url}`);
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: buildHeaders(token),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    console.error(`[Post-Order] Search cases failed (${response.status}):`, text);
+    throw new Error(`Search cases failed: ${response.status} - ${text}`);
+  }
+
+  const data = await response.json();
+
+  // Debug: log the first case to see what fields are available
+  if (data.members && data.members.length > 0 && options.offset === 0) {
+    console.log(`[Post-Order] First case sample:`, JSON.stringify(data.members[0], null, 2));
+  }
+
+  return {
+    members: data.members ?? [],
+    paginationOutput: data.paginationOutput ?? {
+      totalEntries: 0,
+      totalPages: 0,
+      offset: 0,
+      limit: 200,
+    },
+  };
+}
+
+// ============================================================
 // GET SINGLE RETURN DETAILS
 // ============================================================
 

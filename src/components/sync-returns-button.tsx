@@ -20,7 +20,7 @@ export default function SyncReturnsButton() {
       const data = await res.json();
 
       if (res.ok) {
-        const msg = `Synced ${data.synced?.returns ?? 0} returns, ${data.synced?.inquiries ?? 0} INR inquiries`;
+        const msg = `Synced ${data.synced?.returns ?? 0} returns, ${data.synced?.inquiries ?? 0} INR inquiries, ${data.synced?.cases ?? 0} cases`;
         setResult(data.errors?.length ? `${msg} (${data.errors.length} errors)` : msg);
         router.refresh();
       } else {

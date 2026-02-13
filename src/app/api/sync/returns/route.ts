@@ -5,17 +5,21 @@ import { getValidAccessToken } from "@/lib/ebay/token";
 import {
   searchReturns,
   searchInquiries,
+  searchCases,
   type EbayReturnSummary,
   type EbayInquirySummary,
+  type EbayCaseSummary,
 } from "@/lib/ebay/post-order";
 
 /**
  * POST /api/sync/returns
- * Syncs return requests and INR inquiries from eBay Post-Order API.
- * Searches the last 1 year in 90-day windows with full pagination.
+ * Syncs return requests, INR inquiries, and escalated/direct cases from eBay Post-Order API.
+ * Searches the last 18 months in 90-day windows with full pagination.
  *
- * Returns are searched with role=BUYER since this is a buyer account.
- * All cases are stored regardless of whether they match a purchase order.
+ * Three sync steps:
+ * 1. Returns (role=BUYER) — buyer return requests
+ * 2. Inquiries — INR inquiries filed by the buyer
+ * 3. Cases — escalated INR cases and direct cases (skipped inquiry step)
  */
 export async function POST(req: Request) {
   const auth = await requireRole(["ADMIN"]);
@@ -50,6 +54,7 @@ export async function POST(req: Request) {
 
     let totalReturns = 0;
     let totalInquiries = 0;
+    let totalCases = 0;
     const errors: string[] = [];
 
     for (const account of accounts) {
@@ -57,8 +62,7 @@ export async function POST(req: Request) {
       const { token } = await getValidAccessToken(account.id);
 
       // ============================================================
-      // SYNC RETURNS (role=BUYER — we are the buyer)
-      // Paginate through all pages for each date window
+      // STEP 1: SYNC RETURNS (role=BUYER — we are the buyer)
       // ============================================================
       for (const window of windows) {
         try {
@@ -96,8 +100,7 @@ export async function POST(req: Request) {
       }
 
       // ============================================================
-      // SYNC INQUIRIES (INR)
-      // Paginate through all pages for each date window
+      // STEP 2: SYNC INQUIRIES (INR)
       // ============================================================
       for (const window of windows) {
         try {
@@ -132,11 +135,53 @@ export async function POST(req: Request) {
           errors.push(`Inquiries (${window.from.slice(0,10)}): ${err.message}`);
         }
       }
+
+      // ============================================================
+      // STEP 3: SYNC CASES (escalated INR / direct cases)
+      // These are cases that either:
+      //   a) Were escalated from an inquiry (already have an inquiry record)
+      //   b) Were filed directly as a case (no inquiry record exists)
+      // We store direct cases as new inr_cases records.
+      // For escalated cases, we update the existing inquiry record.
+      // ============================================================
+      for (const window of windows) {
+        try {
+          let offset = 0;
+          let hasMore = true;
+
+          while (hasMore) {
+            const result = await searchCases(token, {
+              dateFrom: window.from,
+              dateTo: window.to,
+              limit: 200,
+              offset,
+            });
+
+            console.log(`[Sync Cases] Window ${window.from.slice(0,10)} to ${window.to.slice(0,10)}: Got ${result.members.length} cases (offset=${offset}, total=${result.paginationOutput.totalEntries})`);
+
+            for (const cs of result.members) {
+              try {
+                await upsertCase(cs);
+                totalCases++;
+              } catch (err: any) {
+                console.error(`[Sync Cases] Failed to upsert case ${cs.caseId}:`, err.message);
+              }
+            }
+
+            const total = result.paginationOutput.totalEntries;
+            offset += result.members.length;
+            hasMore = offset < total && result.members.length > 0;
+          }
+        } catch (err: any) {
+          console.error(`[Sync Cases] Window ${window.from.slice(0,10)} to ${window.to.slice(0,10)} failed:`, err.message);
+          errors.push(`Cases (${window.from.slice(0,10)}): ${err.message}`);
+        }
+      }
     }
 
     return NextResponse.json({
       ok: true,
-      synced: { returns: totalReturns, inquiries: totalInquiries },
+      synced: { returns: totalReturns, inquiries: totalInquiries, cases: totalCases },
       errors: errors.length > 0 ? errors : undefined,
     });
   } catch (error: any) {
@@ -232,7 +277,7 @@ async function upsertReturn(ret: EbayReturnSummary) {
     refund_currency: refundCurrency,
     creation_date: creationDateStr ? new Date(creationDateStr) : null,
     respond_by_date: respondByStr ? new Date(respondByStr) : null,
-    escalated: false, // The response structure doesn't have a simple escalated flag; check status instead
+    escalated: false,
     last_synced_at: new Date(),
   };
 
@@ -307,6 +352,84 @@ async function upsertInquiry(inq: EbayInquirySummary) {
         ...data,
         ebay_inquiry_id: inquiryId,
         status_text: inq.inquiryStatusEnum ?? "synced",
+      },
+    });
+  }
+}
+
+// ============================================================
+// UPSERT CASE (escalated or direct INR case)
+// ============================================================
+
+async function upsertCase(cs: EbayCaseSummary) {
+  const caseId = String(cs.caseId);
+  const itemId = cs.itemId ? String(cs.itemId) : null;
+
+  const resolvedOrderId = await resolveOrderId(itemId, null);
+
+  const creationDateStr = cs.creationDate?.value ?? null;
+  const lastModifiedStr = cs.lastModifiedDate?.value ?? null;
+  const respondByStr = cs.respondByDate?.value ?? null;
+
+  // First, check if this case already exists as an escalated inquiry
+  // (i.e., an inquiry was filed first, then escalated to this case)
+  const existingByCase = await prisma.inr_cases.findFirst({
+    where: { case_id: caseId },
+  });
+
+  if (existingByCase) {
+    // Update the existing inquiry record with case details
+    await prisma.inr_cases.update({
+      where: { id: existingByCase.id },
+      data: {
+        ebay_item_id: itemId ?? existingByCase.ebay_item_id,
+        order_id: resolvedOrderId ?? existingByCase.order_id,
+        ebay_status: cs.caseStatusEnum ?? existingByCase.ebay_status,
+        claim_amount: cs.claimAmount?.value ?? existingByCase.claim_amount,
+        claim_currency: cs.claimAmount?.currency ?? existingByCase.claim_currency,
+        creation_date: creationDateStr ? new Date(creationDateStr) : existingByCase.creation_date,
+        last_modified: lastModifiedStr ? new Date(lastModifiedStr) : existingByCase.last_modified,
+        respond_by_date: respondByStr ? new Date(respondByStr) : existingByCase.respond_by_date,
+        escalated_to_case: true,
+        last_synced_at: new Date(),
+      },
+    });
+    return;
+  }
+
+  // Check if this case already exists as a direct case (stored with ebay_inquiry_id = "case-{caseId}")
+  const directCaseId = `case-${caseId}`;
+  const existingDirect = await prisma.inr_cases.findUnique({
+    where: { ebay_inquiry_id: directCaseId },
+  });
+
+  const data = {
+    order_id: resolvedOrderId,
+    ebay_item_id: itemId,
+    ebay_status: cs.caseStatusEnum ?? null,
+    ebay_state: cs.caseStatusEnum ?? null,
+    claim_amount: cs.claimAmount?.value ?? null,
+    claim_currency: cs.claimAmount?.currency ?? null,
+    creation_date: creationDateStr ? new Date(creationDateStr) : null,
+    last_modified: lastModifiedStr ? new Date(lastModifiedStr) : null,
+    respond_by_date: respondByStr ? new Date(respondByStr) : null,
+    buyer_login_name: cs.buyer ?? null,
+    escalated_to_case: true,
+    case_id: caseId,
+    last_synced_at: new Date(),
+  };
+
+  if (existingDirect) {
+    await prisma.inr_cases.update({
+      where: { ebay_inquiry_id: directCaseId },
+      data,
+    });
+  } else {
+    await prisma.inr_cases.create({
+      data: {
+        ...data,
+        ebay_inquiry_id: directCaseId,
+        status_text: cs.caseStatusEnum ?? "synced",
       },
     });
   }
