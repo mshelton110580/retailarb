@@ -31,8 +31,10 @@ export async function POST(req: Request) {
 
     const now = new Date();
 
-    // Build 90-day windows from the earliest date (July 25, 2023) to now.
-    const EARLIEST_DATE = new Date("2023-07-25T00:00:00.000Z");
+    // eBay Post-Order API allows searching up to 18 months back.
+    // Build 90-day windows from 18 months ago to now.
+    const EARLIEST_DATE = new Date(now);
+    EARLIEST_DATE.setMonth(EARLIEST_DATE.getMonth() - 18);
     const windows: Array<{ from: string; to: string }> = [];
     let windowStart = new Date(EARLIEST_DATE);
     while (windowStart < now) {
