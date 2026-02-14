@@ -1,5 +1,6 @@
 import PageHeader from "@/components/page-header";
-import DateRangeFilter, { getDateRangeFromParams } from "@/components/date-range-filter";
+import DateRangeFilter from "@/components/date-range-filter";
+import { getDateRangeFromParams } from "@/lib/date-range";
 import { prisma } from "@/lib/db";
 import ReceivingForm from "./receiving-form";
 import ScanList from "./scan-list";
