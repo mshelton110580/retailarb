@@ -77,11 +77,15 @@ function getReturnRefundType(ret: {
   }
 
   // No actual_refund data — for escalated returns, use order_total as fallback
+  // Formula: implied_refund = estimated_refund - order_total
+  //   order_total = 0 → Full Refund (entire amount refunded)
+  //   order_total > 0 but < estimated_refund → Partial Refund
+  //   order_total >= estimated_refund → No Refund
   if (isEsc) {
     const orderTotal = getOrderTotal(ret.orderTotals);
     if (orderTotal !== null) {
       if (orderTotal === 0) return "full";
-      // order_total > 0 means no refund was issued (returned too late, etc.)
+      if (estimated !== null && estimated > 0 && orderTotal < estimated) return "partial";
       return "none";
     }
     // No order data available (older than 90-day sync window)
@@ -286,25 +290,42 @@ export default async function ReturnsPage({
                           </span>
                         )}
                         {/* Refund type badge */}
-                        {ret.refundType === "full" && (
-                          <span className="rounded bg-green-900 px-2 py-0.5 text-xs text-green-300">
-                            Full Refund: ${Number(ret.actual_refund).toFixed(2)}
-                          </span>
-                        )}
-                        {ret.refundType === "partial" && (
-                          <span className="rounded bg-orange-900 px-2 py-0.5 text-xs text-orange-300">
-                            Partial Refund: ${Number(ret.actual_refund ?? ret.refund_amount).toFixed(2)}
-                            {ret.estimated_refund ? ` / $${Number(ret.estimated_refund).toFixed(2)}` : ""}
-                          </span>
-                        )}
+                        {ret.refundType === "full" && (() => {
+                          const orderTotal = ret.order?.totals ? getOrderTotal(ret.order.totals) : null;
+                          const refundAmt = ret.actual_refund
+                            ? Number(ret.actual_refund)
+                            : (ret.estimated_refund && orderTotal !== null)
+                              ? Number(ret.estimated_refund) - orderTotal
+                              : null;
+                          return (
+                            <span className="rounded bg-green-900 px-2 py-0.5 text-xs text-green-300">
+                              Full Refund{refundAmt !== null ? `: $${refundAmt.toFixed(2)}` : ""}
+                            </span>
+                          );
+                        })()}
+                        {ret.refundType === "partial" && (() => {
+                          const orderTotal = ret.order?.totals ? getOrderTotal(ret.order.totals) : null;
+                          const refundAmt = ret.actual_refund
+                            ? Number(ret.actual_refund)
+                            : (ret.estimated_refund && orderTotal !== null)
+                              ? Number(ret.estimated_refund) - orderTotal
+                              : (ret.refund_amount ? Number(ret.refund_amount) : null);
+                          const totalPaid = ret.estimated_refund ? Number(ret.estimated_refund) : null;
+                          return (
+                            <span className="rounded bg-orange-900 px-2 py-0.5 text-xs text-orange-300">
+                              Partial Refund{refundAmt !== null ? `: $${refundAmt.toFixed(2)}` : ""}
+                              {totalPaid !== null ? ` / $${totalPaid.toFixed(2)}` : ""}
+                            </span>
+                          );
+                        })()}
                         {ret.refundType === "none" && (
                           <span className="rounded bg-red-900 px-2 py-0.5 text-xs text-red-300">
                             No Refund
                           </span>
                         )}
                         {ret.refundType === "escalated" && (
-                          <span className="rounded bg-red-900 px-2 py-0.5 text-xs text-red-300">
-                            ESCALATED
+                          <span className="rounded bg-purple-900 px-2 py-0.5 text-xs text-purple-300">
+                            Escalated (Unknown Refund)
                           </span>
                         )}
                       </div>
