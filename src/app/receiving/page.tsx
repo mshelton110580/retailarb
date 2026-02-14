@@ -1,12 +1,25 @@
 import PageHeader from "@/components/page-header";
+import DateRangeFilter, { getDateRangeFromParams } from "@/components/date-range-filter";
 import { prisma } from "@/lib/db";
 import ReceivingForm from "./receiving-form";
 import ScanList from "./scan-list";
 
-export default async function ReceivingPage() {
+export default async function ReceivingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ range?: string; from?: string; to?: string }>;
+}) {
+  const params = await searchParams;
+  const dateRange = getDateRangeFromParams(params);
+
   const scans = await prisma.receiving_scans.findMany({
+    where: {
+      scanned_at: {
+        gte: dateRange.from,
+        lte: dateRange.to,
+      },
+    },
     orderBy: { scanned_at: "desc" },
-    take: 50,
     include: {
       scanner: { select: { email: true } }
     }
@@ -95,6 +108,10 @@ export default async function ReceivingPage() {
   return (
     <div className="space-y-6">
       <PageHeader title="Receiving" />
+      <div className="flex items-center justify-between">
+        <DateRangeFilter />
+        <span className="text-sm text-slate-400">{enrichedScans.length} scans</span>
+      </div>
       <ReceivingForm />
       <ScanList scans={enrichedScans} />
     </div>

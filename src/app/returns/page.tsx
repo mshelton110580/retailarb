@@ -1,8 +1,10 @@
 import PageHeader from "@/components/page-header";
+import DateRangeFilter, { getDateRangeFromParams } from "@/components/date-range-filter";
 import SyncReturnsButton from "@/components/sync-returns-button";
 import { prisma } from "@/lib/db";
 import Link from "next/link";
 import ReturnActions from "./return-actions";
+import FilterLink from "@/components/filter-link";
 import { JsonValue } from "@prisma/client/runtime/library";
 
 type FilterType =
@@ -98,12 +100,19 @@ function getReturnRefundType(ret: {
 export default async function ReturnsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ filter?: string }>;
+  searchParams: Promise<{ filter?: string; range?: string; from?: string; to?: string }>;
 }) {
   const params = await searchParams;
   const filter = (params.filter ?? "all") as FilterType;
+  const dateRange = getDateRangeFromParams(params);
 
   const returns = await prisma.returns.findMany({
+    where: {
+      creation_date: {
+        gte: dateRange.from,
+        lte: dateRange.to,
+      },
+    },
     include: {
       order: { include: { order_items: true } },
       listing: { select: { title: true } },
@@ -201,10 +210,15 @@ export default async function ReturnsPage({
         <SyncReturnsButton />
       </PageHeader>
 
+      <div className="flex items-center justify-between">
+        <DateRangeFilter />
+        <span className="text-sm text-slate-400">{totalReturns} returns</span>
+      </div>
+
       {/* Summary Cards — clickable filters */}
       <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
         {cards.map((card) => (
-          <Link
+          <FilterLink
             key={card.key}
             href={card.key === "all" ? "/returns" : `/returns?filter=${card.key}`}
             className={`rounded-lg border bg-slate-900 p-4 transition-all hover:bg-slate-800 cursor-pointer ${
@@ -215,7 +229,7 @@ export default async function ReturnsPage({
           >
             <p className={`text-xs ${card.color}`}>{card.label}</p>
             <p className="mt-1 text-2xl font-semibold">{card.count}</p>
-          </Link>
+          </FilterLink>
         ))}
       </div>
 
@@ -223,7 +237,7 @@ export default async function ReturnsPage({
       {filter !== "all" && (
         <div className="flex items-center gap-2 text-sm text-slate-400">
           <span>Showing: <strong className="text-slate-200">{filterLabels[filter]}</strong> ({filtered.length})</span>
-          <Link href="/returns" className="text-blue-400 hover:underline text-xs">Clear filter</Link>
+          <FilterLink href="/returns" className="text-blue-400 hover:underline text-xs">Clear filter</FilterLink>
         </div>
       )}
 

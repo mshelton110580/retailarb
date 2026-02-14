@@ -1,8 +1,10 @@
 import PageHeader from "@/components/page-header";
+import DateRangeFilter, { getDateRangeFromParams } from "@/components/date-range-filter";
 import SyncReturnsButton from "@/components/sync-returns-button";
 import { prisma } from "@/lib/db";
 import Link from "next/link";
 import INRAction from "./inr-action";
+import FilterLink from "@/components/filter-link";
 import { Decimal } from "@prisma/client/runtime/library";
 import { JsonValue } from "@prisma/client/runtime/library";
 
@@ -83,12 +85,19 @@ function getRefundType(
 export default async function INRPage({
   searchParams,
 }: {
-  searchParams: Promise<{ filter?: string }>;
+  searchParams: Promise<{ filter?: string; range?: string; from?: string; to?: string }>;
 }) {
   const params = await searchParams;
   const filter = (params.filter ?? "all") as FilterType;
+  const dateRange = getDateRangeFromParams(params);
 
   const inrCases = await prisma.inr_cases.findMany({
+    where: {
+      created_at: {
+        gte: dateRange.from,
+        lte: dateRange.to,
+      },
+    },
     include: {
       order: { include: { order_items: true } },
       listing: { select: { title: true } },
@@ -226,10 +235,15 @@ export default async function INRPage({
         <SyncReturnsButton />
       </PageHeader>
 
+      <div className="flex items-center justify-between">
+        <DateRangeFilter />
+        <span className="text-sm text-slate-400">{totalCount} cases</span>
+      </div>
+
       {/* Summary Cards — clickable filters */}
       <div className="grid gap-4 md:grid-cols-4 lg:grid-cols-7">
         {cards.map((card) => (
-          <Link
+          <FilterLink
             key={card.key}
             href={card.key === "all" ? "/inr" : `/inr?filter=${card.key}`}
             className={`rounded-lg border bg-slate-900 p-4 transition-all hover:bg-slate-800 cursor-pointer ${
@@ -240,7 +254,7 @@ export default async function INRPage({
           >
             <p className={`text-xs ${card.color}`}>{card.label}</p>
             <p className="mt-1 text-2xl font-semibold">{card.count}</p>
-          </Link>
+          </FilterLink>
         ))}
       </div>
 
@@ -248,7 +262,7 @@ export default async function INRPage({
       {filter !== "all" && (
         <div className="flex items-center gap-2 text-sm text-slate-400">
           <span>Showing: <strong className="text-slate-200">{filterLabels[filter]}</strong> ({filter === "late" ? lateShipments.length : filteredCases.length})</span>
-          <Link href="/inr" className="text-blue-400 hover:underline text-xs">Clear filter</Link>
+          <FilterLink href="/inr" className="text-blue-400 hover:underline text-xs">Clear filter</FilterLink>
         </div>
       )}
 

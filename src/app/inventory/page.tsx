@@ -1,4 +1,6 @@
 import PageHeader from "@/components/page-header";
+import DateRangeFilter, { getDateRangeFromParams } from "@/components/date-range-filter";
+import FilterLink from "@/components/filter-link";
 import { prisma } from "@/lib/db";
 import Link from "next/link";
 
@@ -50,12 +52,21 @@ const cardConfig: Array<{
 export default async function InventoryPage({
   searchParams
 }: {
-  searchParams: { filter?: string };
+  searchParams: { filter?: string; range?: string; from?: string; to?: string };
 }) {
   const activeFilter = (searchParams.filter ?? null) as BucketKey | null;
+  const dateRange = getDateRangeFromParams(searchParams);
 
-  // Fetch all shipments with order + items
+  // Fetch all shipments with order + items, filtered by order purchase_date
   const shipments = await prisma.shipments.findMany({
+    where: {
+      order: {
+        purchase_date: {
+          gte: dateRange.from,
+          lte: dateRange.to,
+        },
+      },
+    },
     include: {
       order: {
         include: {
@@ -231,7 +242,7 @@ export default async function InventoryPage({
       }
 
       return (
-        <Link
+        <FilterLink
           key={card.key}
           href={isActive ? "/inventory" : `/inventory?filter=${card.key}`}
           className={`rounded-lg border p-4 transition-colors hover:bg-slate-800 cursor-pointer ${
@@ -243,7 +254,7 @@ export default async function InventoryPage({
           {card.description && (
             <p className="mt-1 text-xs text-slate-500">{card.description}</p>
           )}
-        </Link>
+        </FilterLink>
       );
     });
   }
@@ -251,6 +262,11 @@ export default async function InventoryPage({
   return (
     <div className="space-y-6">
       <PageHeader title="Inventory Dashboard" />
+
+      <div className="flex items-center justify-between">
+        <DateRangeFilter />
+        <span className="text-sm text-slate-400">{buckets.total_orders.length} orders</span>
+      </div>
 
       {/* Primary Delivery Status */}
       <div>

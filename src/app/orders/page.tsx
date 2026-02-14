@@ -1,4 +1,5 @@
 import PageHeader from "@/components/page-header";
+import DateRangeFilter, { getDateRangeFromParams } from "@/components/date-range-filter";
 import { prisma } from "@/lib/db";
 import Link from "next/link";
 import RefreshButton from "./refresh-button";
@@ -27,10 +28,22 @@ const statusLabels: Record<string, string> = {
   unknown: "Unknown"
 };
 
-export default async function OrdersPage() {
+export default async function OrdersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ range?: string; from?: string; to?: string }>;
+}) {
+  const params = await searchParams;
+  const dateRange = getDateRangeFromParams(params);
+
   const orders = await prisma.orders.findMany({
+    where: {
+      purchase_date: {
+        gte: dateRange.from,
+        lte: dateRange.to,
+      },
+    },
     orderBy: { purchase_date: "desc" },
-    take: 100,
     include: {
       shipments: true,
       order_items: true
@@ -42,10 +55,14 @@ export default async function OrdersPage() {
       <PageHeader title="Orders">
         <RefreshButton />
       </PageHeader>
+      <div className="flex items-center justify-between">
+        <DateRangeFilter />
+        <span className="text-sm text-slate-400">{orders.length} orders</span>
+      </div>
       <section className="rounded-lg border border-slate-800 bg-slate-900 p-4">
         <div className="space-y-3 text-sm text-slate-300">
           {orders.length === 0 ? (
-            <p>No orders synced.</p>
+            <p>No orders in this date range.</p>
           ) : (
             orders.map((order) => (
               <div key={order.order_id} className="rounded border border-slate-800 p-3">
