@@ -51,7 +51,9 @@ export async function updateInventoryStatesFromReturns() {
       return_shipped_date: true,
       return_delivered_date: true,
       refund_issued_date: true,
-      actual_refund: true
+      actual_refund: true,
+      refund_amount: true,
+      estimated_refund: true
     }
   });
 
@@ -63,11 +65,20 @@ export async function updateInventoryStatesFromReturns() {
       where: {
         order_id: ret.order_id,
         item_id: ret.item_id || undefined
+      },
+      select: {
+        id: true,
+        inventory_state: true,
+        condition_status: true
       }
     });
 
     for (const unit of units) {
       let newState: string | null = null;
+
+      // Check if unit is in bad condition
+      const badConditions = ["damaged", "wrong_item", "missing_parts", "defective"];
+      const isBadCondition = badConditions.includes(unit.condition_status);
 
       // PRIORITY 1: Check if return is closed
       if (isReturnClosed(ret)) {
@@ -78,8 +89,12 @@ export async function updateInventoryStatesFromReturns() {
           newState = "returned";
         }
         // If refunded without return (no return tracking)
-        else if (ret.refund_issued_date || ret.actual_refund) {
-          newState = "parts_repair";
+        else if (ret.refund_issued_date || ret.actual_refund || ret.refund_amount || ret.estimated_refund) {
+          // Only bad condition units go to parts_repair, good units stay on_hand
+          if (isBadCondition) {
+            newState = "parts_repair";
+          }
+          // Don't change state for good condition units - they stay on_hand
         }
         // Closed but no clear indication - assume returned
         else {
@@ -87,8 +102,11 @@ export async function updateInventoryStatesFromReturns() {
         }
       }
       // PRIORITY 2: Refund issued without return being shipped - parts/keep
-      else if ((ret.refund_issued_date || ret.actual_refund) && !ret.return_shipped_date && !ret.return_delivered_date) {
-        newState = "parts_repair";
+      else if ((ret.refund_issued_date || ret.actual_refund || ret.refund_amount || ret.estimated_refund) && !ret.return_shipped_date && !ret.return_delivered_date) {
+        // Only bad condition units go to parts_repair, good units stay on_hand
+        if (isBadCondition) {
+          newState = "parts_repair";
+        }
       }
       // PRIORITY 3: Return is open but shipped
       else if (ret.return_shipped_date) {
