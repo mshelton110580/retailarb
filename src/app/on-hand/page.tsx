@@ -57,7 +57,8 @@ export default async function OnHandPage() {
       },
       order: {
         select: {
-          order_id: true
+          order_id: true,
+          totals: true  // Current order total from eBay (includes shipping, after refunds)
         }
       }
     }
@@ -217,8 +218,11 @@ export default async function OnHandPage() {
       // First, try to get the original cost from estimated_refund (most accurate)
       if (refundKey && originalCostMap.has(refundKey)) {
         totalCost = originalCostMap.get(refundKey)!;
+      } else if (unit.order?.totals && typeof unit.order.totals === 'object' && 'total' in unit.order.totals) {
+        // Use order.totals.total from eBay (includes shipping, reflects current total)
+        totalCost = Number((unit.order.totals as any).total);
       } else {
-        // Fall back to transaction_price + shipping_cost
+        // Final fallback: transaction_price + shipping_cost
         const totalPrice = Number(unit.order_item.transaction_price);
         const totalShipping = Number(unit.order_item.shipping_cost) || 0;
         totalCost = totalPrice + totalShipping;
