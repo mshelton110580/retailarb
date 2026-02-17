@@ -6,6 +6,8 @@ import {
   searchReturns,
   searchInquiries,
   searchCases,
+  getReturnTracking,
+  getReturnDetail,
   type EbayReturnSummary,
   type EbayInquirySummary,
   type EbayCaseSummary,
@@ -82,7 +84,7 @@ export async function POST(req: Request) {
 
             for (const ret of result.members) {
               try {
-                await upsertReturn(ret);
+                await upsertReturn(ret, token);
                 totalReturns++;
               } catch (err: any) {
                 console.error(`[Sync Returns] Failed to upsert return ${ret.returnId}:`, err.message);
@@ -231,7 +233,7 @@ async function resolveListingItemId(itemId: string | null): Promise<string | nul
 // UPSERT RETURN
 // ============================================================
 
-async function upsertReturn(ret: EbayReturnSummary) {
+async function upsertReturn(ret: EbayReturnSummary, token: string) {
   const returnId = String(ret.returnId);
 
   // Extract nested fields from the actual API response structure
@@ -262,7 +264,19 @@ async function upsertReturn(ret: EbayReturnSummary) {
   // Extract return reason from creationInfo
   const returnReason = ret.creationInfo?.reason ?? null;
 
-  const data = {
+  // Fetch tracking information and full details
+  let trackingInfo = null;
+  let detailInfo = null;
+  try {
+    [trackingInfo, detailInfo] = await Promise.all([
+      getReturnTracking(token, returnId),
+      getReturnDetail(token, returnId),
+    ]);
+  } catch (err: any) {
+    console.log(`[Sync Returns] Could not fetch tracking/details for ${returnId}:`, err.message);
+  }
+
+  const data: any = {
     order_id: resolvedOrderId,
     ebay_item_id: itemId,
     ebay_state: ret.state ?? null,
@@ -280,6 +294,32 @@ async function upsertReturn(ret: EbayReturnSummary) {
     escalated: false,
     last_synced_at: new Date(),
   };
+
+  // Add tracking info if available
+  if (trackingInfo) {
+    data.return_carrier = trackingInfo.trackingCarrierUsed ?? null;
+    data.return_tracking_number = trackingInfo.trackingNumber ?? null;
+    data.return_tracking_status = trackingInfo.trackingStatus ?? null;
+    data.return_shipped_date = trackingInfo.shipmentDate?.value ? new Date(trackingInfo.shipmentDate.value) : null;
+    data.return_delivered_date = trackingInfo.deliveredDate?.value ? new Date(trackingInfo.deliveredDate.value) : null;
+  }
+
+  // Add label info if available
+  if (detailInfo?.returnShipment) {
+    data.label_created_date = detailInfo.returnShipment.labelGeneratedDate?.value
+      ? new Date(detailInfo.returnShipment.labelGeneratedDate.value)
+      : null;
+    data.label_url = detailInfo.returnShipment.labelDownloadURL ?? null;
+    data.label_created_by = detailInfo.returnShipment.labelCreatedBy ?? null;
+  }
+
+  // Check if refund was issued
+  if (actualRefund && actualRefund > 0) {
+    // Set refund issued date based on state/status
+    if (ret.state === "REFUND_ISSUED" || ret.state === "RETURN_CLOSED") {
+      data.refund_issued_date = new Date();
+    }
+  }
 
   // Check if status indicates escalation
   if (ret.status === "ESCALATED" || ret.state === "ESCALATED") {

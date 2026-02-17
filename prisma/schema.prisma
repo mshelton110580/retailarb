@@ -248,6 +248,16 @@ model returns {
   last_modified     DateTime?
   respond_by_date   DateTime?
   escalated         Boolean   @default(false)
+  // Return tracking (from API)
+  return_carrier         String?
+  return_tracking_number String?
+  return_tracking_status String?
+  return_shipped_date    DateTime?
+  return_delivered_date  DateTime?
+  label_created_date     DateTime?
+  label_url              String?
+  label_created_by       String?  // "BUYER" or "SELLER"
+  refund_issued_date     DateTime?
   // Manual/scrape fields
   filed_manually_at DateTime?
   status_scraped    String?

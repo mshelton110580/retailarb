@@ -19,7 +19,13 @@ type BucketKey =
   | "missing_units"
   | "check_quantity"
   | "ebay_returns"
-  | "ebay_inr";
+  | "ebay_inr"
+  | "return_filed_awaiting_response"
+  | "return_print_label"
+  | "return_label_printed"
+  | "return_in_transit"
+  | "return_delivered"
+  | "return_refunded";
 
 const cardConfig: Array<{
   key: BucketKey;
@@ -48,6 +54,13 @@ const cardConfig: Array<{
   // eBay Cases
   { key: "ebay_returns", label: "eBay Returns", color: "text-red-400", border: "border-red-600", description: "Return requests synced from eBay", section: "cases", linkTo: "/returns" },
   { key: "ebay_inr", label: "eBay INR Cases", color: "text-amber-400", border: "border-amber-600", description: "Item Not Received inquiries from eBay", section: "cases", linkTo: "/inr" },
+  // Return Tracking Status
+  { key: "return_filed_awaiting_response", label: "Return Filed — Awaiting Response", color: "text-orange-300", border: "border-orange-500", description: "Return filed, waiting for seller to respond or provide label", section: "return_tracking" },
+  { key: "return_print_label", label: "Return Label Ready — Print", color: "text-yellow-300", border: "border-yellow-500", description: "Return label created, needs to be printed", section: "return_tracking" },
+  { key: "return_label_printed", label: "Return Label Printed", color: "text-lime-300", border: "border-lime-500", description: "Return label printed, ready to ship", section: "return_tracking" },
+  { key: "return_in_transit", label: "Return In Transit", color: "text-cyan-300", border: "border-cyan-500", description: "Return package shipped and in transit to seller", section: "return_tracking" },
+  { key: "return_delivered", label: "Return Delivered", color: "text-sky-300", border: "border-sky-500", description: "Return delivered to seller, awaiting refund", section: "return_tracking" },
+  { key: "return_refunded", label: "Return Refunded", color: "text-emerald-300", border: "border-emerald-500", description: "Return completed and refund issued", section: "return_tracking" },
 ];
 
 export default async function InventoryPage({
@@ -85,7 +98,7 @@ export default async function InventoryPage({
 
   // Fetch returns and INR cases (filtered by order purchase_date OR creation_date to match date range)
   const [returns, inrCases, returnCount, openReturnCount, inrCount, openInrCount] = await Promise.all([
-    // Fetch all returns to get order IDs with filed returns
+    // Fetch all returns with tracking data
     prisma.returns.findMany({
       where: {
         OR: [
@@ -110,7 +123,21 @@ export default async function InventoryPage({
           },
         ],
       },
-      select: { order_id: true },
+      select: {
+        order_id: true,
+        ebay_state: true,
+        ebay_status: true,
+        label_created_date: true,
+        label_url: true,
+        label_pdf_path: true,
+        return_tracking_number: true,
+        return_tracking_status: true,
+        return_shipped_date: true,
+        return_delivered_date: true,
+        refund_issued_date: true,
+        actual_refund: true,
+        respond_by_date: true,
+      },
     }),
     // Fetch all INR cases to get order IDs with filed INR cases
     prisma.inr_cases.findMany({
@@ -282,6 +309,12 @@ export default async function InventoryPage({
     never_shipped: [],
     overdue_not_received: [],
     needs_return: [],
+    return_filed_awaiting_response: [],
+    return_print_label: [],
+    return_label_printed: [],
+    return_in_transit: [],
+    return_delivered: [],
+    return_refunded: [],
     missing_units: [],
     check_quantity: [],
     ebay_returns: [],
@@ -363,6 +396,60 @@ export default async function InventoryPage({
     }
   }
 
+  // === RETURN TRACKING CATEGORIZATION ===
+  // Categorize returns based on their tracking status
+  for (const returnCase of returns) {
+    if (!returnCase.order_id) continue; // Skip returns without linked orders
+
+    // Find matching shipment
+    const shipment = shipments.find(s => s.order_id === returnCase.order_id);
+    if (!shipment) continue;
+
+    // 1. Return Refunded (final state)
+    if (returnCase.refund_issued_date || returnCase.actual_refund) {
+      buckets.return_refunded.push(shipment);
+      continue;
+    }
+
+    // 2. Return Delivered (waiting for refund)
+    if (returnCase.return_delivered_date) {
+      buckets.return_delivered.push(shipment);
+      continue;
+    }
+
+    // 3. Return In Transit (tracking shows in transit)
+    if (returnCase.return_shipped_date ||
+        (returnCase.return_tracking_number && returnCase.return_tracking_status &&
+         returnCase.return_tracking_status !== "DELIVERED")) {
+      buckets.return_in_transit.push(shipment);
+      continue;
+    }
+
+    // 4. Label Printed (label downloaded/printed but not shipped yet)
+    if (returnCase.label_pdf_path && !returnCase.return_shipped_date) {
+      buckets.return_label_printed.push(shipment);
+      continue;
+    }
+
+    // 5. Print Label (label created/ready but not printed)
+    if ((returnCase.label_created_date || returnCase.label_url) && !returnCase.label_pdf_path) {
+      buckets.return_print_label.push(shipment);
+      continue;
+    }
+
+    // 6. Filed - Awaiting Response (return filed but no label yet)
+    if (returnCase.ebay_state || returnCase.ebay_status) {
+      // Check if waiting for response (no label available yet)
+      const isWaitingForLabel = !returnCase.label_created_date && !returnCase.label_url;
+      const isBeforeDeadline = returnCase.respond_by_date ? new Date(returnCase.respond_by_date) > now : true;
+
+      if (isWaitingForLabel && isBeforeDeadline) {
+        buckets.return_filed_awaiting_response.push(shipment);
+      }
+    }
+  }
+
+  const isReturnTrackingFilter = activeFilter?.startsWith("return_");
   const filteredItems = activeFilter && activeFilter !== "ebay_returns" && activeFilter !== "ebay_inr"
     ? buckets[activeFilter] ?? []
     : [];
@@ -372,6 +459,7 @@ export default async function InventoryPage({
   const warehouseCards = cardConfig.filter((c) => c.section === "warehouse");
   const actionCards = cardConfig.filter((c) => c.section === "action");
   const caseCards = cardConfig.filter((c) => c.section === "cases");
+  const returnTrackingCards = cardConfig.filter((c) => c.section === "return_tracking");
 
   // Override counts for eBay cases (they're not shipment-based)
   const countOverrides: Partial<Record<BucketKey, number>> = {
@@ -462,6 +550,17 @@ export default async function InventoryPage({
           {renderCards(caseCards)}
         </div>
       </div>
+
+      {/* Return Tracking */}
+      {returnTrackingCards.some(card => buckets[card.key].length > 0) && (
+        <div>
+          <h2 className="mb-2 text-sm font-medium text-slate-400 uppercase tracking-wider">Return Tracking</h2>
+          <p className="mb-3 text-xs text-slate-600">Real-time return status from eBay Post-Order API</p>
+          <div className="grid gap-4 md:grid-cols-4">
+            {renderCards(returnTrackingCards)}
+          </div>
+        </div>
+      )}
 
       {activeFilter && activeFilter !== "ebay_returns" && activeFilter !== "ebay_inr" && (
         <section className="rounded-lg border border-slate-800 bg-slate-900 p-4">

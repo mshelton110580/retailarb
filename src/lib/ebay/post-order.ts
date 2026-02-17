@@ -358,3 +358,86 @@ export async function getInquiry(token: string, inquiryId: string): Promise<any>
 
   return response.json();
 }
+
+// ============================================================
+// GET RETURN TRACKING INFO
+// ============================================================
+
+export type ReturnTrackingScan = {
+  scanDate?: {
+    value?: string;
+  };
+  scanType?: string;
+  location?: string;
+  carrierCode?: string;
+};
+
+export type ReturnTrackingInfo = {
+  trackingCarrierUsed?: string;
+  trackingNumber?: string;
+  trackingStatus?: string;
+  scanHistory?: ReturnTrackingScan[];
+  shipmentDate?: {
+    value?: string;
+  };
+  deliveredDate?: {
+    value?: string;
+  };
+};
+
+export async function getReturnTracking(token: string, returnId: string): Promise<ReturnTrackingInfo | null> {
+  const url = `${POST_ORDER_BASE}/return/${returnId}/tracking`;
+  console.log(`[Post-Order] Getting return tracking: ${url}`);
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: buildHeaders(token),
+  });
+
+  if (!response.ok) {
+    // Return tracking may not exist for all returns
+    if (response.status === 404) {
+      console.log(`[Post-Order] No tracking info for return ${returnId}`);
+      return null;
+    }
+    const text = await response.text();
+    console.error(`[Post-Order] Get return tracking failed (${response.status}):`, text);
+    throw new Error(`Get return tracking failed: ${response.status} - ${text}`);
+  }
+
+  return response.json();
+}
+
+// ============================================================
+// GET FULL RETURN DETAILS (includes label info)
+// ============================================================
+
+export type ReturnDetailResponse = {
+  returnId: string;
+  state?: string;
+  status?: string;
+  returnShipment?: {
+    labelGeneratedDate?: { value?: string };
+    labelDownloadURL?: string;
+    labelCreatedBy?: "BUYER" | "SELLER";
+  };
+  // ... other fields as needed
+};
+
+export async function getReturnDetail(token: string, returnId: string): Promise<ReturnDetailResponse> {
+  const url = `${POST_ORDER_BASE}/return/${returnId}`;
+  console.log(`[Post-Order] Getting full return details: ${url}`);
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: buildHeaders(token),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    console.error(`[Post-Order] Get return detail failed (${response.status}):`, text);
+    throw new Error(`Get return detail failed: ${response.status} - ${text}`);
+  }
+
+  return response.json();
+}
