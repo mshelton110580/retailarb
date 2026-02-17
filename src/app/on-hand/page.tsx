@@ -122,40 +122,23 @@ export default async function OnHandPage() {
     const key = `${ret.order_id}-${itemId}`;
 
     // Calculate actual refund amount
-    // Priority order:
-    // 1. Use actual_refund if available AND it's not equal to estimated_refund (most reliable)
-    // 2. Calculate as estimated_refund - current_order_total (most accurate method)
-    // 3. Use refund_amount only if calculation method fails
+    // Always use: estimated_refund - current_order_total
+    // This is the most accurate and reliable method
     let refundAmount = 0;
     const estimatedRefund = ret.estimated_refund ? Number(ret.estimated_refund) : 0;
 
-    // Check if actual_refund is set and is a partial refund (not equal to estimated_refund)
-    if (ret.actual_refund && Number(ret.actual_refund) !== estimatedRefund) {
-      refundAmount = Number(ret.actual_refund);
-    } else if (ret.estimated_refund && ret.order) {
-      // Use order.totals.total (current order total from eBay) if available
-      // This is the most accurate as it reflects the post-refund total
+    if (ret.estimated_refund && ret.order) {
+      // Use order.totals.total (current order total from eBay)
       let currentOrderTotal = 0;
 
       if (ret.order.totals && typeof ret.order.totals === 'object' && 'total' in ret.order.totals) {
         currentOrderTotal = Number((ret.order.totals as any).total);
-      } else if (ret.order.order_items) {
-        // Fallback: sum up order items
-        currentOrderTotal = ret.order.order_items.reduce((sum, item) => {
-          if (item.item_id === itemId) {
-            return sum + Number(item.transaction_price) + Number(item.shipping_cost || 0);
-          }
-          return sum;
-        }, 0);
       }
 
-      // If estimated_refund > current_total, a refund was issued
-      if (estimatedRefund > currentOrderTotal && currentOrderTotal > 0) {
+      // Calculate refund as difference between original and current total
+      if (estimatedRefund >= currentOrderTotal) {
         refundAmount = estimatedRefund - currentOrderTotal;
       }
-    } else if (ret.refund_amount && Number(ret.refund_amount) !== estimatedRefund) {
-      // Only use refund_amount as last resort, and only if it's not equal to estimated_refund
-      refundAmount = Number(ret.refund_amount);
     }
 
     // Track ORIGINAL order total (estimated_refund = what was originally paid before refund)
