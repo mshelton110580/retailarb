@@ -188,7 +188,8 @@ export default async function OnHandPage() {
   for (const unit of units) {
     if (!unit.category) continue;
 
-    const productKey = unit.category.category_name; // Group by name, not ID
+    // Group by name (case-insensitive) to combine "TI-83 Plus" with "TI-83 PLUS"
+    const productKey = unit.category.category_name.toLowerCase();
 
     // Calculate per-unit cost with smart refund distribution
     let itemCost = 0;
