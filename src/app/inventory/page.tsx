@@ -446,10 +446,10 @@ export default async function InventoryPage({
     const shipment = shipments.find(s => s.order_id === returnCase.order_id);
     if (!shipment) continue;
 
-    // 1. Return Refunded (final state) - use same logic as returns page
+    // IMPORTANT: Check refund status FIRST - refunded returns should not appear in any other category
     if (isReturnRefunded(returnCase)) {
       buckets.return_refunded.push(shipment);
-      continue;
+      continue; // Skip all other checks
     }
 
     // 2. Return Delivered (waiting for refund)
@@ -473,20 +473,18 @@ export default async function InventoryPage({
     }
 
     // 5. Print Label (label created/ready but not printed)
-    if ((returnCase.label_created_date || returnCase.label_url) && !returnCase.label_pdf_path) {
+    if ((returnCase.label_created_date || returnCase.label_url) && !returnCase.label_pdf_path && !returnCase.return_shipped_date) {
       buckets.return_print_label.push(shipment);
       continue;
     }
 
-    // 6. Filed - Awaiting Response (return filed but no label yet)
-    if (returnCase.ebay_state || returnCase.ebay_status) {
-      // Check if waiting for response (no label available yet)
-      const isWaitingForLabel = !returnCase.label_created_date && !returnCase.label_url;
-      const isBeforeDeadline = returnCase.respond_by_date ? new Date(returnCase.respond_by_date) > now : true;
+    // 6. Filed - Awaiting Response (return filed but no label yet and not shipped)
+    // Only categorize here if truly waiting - no label, no tracking, not shipped
+    const hasNoLabel = !returnCase.label_created_date && !returnCase.label_url;
+    const hasNoTracking = !returnCase.return_tracking_number && !returnCase.return_shipped_date;
 
-      if (isWaitingForLabel && isBeforeDeadline) {
-        buckets.return_filed_awaiting_response.push(shipment);
-      }
+    if ((returnCase.ebay_state || returnCase.ebay_status) && hasNoLabel && hasNoTracking) {
+      buckets.return_filed_awaiting_response.push(shipment);
     }
   }
 
