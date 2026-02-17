@@ -215,18 +215,16 @@ export default async function OnHandPage() {
         ? `${unit.order.order_id}-${unit.order_item.item_id}`
         : null;
 
-      // First, try to get the original cost from estimated_refund (most accurate)
+      // First, try to get the original cost from estimated_refund (most accurate for refunded orders)
       if (refundKey && originalCostMap.has(refundKey)) {
         totalCost = originalCostMap.get(refundKey)!;
       } else if (unit.order?.totals && typeof unit.order.totals === 'object' && 'total' in unit.order.totals) {
-        // Use order.totals.total from eBay (includes shipping, reflects current total)
+        // Use order.totals.total from eBay (always accurate, includes shipping)
         totalCost = Number((unit.order.totals as any).total);
-      } else {
-        // Final fallback: transaction_price + shipping_cost
-        const totalPrice = Number(unit.order_item.transaction_price);
-        const totalShipping = Number(unit.order_item.shipping_cost) || 0;
-        totalCost = totalPrice + totalShipping;
       }
+      // Note: We don't use transaction_price + shipping_cost as a fallback because:
+      // - shipping_cost is often missing or inaccurate
+      // - order.totals.total should always be available from eBay sync
 
       const refundAmount = refundKey ? (refundMap.get(refundKey) || 0) : 0;
       const unitsScanned = orderItemUnitCounts.get(unit.order_item.id) || 1;
