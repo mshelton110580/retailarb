@@ -63,7 +63,7 @@ export default function ReceivingForm() {
 
     const handleClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      if (target.tagName === "SELECT" || target.tagName === "BUTTON" || (target as HTMLInputElement).name === "notes") return;
+      if (target.tagName === "SELECT" || target.tagName === "BUTTON" || target.tagName === "INPUT" || target.tagName === "A") return;
       setTimeout(() => trackingRef.current?.focus(), 50);
     };
 
