@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
 import { TargetType, TargetStatus } from "@prisma/client";
 import { z } from "zod";
+import { findOrCreateCategory, computeInventoryState } from "@/lib/item-categorization";
 
 const schema = z.object({
   tracking: z.string().min(8),
@@ -124,15 +125,72 @@ export async function POST(req: Request) {
       }
 
       // Ensure listing exists (received_units FK requires it)
-      const existingListing = await prisma.listings.findUnique({ where: { item_id: targetItem.item_id } });
-      if (!existingListing) {
-        await prisma.listings.create({
+      let listing = await prisma.listings.findUnique({
+        where: { item_id: targetItem.item_id },
+        select: { item_id: true, title: true, gtin: true }
+      });
+
+      if (!listing) {
+        listing = await prisma.listings.create({
           data: {
             item_id: targetItem.item_id,
             title: targetItem.title ?? "Unknown",
+            gtin: null,
+            brand: null,
+            mpn: null,
             raw_json: {}
-          }
+          },
+          select: { item_id: true, title: true, gtin: true }
         });
+      }
+
+      // Find or create category based on GTIN and title
+      const categoryId = await findOrCreateCategory(listing.gtin, listing.title);
+
+      // Check if there's an existing return for this order/item
+      const existingReturn = await prisma.returns.findFirst({
+        where: {
+          order_id: shipment.order_id,
+          item_id: targetItem.item_id
+        },
+        select: {
+          ebay_state: true,
+          ebay_status: true,
+          return_shipped_date: true,
+          return_delivered_date: true,
+          refund_issued_date: true,
+          actual_refund: true
+        }
+      });
+
+      // Compute initial inventory state based on condition and return status
+      let inventoryState = computeInventoryState(body.data.condition_status);
+
+      // Override state if there's a closed return
+      if (existingReturn) {
+        const CLOSED_STATES = ["CLOSED"];
+        const isClosed =
+          (existingReturn.ebay_state && CLOSED_STATES.includes(existingReturn.ebay_state)) ||
+          (existingReturn.ebay_status && CLOSED_STATES.includes(existingReturn.ebay_status)) ||
+          existingReturn.ebay_state === "REFUND_ISSUED" ||
+          existingReturn.ebay_state === "RETURN_CLOSED" ||
+          existingReturn.ebay_status === "REFUND_ISSUED" ||
+          existingReturn.ebay_status === "LESS_THAN_A_FULL_REFUND_ISSUED";
+
+        if (isClosed) {
+          // Return is closed - check if it was returned or just refunded
+          if (existingReturn.return_delivered_date || existingReturn.return_shipped_date) {
+            inventoryState = "returned";
+          } else if (existingReturn.refund_issued_date || existingReturn.actual_refund) {
+            inventoryState = "parts_repair";
+          } else {
+            inventoryState = "returned";
+          }
+        } else if (existingReturn.return_shipped_date) {
+          inventoryState = "to_be_returned";
+        } else {
+          inventoryState = "to_be_returned";
+        }
       }
 
       // Create the received_unit for this scan
@@ -143,6 +201,8 @@ export async function POST(req: Request) {
           order_item_id: targetItem.id,
           unit_index: newUnitIndex,
           condition_status: body.data.condition_status,
+          inventory_state: inventoryState,
+          category_id: categoryId,
           scanned_by_user_id: auth.session.user.id,
           notes: body.data.notes ?? null
         }

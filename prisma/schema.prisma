@@ -99,6 +99,9 @@ model listings {
   current_price    Decimal? @db.Decimal(12, 2)
   shipping_estimate Decimal? @db.Decimal(12, 2)
   buying_options   Json?
+  gtin             String?   // UPC, EAN, ISBN from eBay product data
+  brand            String?
+  mpn              String?
   raw_json         Json
   updated_at       DateTime @updatedAt
   target           targets @relation(fields: [item_id], references: [item_id])
@@ -190,6 +193,8 @@ model received_units {
   order_item_id      String?
   unit_index         Int
   condition_status   String
+  inventory_state    String @default("on_hand")  // on_hand, to_be_returned, parts_repair, returned
+  category_id        String?
   received_at        DateTime @default(now())
   scanned_by_user_id String
   notes              String?
@@ -197,6 +202,7 @@ model received_units {
   order              orders @relation(fields: [order_id], references: [order_id])
   order_item         order_items? @relation(fields: [order_item_id], references: [id])
   scanner            users @relation(fields: [scanned_by_user_id], references: [id])
+  category           item_categories? @relation(fields: [category_id], references: [id])
   images             unit_images[]
   lot_units          lot_units[]
 }
@@ -309,6 +315,16 @@ model condition_templates {
   condition_status        String
   return_message_template String?
   created_at              DateTime @default(now())
+}
+
+model item_categories {
+  id                 String @id @default(cuid())
+  gtin               String?  @unique
+  category_name      String   // Auto-generated from first matched item title
+  category_keywords  String[] // Keywords extracted from title for matching
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+  received_units     received_units[]
 }
 
 model audit_log {

@@ -7,6 +7,9 @@ export type BrowseItem = {
   endTime?: string;
   buyingOptions?: string[];
   shippingCost?: string;
+  gtin?: string;
+  brand?: string;
+  mpn?: string;
   raw: any;
 };
 
@@ -24,6 +27,20 @@ export async function getItemByLegacyId(token: string, itemId: string): Promise<
   }
 
   const data = await response.json();
+
+  // Extract GTIN from product data (UPC, EAN, ISBN)
+  let gtin = data?.product?.gtin ??
+             data?.product?.upc ??
+             data?.product?.ean ??
+             data?.product?.isbn ??
+             null;
+
+  // Standardize GTIN to 14 digits by left-padding with zeros
+  // UPC = 12 digits, EAN = 13 digits, GTIN-14 = 14 digits
+  if (gtin && gtin.length < 14) {
+    gtin = gtin.padStart(14, '0');
+  }
+
   return {
     itemId: data?.legacyItemId ?? itemId,
     title: data?.title ?? "",
@@ -31,6 +48,9 @@ export async function getItemByLegacyId(token: string, itemId: string): Promise<
     endTime: data?.itemEndDate,
     buyingOptions: data?.buyingOptions ?? [],
     shippingCost: data?.shippingOptions?.[0]?.shippingCost?.value,
+    gtin: gtin,
+    brand: data?.product?.brand ?? null,
+    mpn: data?.product?.mpn ?? null,
     raw: data
   };
 }
