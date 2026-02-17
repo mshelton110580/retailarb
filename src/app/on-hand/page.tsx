@@ -121,12 +121,17 @@ export default async function OnHandPage() {
     const key = `${ret.order_id}-${itemId}`;
 
     // Calculate actual refund amount
-    // The most reliable method: estimated_refund - current_order_total
-    // estimated_refund = original total paid (before any refund)
-    // current_order_total = sum of current transaction_price + shipping from order_items
+    // Priority order:
+    // 1. Use actual_refund if available (most reliable)
+    // 2. Use refund_amount if available
+    // 3. Calculate as estimated_refund - current_order_total (fallback)
     let refundAmount = 0;
 
-    if (ret.estimated_refund && ret.order?.order_items) {
+    if (ret.actual_refund) {
+      refundAmount = Number(ret.actual_refund);
+    } else if (ret.refund_amount) {
+      refundAmount = Number(ret.refund_amount);
+    } else if (ret.estimated_refund && ret.order?.order_items) {
       const estimatedRefund = Number(ret.estimated_refund);
 
       // Calculate current order total for this specific item
@@ -141,10 +146,12 @@ export default async function OnHandPage() {
       if (estimatedRefund > currentItemTotal) {
         refundAmount = estimatedRefund - currentItemTotal;
       }
+    }
 
-      // Track ORIGINAL order total (estimated_refund = what was originally paid before refund)
-      // This is used for calculating per-unit costs based on original value
-      originalCostMap.set(key, estimatedRefund);
+    // Track ORIGINAL order total (estimated_refund = what was originally paid before refund)
+    // This is used for calculating per-unit costs based on original value
+    if (ret.estimated_refund) {
+      originalCostMap.set(key, Number(ret.estimated_refund));
     }
 
     // If we have a refund, track it
