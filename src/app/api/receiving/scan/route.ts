@@ -145,7 +145,8 @@ export async function POST(req: Request) {
       }
 
       // Find or create category based on GTIN and title
-      const categoryId = await findOrCreateCategory(listing.gtin, listing.title);
+      const categoryResult = await findOrCreateCategory(listing.gtin, listing.title);
+      const categoryId = categoryResult.categoryId;
 
       // Check if there's an existing return for this order/item
       const existingReturn = await prisma.returns.findFirst({
@@ -245,12 +246,19 @@ export async function POST(req: Request) {
       results.push({
         orderId: shipment.order_id,
         unitIndex: newUnitIndex,
+        unitId: unit.id,
         expectedUnits: isLot ? `Lot (listed qty: ${shipment.expected_units})` : shipment.expected_units,
         scannedSoFar: newScannedCount,
         remaining,
         scanStatus,
         isLot,
         condition: body.data.condition_status,
+        categoryInfo: {
+          categoryId: categoryResult.categoryId,
+          confidence: categoryResult.confidence,
+          requiresManualSelection: categoryResult.requiresManualSelection,
+          reason: categoryResult.reason
+        },
         item: {
           title: targetItem.title,
           itemId: targetItem.item_id,

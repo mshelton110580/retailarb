@@ -164,6 +164,40 @@ function extractProductInfo(title: string): {
 }
 
 /**
+ * Detect if a title contains multiple distinct products (e.g., "TI-84 & TI-83")
+ */
+export function detectMultipleProducts(title: string): boolean {
+  const titleLower = title.toLowerCase();
+
+  // Common separators indicating multiple products
+  const multiProductPatterns = [
+    /\s+&\s+/,           // " & "
+    /\s+and\s+/,        // " and "
+    /\s+\+\s+/,         // " + "
+    /\s+with\s+/,       // " with " (sometimes indicates bundle)
+  ];
+
+  // Check for model number patterns on both sides of separator
+  const modelPattern = /\b([a-z]{2,4}[-\s]?\d{2,4}\s*(?:plus|pro|max|mini|ultra|ce|se)?)\b/gi;
+  const models = title.match(modelPattern);
+
+  // If we find 2+ distinct model numbers, likely multiple products
+  if (models && models.length >= 2) {
+    const uniqueModels = new Set(models.map(m => m.toLowerCase().trim()));
+    if (uniqueModels.size >= 2) {
+      return true;
+    }
+  }
+
+  // Check for explicit multi-product language
+  if (titleLower.includes("lot of") || titleLower.includes("bundle of") || titleLower.includes("set of")) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Generate a category name from product info.
  * Format: "Brand Model Color" or "Model Color" or "Brand ProductType Color"
  * Examples: "TI-84 Plus CE Pink", "Xbox Controller Black", "Sony Headphones Blue"
@@ -272,12 +306,28 @@ function calculateSimilarity(
 
 /**
  * Find or create an item category based on GTIN or title analysis.
- * Returns the category ID to assign to a received unit.
+ * Returns category info and confidence level.
  */
 export async function findOrCreateCategory(
   gtin: string | null,
   title: string
-): Promise<string | null> {
+): Promise<{
+  categoryId: string | null;
+  confidence: "high" | "medium" | "low";
+  requiresManualSelection: boolean;
+  reason?: string;
+}> {
+  // Check for multiple products in title
+  const hasMultipleProducts = detectMultipleProducts(title);
+  if (hasMultipleProducts) {
+    return {
+      categoryId: null,
+      confidence: "low",
+      requiresManualSelection: true,
+      reason: "Multiple products detected in title"
+    };
+  }
+
   // If GTIN is available, try exact GTIN match first
   if (gtin) {
     const existing = await prisma.item_categories.findUnique({
@@ -286,10 +336,15 @@ export async function findOrCreateCategory(
     });
 
     if (existing) {
-      return existing.id;
+      return {
+        categoryId: existing.id,
+        confidence: "high",
+        requiresManualSelection: false,
+        reason: "Exact GTIN match"
+      };
     }
 
-    // Create new category with this GTIN
+    // GTIN provided but no match - create new with high confidence
     const { brand, fullModel, color, productType, coreTerms } = extractProductInfo(title);
     const categoryName = generateCategoryName(title);
 
@@ -301,14 +356,24 @@ export async function findOrCreateCategory(
       }
     });
 
-    return newCategory.id;
+    return {
+      categoryId: newCategory.id,
+      confidence: "high",
+      requiresManualSelection: false,
+      reason: "New category created with GTIN"
+    };
   }
 
   // No GTIN - use brand/model/color/type matching
   const itemInfo = extractProductInfo(title);
 
   if (itemInfo.coreTerms.length === 0) {
-    return null; // Can't categorize without any meaningful terms
+    return {
+      categoryId: null,
+      confidence: "low",
+      requiresManualSelection: true,
+      reason: "No meaningful terms found in title"
+    };
   }
 
   // Find categories and calculate similarity
@@ -324,28 +389,69 @@ export async function findOrCreateCategory(
 
     const score = calculateSimilarity(itemInfo, categoryInfo);
 
-    // Require minimum 70% similarity (strict matching)
-    // Color + Full Model must match for electronics/variants
-    if (score >= 0.7 && (!bestMatch || score > bestMatch.score)) {
+    if (score > 0 && (!bestMatch || score > bestMatch.score)) {
       bestMatch = { id: category.id, score };
     }
   }
 
-  if (bestMatch && bestMatch.score >= 0.7) {
-    return bestMatch.id;
+  // High confidence: 90%+ match
+  if (bestMatch && bestMatch.score >= 0.9) {
+    return {
+      categoryId: bestMatch.id,
+      confidence: "high",
+      requiresManualSelection: false,
+      reason: `High similarity match (${Math.round(bestMatch.score * 100)}%)`
+    };
   }
 
-  // No good match - create a new category
-  const categoryName = generateCategoryName(title);
-  const newCategory = await prisma.item_categories.create({
-    data: {
-      gtin: null,
-      category_name: categoryName,
-      category_keywords: itemInfo.coreTerms
-    }
-  });
+  // Medium confidence: 70-89% match
+  if (bestMatch && bestMatch.score >= 0.7) {
+    return {
+      categoryId: bestMatch.id,
+      confidence: "medium",
+      requiresManualSelection: false,
+      reason: `Medium similarity match (${Math.round(bestMatch.score * 100)}%)`
+    };
+  }
 
-  return newCategory.id;
+  // Low confidence or no match - require manual selection
+  if (bestMatch && bestMatch.score >= 0.5) {
+    return {
+      categoryId: bestMatch.id,
+      confidence: "low",
+      requiresManualSelection: true,
+      reason: `Low similarity match (${Math.round(bestMatch.score * 100)}%) - manual confirmation needed`
+    };
+  }
+
+  // No good match - create new but require confirmation
+  const categoryName = generateCategoryName(title);
+
+  // Only auto-create if we have strong product info
+  if (itemInfo.fullModel || (itemInfo.brand && itemInfo.productType)) {
+    const newCategory = await prisma.item_categories.create({
+      data: {
+        gtin: null,
+        category_name: categoryName,
+        category_keywords: itemInfo.coreTerms
+      }
+    });
+
+    return {
+      categoryId: newCategory.id,
+      confidence: "medium",
+      requiresManualSelection: false,
+      reason: "New category created with identifiable product info"
+    };
+  }
+
+  // Unclear title - require manual selection
+  return {
+    categoryId: null,
+    confidence: "low",
+    requiresManualSelection: true,
+    reason: "Unclear or generic title - manual selection required"
+  };
 }
 
 /**
