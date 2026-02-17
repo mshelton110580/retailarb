@@ -24,7 +24,7 @@ type UnitDetail = {
   unit_index: number;
   condition_status: string;
   inventory_state: string;
-  scanned_at: Date;
+  received_at: Date;
   unitCost: number;
   notes: string | null;
 };
@@ -35,7 +35,16 @@ export default async function OnHandPage() {
     where: {
       category_id: { not: null }
     },
-    include: {
+    select: {
+      id: true,
+      item_id: true,
+      order_id: true,
+      order_item_id: true,
+      unit_index: true,
+      condition_status: true,
+      inventory_state: true,
+      received_at: true,
+      notes: true,
       category: true,
       order_item: {
         select: {
@@ -63,15 +72,22 @@ export default async function OnHandPage() {
     select: {
       order_id: true,
       item_id: true,
+      ebay_item_id: true,
       actual_refund: true
     }
   });
 
   // Build a map of refunded amounts by order_id + item_id
+  // Note: Some returns have ebay_item_id instead of item_id, so we need both
   const refundMap = new Map<string, number>();
   for (const ret of returns) {
-    if (!ret.order_id || !ret.item_id || !ret.actual_refund) continue;
-    const key = `${ret.order_id}-${ret.item_id}`;
+    if (!ret.order_id || !ret.actual_refund) continue;
+
+    // Use item_id if available, otherwise use ebay_item_id
+    const itemId = ret.item_id || ret.ebay_item_id;
+    if (!itemId) continue;
+
+    const key = `${ret.order_id}-${itemId}`;
     const existing = refundMap.get(key) || 0;
     refundMap.set(key, existing + Number(ret.actual_refund));
   }
@@ -170,7 +186,7 @@ export default async function OnHandPage() {
       unit_index: unit.unit_index,
       condition_status: unit.condition_status,
       inventory_state: unit.inventory_state,
-      scanned_at: unit.scanned_at,
+      received_at: unit.received_at,
       unitCost: itemCost,
       notes: unit.notes
     });

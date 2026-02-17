@@ -10,7 +10,7 @@ type UnitDetail = {
   unit_index: number;
   condition_status: string;
   inventory_state: string;
-  scanned_at: Date;
+  received_at: Date;
   unitCost: number;
   notes: string | null;
 };
@@ -198,7 +198,7 @@ export default function ProductRow({ product, units }: ProductRowProps) {
                       <div>
                         <div className="text-slate-500 mb-1">Scanned</div>
                         <div className="font-medium">
-                          {new Date(unit.scanned_at).toLocaleDateString()}
+                          {new Date(unit.received_at).toLocaleDateString()}
                         </div>
                       </div>
                       {unit.notes && (
