@@ -181,7 +181,7 @@ export default async function OnHandPage() {
           // All units are good - distribute refund equally
           itemCost = (totalCost - refundAmount) / unitsScanned;
         } else {
-          // Mixed good/bad units - try to match refund to bad units
+          // Mixed good/bad units - distribute refund among bad units only
           const expectedBadRefund = perUnitCost * badUnitsCount;
           const refundMatchesBadUnits = Math.abs(refundAmount - expectedBadRefund) < 1; // Within $1
 
@@ -193,8 +193,14 @@ export default async function OnHandPage() {
               itemCost = perUnitCost; // Good unit keeps full cost
             }
           } else {
-            // Refund doesn't match - distribute equally (fallback)
-            itemCost = (totalCost - refundAmount) / unitsScanned;
+            // Partial refund doesn't match - distribute among bad units only
+            // This shows remaining unreimbursed cost on bad units
+            if (isThisUnitBad) {
+              const refundPerBadUnit = refundAmount / badUnitsCount;
+              itemCost = perUnitCost - refundPerBadUnit; // Remaining cost after partial refund
+            } else {
+              itemCost = perUnitCost; // Good unit keeps full cost
+            }
           }
         }
       } else {
