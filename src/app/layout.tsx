@@ -27,6 +27,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
                     <Link href="/targets">Targets</Link>
                     <Link href="/orders">Orders</Link>
                     <Link href="/inventory">Inventory</Link>
+                    <Link href="/on-hand">On Hand</Link>
                     <Link href="/ebay-accounts">eBay Accounts</Link>
                     <Link href="/receiving">Receiving</Link>
                     <Link href="/returns">Returns</Link>

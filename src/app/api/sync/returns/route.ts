@@ -12,6 +12,7 @@ import {
   type EbayInquirySummary,
   type EbayCaseSummary,
 } from "@/lib/ebay/post-order";
+import { updateInventoryStatesFromReturns } from "@/lib/inventory-transitions";
 
 /**
  * POST /api/sync/returns
@@ -179,6 +180,15 @@ export async function POST(req: Request) {
           errors.push(`Cases (${window.from.slice(0,10)}): ${err.message}`);
         }
       }
+    }
+
+    // After syncing all returns, update inventory states based on return statuses
+    try {
+      await updateInventoryStatesFromReturns();
+      console.log("[Return Sync] Inventory states updated based on return statuses");
+    } catch (err: any) {
+      console.error("[Return Sync] Failed to update inventory states:", err.message);
+      errors.push(`Inventory state update failed: ${err.message}`);
     }
 
     return NextResponse.json({

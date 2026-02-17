@@ -193,6 +193,9 @@ const enrichListingWorker = new Worker(
         current_price: Number(item.price),
         shipping_estimate: item.shippingCost ? Number(item.shippingCost) : null,
         buying_options: item.buyingOptions,
+        gtin: item.gtin,
+        brand: item.brand,
+        mpn: item.mpn,
         raw_json: item.raw
       },
       create: {
@@ -202,6 +205,9 @@ const enrichListingWorker = new Worker(
         current_price: Number(item.price),
         shipping_estimate: item.shippingCost ? Number(item.shippingCost) : null,
         buying_options: item.buyingOptions,
+        gtin: item.gtin,
+        brand: item.brand,
+        mpn: item.mpn,
         raw_json: item.raw
       }
     });
