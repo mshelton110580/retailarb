@@ -9,8 +9,8 @@ export default async function CategoriesAdminPage() {
     redirect("/login");
   }
 
-  // Get all categories with unit counts
-  const categories = await prisma.item_categories.findMany({
+  // Get all categories with unit counts (including duplicates)
+  const allCategories = await prisma.item_categories.findMany({
     select: {
       id: true,
       category_name: true,
@@ -25,6 +25,28 @@ export default async function CategoriesAdminPage() {
       category_name: "asc"
     }
   });
+
+  // Group by normalized name to identify duplicates
+  const duplicateGroups = new Map<string, typeof allCategories>();
+  for (const cat of allCategories) {
+    const normalized = cat.category_name.toLowerCase().trim();
+    if (!duplicateGroups.has(normalized)) {
+      duplicateGroups.set(normalized, []);
+    }
+    duplicateGroups.get(normalized)!.push(cat);
+  }
+
+  // Separate duplicates from unique categories
+  const duplicates: Array<{ normalizedName: string; categories: typeof allCategories }> = [];
+  const uniqueCategories: typeof allCategories = [];
+
+  for (const [normalized, cats] of duplicateGroups.entries()) {
+    if (cats.length > 1) {
+      duplicates.push({ normalizedName: normalized, categories: cats });
+    } else {
+      uniqueCategories.push(cats[0]);
+    }
+  }
 
   // Get merge mappings
   const merges = await prisma.$queryRawUnsafe<Array<{
@@ -48,7 +70,22 @@ export default async function CategoriesAdminPage() {
       </div>
 
       <CategoryManager
-        categories={categories.map(c => ({
+        allCategories={allCategories.map(c => ({
+          id: c.id,
+          category_name: c.category_name,
+          gtin: c.gtin,
+          unitCount: c._count.received_units
+        }))}
+        duplicates={duplicates.map(d => ({
+          normalizedName: d.normalizedName,
+          categories: d.categories.map(c => ({
+            id: c.id,
+            category_name: c.category_name,
+            gtin: c.gtin,
+            unitCount: c._count.received_units
+          }))
+        }))}
+        uniqueCategories={uniqueCategories.map(c => ({
           id: c.id,
           category_name: c.category_name,
           gtin: c.gtin,

@@ -10,6 +10,11 @@ type Category = {
   unitCount: number;
 };
 
+type DuplicateGroup = {
+  normalizedName: string;
+  categories: Category[];
+};
+
 type Merge = {
   id: string;
   fromCategoryName: string;
@@ -18,10 +23,14 @@ type Merge = {
 };
 
 export default function CategoryManager({
-  categories,
+  allCategories,
+  duplicates,
+  uniqueCategories,
   merges
 }: {
-  categories: Category[];
+  allCategories: Category[];
+  duplicates: DuplicateGroup[];
+  uniqueCategories: Category[];
   merges: Merge[];
 }) {
   const router = useRouter();
@@ -33,8 +42,12 @@ export default function CategoryManager({
   const [searchTerm, setSearchTerm] = useState("");
   const [deletingMerge, setDeletingMerge] = useState<string | null>(null);
 
-  const filteredCategories = categories.filter(c =>
+  const filteredCategories = allCategories.filter(c =>
     c.category_name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const filteredDuplicates = duplicates.filter(d =>
+    d.normalizedName.includes(searchTerm.toLowerCase())
   );
 
   async function handleMergeCategories() {
@@ -50,8 +63,8 @@ export default function CategoryManager({
       return;
     }
 
-    const fromCategory = categories.find(c => c.id === selectedFrom);
-    const toCategory = categories.find(c => c.id === selectedTo);
+    const fromCategory = allCategories.find(c => c.id === selectedFrom);
+    const toCategory = allCategories.find(c => c.id === selectedTo);
 
     if (!fromCategory || !toCategory) {
       setMessage("Invalid category selection");
@@ -129,11 +142,120 @@ export default function CategoryManager({
   }
 
   const getCategoryName = (id: string) => {
-    return categories.find(c => c.id === id)?.category_name || "Unknown";
+    return allCategories.find(c => c.id === id)?.category_name || "Unknown";
   };
+
+  async function handleQuickMerge(duplicateGroup: DuplicateGroup) {
+    // Find the category with the most units as the target
+    const sorted = [...duplicateGroup.categories].sort((a, b) => b.unitCount - a.unitCount);
+    const target = sorted[0];
+    const sources = sorted.slice(1);
+
+    if (sources.length === 0) return;
+
+    const confirmMsg = `Quick merge all duplicates of "${duplicateGroup.normalizedName}"?\n\n` +
+      `Target (keep): "${target.category_name}" (${target.unitCount} units)\n\n` +
+      `Will merge and delete:\n` +
+      sources.map(s => `  - "${s.category_name}" (${s.unitCount} units)`).join('\n') +
+      `\n\nTotal units after merge: ${sorted.reduce((sum, c) => sum + c.unitCount, 0)}`;
+
+    if (!confirm(confirmMsg)) return;
+
+    setLoading(true);
+    setMessage(null);
+
+    try {
+      let totalTransferred = 0;
+
+      for (const source of sources) {
+        const res = await fetch("/api/admin/categories/merge", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fromCategoryId: source.id,
+            toCategoryId: target.id
+          })
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          setMessage(`Error merging "${source.category_name}": ${data.error}`);
+          setMessageType("error");
+          setLoading(false);
+          return;
+        }
+        totalTransferred += data.unitsTransferred;
+      }
+
+      setMessage(`✓ Successfully merged ${sources.length} duplicate categories into "${target.category_name}". ${totalTransferred} units transferred.`);
+      setMessageType("success");
+      router.refresh();
+    } catch {
+      setMessage("Network error. Please try again.");
+      setMessageType("error");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
     <div className="space-y-6">
+      {/* Duplicate Categories - Show First */}
+      {duplicates.length > 0 && (
+        <section className="rounded-lg border border-yellow-800 bg-yellow-900/20 p-6">
+          <h2 className="text-lg font-semibold text-yellow-400">⚠️ Duplicate Categories Found ({duplicates.length} groups)</h2>
+          <p className="text-sm text-yellow-300/80 mt-1">
+            These categories have exact duplicates (case-insensitive). Click "Quick Merge" to automatically merge all duplicates into the category with the most units.
+          </p>
+
+          <div className="mt-4 space-y-3">
+            {filteredDuplicates.map((group, idx) => {
+              const sorted = [...group.categories].sort((a, b) => b.unitCount - a.unitCount);
+              const target = sorted[0];
+              const totalUnits = sorted.reduce((sum, c) => sum + c.unitCount, 0);
+
+              return (
+                <div key={idx} className="rounded-lg border border-yellow-700 bg-yellow-900/30 p-4">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-yellow-200 mb-2">
+                        "{group.normalizedName}" - {group.categories.length} duplicates, {totalUnits} total units
+                      </p>
+                      <div className="space-y-1">
+                        {sorted.map((cat, i) => (
+                          <div key={cat.id} className="flex items-center gap-2 text-xs">
+                            {i === 0 && (
+                              <span className="rounded bg-green-900 px-1.5 py-0.5 text-green-300 text-[10px] font-medium">
+                                KEEP
+                              </span>
+                            )}
+                            {i > 0 && (
+                              <span className="rounded bg-red-900 px-1.5 py-0.5 text-red-300 text-[10px] font-medium">
+                                DELETE
+                              </span>
+                            )}
+                            <span className="text-yellow-100">"{cat.category_name}"</span>
+                            <span className="text-yellow-400">({cat.unitCount} units)</span>
+                            {cat.gtin && <span className="text-yellow-600 text-[10px]">GTIN: {cat.gtin}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleQuickMerge(group)}
+                      disabled={loading}
+                      className="ml-4 rounded bg-yellow-600 hover:bg-yellow-700 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                    >
+                      Quick Merge
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
       {/* Merge Categories Section */}
       <section className="rounded-lg border border-slate-800 bg-slate-900 p-6">
         <h2 className="text-lg font-semibold">Merge Existing Categories</h2>
@@ -163,7 +285,7 @@ export default function CategoryManager({
               className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300"
             >
               <option value="">-- Select category to merge from --</option>
-              {categories.map(cat => (
+              {allCategories.map(cat => (
                 <option key={cat.id} value={cat.id}>
                   {cat.category_name} ({cat.unitCount} units)
                 </option>
@@ -181,7 +303,7 @@ export default function CategoryManager({
               className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300"
             >
               <option value="">-- Select category to merge into --</option>
-              {categories.map(cat => (
+              {allCategories.map(cat => (
                 <option key={cat.id} value={cat.id}>
                   {cat.category_name} ({cat.unitCount} units)
                 </option>
@@ -202,7 +324,7 @@ export default function CategoryManager({
       {/* Category List */}
       <section className="rounded-lg border border-slate-800 bg-slate-900 p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">All Categories ({categories.length})</h2>
+          <h2 className="text-lg font-semibold">All Categories ({allCategories.length})</h2>
           <input
             type="text"
             placeholder="Search categories..."
