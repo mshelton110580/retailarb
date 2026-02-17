@@ -67,7 +67,10 @@ export default async function ReceivingPage({
             const units = await prisma.received_units.findMany({
               where: { order_id: m.shipment!.order_id },
               orderBy: { unit_index: "asc" },
-              include: { listing: { select: { title: true } } }
+              include: {
+                listing: { select: { title: true } },
+                category: { select: { id: true, category_name: true } }
+              }
             });
 
             return {
@@ -89,7 +92,11 @@ export default async function ReceivingPage({
                 title: u.listing?.title ?? "Unknown",
                 condition: u.condition_status,
                 receivedAt: u.received_at.toISOString(),
-                notes: u.notes
+                notes: u.notes,
+                category: u.category ? {
+                  id: u.category.id,
+                  name: u.category.category_name
+                } : null
               }))
             };
           })

@@ -10,6 +10,10 @@ type ReceivedUnit = {
   condition: string;
   receivedAt: string;
   notes: string | null;
+  category: {
+    id: string;
+    name: string;
+  } | null;
 };
 
 type EnrichedScan = {
@@ -42,11 +46,20 @@ const conditionColors: Record<string, string> = {
   defective: "bg-rose-900 text-rose-300",
 };
 
+type Category = {
+  id: string;
+  category_name: string;
+  gtin: string | null;
+};
+
 export default function ScanList({ scans }: { scans: EnrichedScan[] }) {
   const router = useRouter();
   const [deleting, setDeleting] = useState<string | null>(null);
   const [deletingUnit, setDeletingUnit] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [editingCategory, setEditingCategory] = useState<string | null>(null);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loadingCategories, setLoadingCategories] = useState(false);
 
   async function handleDelete(scanId: string) {
     if (!confirm("Delete this scan? This will reverse the check-in and remove received units for the matched order(s).")) {
@@ -100,6 +113,51 @@ export default function ScanList({ scans }: { scans: EnrichedScan[] }) {
     } finally {
       setDeletingUnit(null);
     }
+  }
+
+  async function loadCategories() {
+    if (categories.length > 0) return; // Already loaded
+
+    setLoadingCategories(true);
+    try {
+      const res = await fetch("/api/categories");
+      const data = await res.json();
+      if (res.ok) {
+        setCategories(data.categories);
+      }
+    } catch (err) {
+      console.error("Failed to load categories:", err);
+    } finally {
+      setLoadingCategories(false);
+    }
+  }
+
+  async function handleCategoryChange(unitId: string, categoryId: string | null) {
+    setMessage(null);
+
+    try {
+      const res = await fetch(`/api/receiving/unit/${unitId}/category`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ categoryId })
+      });
+      const data = await res.json();
+
+      if (res.ok) {
+        setMessage("Category updated successfully");
+        setEditingCategory(null);
+        router.refresh();
+      } else {
+        setMessage(`Error: ${data.error}`);
+      }
+    } catch {
+      setMessage("Network error. Please try again.");
+    }
+  }
+
+  function handleEditCategory(unitId: string) {
+    setEditingCategory(unitId);
+    loadCategories();
   }
 
   return (
@@ -228,26 +286,71 @@ export default function ScanList({ scans }: { scans: EnrichedScan[] }) {
                         <div className="mt-2 border-l-2 border-emerald-800 pl-2">
                           <p className="text-[10px] uppercase tracking-wide text-slate-500">Received Units</p>
                           {order.receivedUnits.map((unit, k) => (
-                            <div key={k} className="mt-0.5 flex items-center gap-2 text-xs">
-                              <span className="text-slate-500">#{unit.unitIndex}</span>
-                              <span className="text-slate-300">{unit.title}</span>
-                              <span className={`rounded px-1.5 py-0.5 text-[10px] ${conditionColors[unit.condition] ?? "bg-slate-700 text-slate-300"}`}>
-                                {unit.condition.replace(/_/g, " ")}
-                              </span>
-                              <span className="text-slate-600">
-                                {new Date(unit.receivedAt).toLocaleString()}
-                              </span>
-                              {unit.notes && (
-                                <span className="text-slate-500 italic">({unit.notes})</span>
+                            <div key={k} className="mt-0.5 space-y-1">
+                              <div className="flex items-center gap-2 text-xs">
+                                <span className="text-slate-500">#{unit.unitIndex}</span>
+                                <span className="text-slate-300">{unit.title}</span>
+                                <span className={`rounded px-1.5 py-0.5 text-[10px] ${conditionColors[unit.condition] ?? "bg-slate-700 text-slate-300"}`}>
+                                  {unit.condition.replace(/_/g, " ")}
+                                </span>
+                                {unit.category && (
+                                  <span className="rounded bg-indigo-900 px-1.5 py-0.5 text-[10px] text-indigo-300">
+                                    {unit.category.name}
+                                  </span>
+                                )}
+                                <span className="text-slate-600">
+                                  {new Date(unit.receivedAt).toLocaleString()}
+                                </span>
+                                {unit.notes && (
+                                  <span className="text-slate-500 italic">({unit.notes})</span>
+                                )}
+                                <button
+                                  onClick={() => handleEditCategory(unit.id)}
+                                  className="rounded border border-indigo-800 px-1.5 py-0.5 text-[10px] text-indigo-400 hover:bg-indigo-900"
+                                  title="Edit category"
+                                >
+                                  Edit Cat
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteUnit(unit.id, unit.unitIndex)}
+                                  disabled={deletingUnit === unit.id}
+                                  className="ml-auto rounded border border-red-800 px-1.5 py-0.5 text-[10px] text-red-400 hover:bg-red-900 disabled:opacity-50"
+                                  title="Delete this unit"
+                                >
+                                  {deletingUnit === unit.id ? "..." : "×"}
+                                </button>
+                              </div>
+
+                              {/* Category editor */}
+                              {editingCategory === unit.id && (
+                                <div className="flex items-center gap-2 border-l-2 border-indigo-700 pl-2">
+                                  <span className="text-[10px] text-slate-400">Category:</span>
+                                  {loadingCategories ? (
+                                    <span className="text-[10px] text-slate-500">Loading...</span>
+                                  ) : (
+                                    <>
+                                      <select
+                                        className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-[11px] text-slate-300"
+                                        defaultValue={unit.category?.id || ""}
+                                        onChange={(e) => handleCategoryChange(unit.id, e.target.value || null)}
+                                      >
+                                        <option value="">-- No Category --</option>
+                                        {categories.map((cat) => (
+                                          <option key={cat.id} value={cat.id}>
+                                            {cat.category_name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <button
+                                        onClick={() => setEditingCategory(null)}
+                                        className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-slate-700"
+                                      >
+                                        Cancel
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
                               )}
-                              <button
-                                onClick={() => handleDeleteUnit(unit.id, unit.unitIndex)}
-                                disabled={deletingUnit === unit.id}
-                                className="ml-auto rounded border border-red-800 px-1.5 py-0.5 text-[10px] text-red-400 hover:bg-red-900 disabled:opacity-50"
-                                title="Delete this unit"
-                              >
-                                {deletingUnit === unit.id ? "..." : "×"}
-                              </button>
                             </div>
                           ))}
                         </div>
