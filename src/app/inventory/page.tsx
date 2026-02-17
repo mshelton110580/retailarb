@@ -297,12 +297,13 @@ export default async function InventoryPage({
     const isDelivered = Boolean(shipment.delivered_at);
     const isCheckedIn = Boolean(shipment.checked_in_at);
     const isCancelled = shipment.order?.order_status === "Cancelled";
+    const isRefunded = shipment.order?.totals && typeof shipment.order.totals === 'object' && 'total' in shipment.order.totals && Number(shipment.order.totals.total) === 0;
 
     // Total orders — every shipment
     buckets.total_orders.push(shipment);
 
     // === PRIMARY STATUS (mutually exclusive) ===
-    if (isCancelled) {
+    if (isCancelled || isRefunded) {
       buckets.cancelled.push(shipment);
     } else if (isDelivered) {
       buckets.delivered.push(shipment);
@@ -321,13 +322,13 @@ export default async function InventoryPage({
 
     // === ACTION ITEMS ===
 
-    // Never shipped: no tracking, not delivered, not cancelled, no INR case filed
-    if (!hasTracking && !isDelivered && !isCancelled && !orderIdsWithINR.has(orderId)) {
+    // Never shipped: no tracking, not delivered, not cancelled/refunded, no INR case filed
+    if (!hasTracking && !isDelivered && !isCancelled && !isRefunded && !orderIdsWithINR.has(orderId)) {
       buckets.never_shipped.push(shipment);
     }
 
-    // Overdue: has tracking, no delivery, past expected date, not cancelled, no INR case filed
-    if (!isCancelled && !orderIdsWithINR.has(orderId)) {
+    // Overdue: has tracking, no delivery, past expected date, not cancelled/refunded, no INR case filed
+    if (!isCancelled && !isRefunded && !orderIdsWithINR.has(orderId)) {
       let expectedBy: Date | null = null;
       if (shipment.estimated_max) {
         expectedBy = new Date(shipment.estimated_max);
