@@ -121,18 +121,16 @@ export default async function OnHandPage() {
 
     // Calculate actual refund amount
     // Priority order:
-    // 1. Use actual_refund if available (most reliable)
-    // 2. Use refund_amount if available
-    // 3. Calculate as estimated_refund - current_order_total (fallback)
+    // 1. Use actual_refund if available AND it's not equal to estimated_refund (most reliable)
+    // 2. Calculate as estimated_refund - current_order_total (most accurate method)
+    // 3. Use refund_amount only if calculation method fails
     let refundAmount = 0;
+    const estimatedRefund = ret.estimated_refund ? Number(ret.estimated_refund) : 0;
 
-    if (ret.actual_refund) {
+    // Check if actual_refund is set and is a partial refund (not equal to estimated_refund)
+    if (ret.actual_refund && Number(ret.actual_refund) !== estimatedRefund) {
       refundAmount = Number(ret.actual_refund);
-    } else if (ret.refund_amount) {
-      refundAmount = Number(ret.refund_amount);
     } else if (ret.estimated_refund && ret.order?.order_items) {
-      const estimatedRefund = Number(ret.estimated_refund);
-
       // Calculate current order total for this specific item
       const currentItemTotal = ret.order.order_items.reduce((sum, item) => {
         if (item.item_id === itemId) {
@@ -145,6 +143,9 @@ export default async function OnHandPage() {
       if (estimatedRefund > currentItemTotal) {
         refundAmount = estimatedRefund - currentItemTotal;
       }
+    } else if (ret.refund_amount && Number(ret.refund_amount) !== estimatedRefund) {
+      // Only use refund_amount as last resort, and only if it's not equal to estimated_refund
+      refundAmount = Number(ret.refund_amount);
     }
 
     // Track ORIGINAL order total (estimated_refund = what was originally paid before refund)
