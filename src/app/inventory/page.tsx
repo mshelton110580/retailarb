@@ -303,7 +303,8 @@ export default async function InventoryPage({
     buckets.total_orders.push(shipment);
 
     // === PRIMARY STATUS (mutually exclusive) ===
-    if (isCancelled || isRefunded) {
+    // Only categorize as cancelled/refunded if no return or INR case has been filed
+    if ((isCancelled || isRefunded) && !orderIdsWithReturns.has(orderId) && !orderIdsWithINR.has(orderId)) {
       buckets.cancelled.push(shipment);
     } else if (isDelivered) {
       buckets.delivered.push(shipment);
