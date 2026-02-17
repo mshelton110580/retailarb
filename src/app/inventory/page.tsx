@@ -83,78 +83,176 @@ export default async function InventoryPage({
     select: { order_id: true, item_id: true, condition_status: true }
   });
 
-  // Fetch returns and INR cases (filtered by order purchase_date to match date range)
+  // Fetch returns and INR cases (filtered by order purchase_date OR creation_date to match date range)
   const [returns, inrCases, returnCount, openReturnCount, inrCount, openInrCount] = await Promise.all([
     // Fetch all returns to get order IDs with filed returns
     prisma.returns.findMany({
       where: {
-        order: {
-          purchase_date: {
-            gte: dateRange.from,
-            lte: dateRange.to,
+        OR: [
+          {
+            order: {
+              purchase_date: {
+                gte: dateRange.from,
+                lte: dateRange.to,
+              },
+            },
           },
-        },
+          {
+            AND: [
+              { order_id: null },
+              {
+                creation_date: {
+                  gte: dateRange.from,
+                  lte: dateRange.to,
+                },
+              },
+            ],
+          },
+        ],
       },
       select: { order_id: true },
     }),
     // Fetch all INR cases to get order IDs with filed INR cases
     prisma.inr_cases.findMany({
       where: {
-        order: {
-          purchase_date: {
-            gte: dateRange.from,
-            lte: dateRange.to,
+        OR: [
+          {
+            order: {
+              purchase_date: {
+                gte: dateRange.from,
+                lte: dateRange.to,
+              },
+            },
           },
-        },
+          {
+            AND: [
+              { order_id: null },
+              {
+                creation_date: {
+                  gte: dateRange.from,
+                  lte: dateRange.to,
+                },
+              },
+            ],
+          },
+        ],
       },
       select: { order_id: true },
     }),
     // Return counts
     prisma.returns.count({
       where: {
-        order: {
-          purchase_date: {
-            gte: dateRange.from,
-            lte: dateRange.to,
+        OR: [
+          {
+            order: {
+              purchase_date: {
+                gte: dateRange.from,
+                lte: dateRange.to,
+              },
+            },
           },
-        },
+          {
+            AND: [
+              { order_id: null },
+              {
+                creation_date: {
+                  gte: dateRange.from,
+                  lte: dateRange.to,
+                },
+              },
+            ],
+          },
+        ],
       },
     }),
     prisma.returns.count({
       where: {
-        order: {
-          purchase_date: {
-            gte: dateRange.from,
-            lte: dateRange.to,
-          },
-        },
         OR: [
-          { ebay_state: { notIn: ["RETURN_CLOSED", "REFUND_ISSUED"] } },
-          { ebay_state: null, scrape_state: { not: "COMPLETE" } },
+          {
+            order: {
+              purchase_date: {
+                gte: dateRange.from,
+                lte: dateRange.to,
+              },
+            },
+          },
+          {
+            AND: [
+              { order_id: null },
+              {
+                creation_date: {
+                  gte: dateRange.from,
+                  lte: dateRange.to,
+                },
+              },
+            ],
+          },
+        ],
+        AND: [
+          {
+            OR: [
+              { ebay_state: { notIn: ["RETURN_CLOSED", "REFUND_ISSUED"] } },
+              { ebay_state: null, scrape_state: { not: "COMPLETE" } },
+            ],
+          },
         ],
       },
     }),
     prisma.inr_cases.count({
       where: {
-        order: {
-          purchase_date: {
-            gte: dateRange.from,
-            lte: dateRange.to,
+        OR: [
+          {
+            order: {
+              purchase_date: {
+                gte: dateRange.from,
+                lte: dateRange.to,
+              },
+            },
           },
-        },
+          {
+            AND: [
+              { order_id: null },
+              {
+                creation_date: {
+                  gte: dateRange.from,
+                  lte: dateRange.to,
+                },
+              },
+            ],
+          },
+        ],
       },
     }),
     prisma.inr_cases.count({
       where: {
-        order: {
-          purchase_date: {
-            gte: dateRange.from,
-            lte: dateRange.to,
-          },
-        },
         OR: [
-          { ebay_status: { not: "CLOSED" } },
-          { ebay_status: null },
+          {
+            order: {
+              purchase_date: {
+                gte: dateRange.from,
+                lte: dateRange.to,
+              },
+            },
+          },
+          {
+            AND: [
+              { order_id: null },
+              {
+                creation_date: {
+                  gte: dateRange.from,
+                  lte: dateRange.to,
+                },
+              },
+            ],
+          },
+        ],
+        AND: [
+          {
+            OR: [
+              { ebay_status: { not: "CLOSED" } },
+              { ebay_status: null },
+            ],
+          },
         ],
       },
     }),
