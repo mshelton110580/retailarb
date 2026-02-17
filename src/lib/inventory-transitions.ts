@@ -86,11 +86,15 @@ export async function updateInventoryStatesFromReturns() {
           newState = "returned";
         }
       }
-      // PRIORITY 2: Return is open but shipped
+      // PRIORITY 2: Refund issued without return being shipped - parts/keep
+      else if ((ret.refund_issued_date || ret.actual_refund) && !ret.return_shipped_date && !ret.return_delivered_date) {
+        newState = "parts_repair";
+      }
+      // PRIORITY 3: Return is open but shipped
       else if (ret.return_shipped_date) {
         newState = "to_be_returned";
       }
-      // PRIORITY 3: Return is open and waiting
+      // PRIORITY 4: Return is open and waiting
       else if (ret.ebay_state === "RETURN_OPEN" || ret.ebay_status === "WAITING_FOR_SHIPPING_LABEL") {
         newState = "to_be_returned";
       }

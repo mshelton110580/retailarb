@@ -166,7 +166,7 @@ export async function POST(req: Request) {
       // Compute initial inventory state based on condition and return status
       let inventoryState = computeInventoryState(body.data.condition_status);
 
-      // Override state if there's a closed return
+      // Override state if there's a return
       if (existingReturn) {
         const CLOSED_STATES = ["CLOSED"];
         const isClosed =
@@ -186,9 +186,17 @@ export async function POST(req: Request) {
           } else {
             inventoryState = "returned";
           }
-        } else if (existingReturn.return_shipped_date) {
+        }
+        // Refund issued without return being shipped - parts/keep
+        else if ((existingReturn.refund_issued_date || existingReturn.actual_refund) && !existingReturn.return_shipped_date && !existingReturn.return_delivered_date) {
+          inventoryState = "parts_repair";
+        }
+        // Return shipped but not delivered yet
+        else if (existingReturn.return_shipped_date) {
           inventoryState = "to_be_returned";
-        } else {
+        }
+        // Return filed but not shipped yet
+        else {
           inventoryState = "to_be_returned";
         }
       }
