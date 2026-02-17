@@ -52,11 +52,33 @@ export async function POST(req: Request) {
         data: { category_id: toCategoryId }
       });
 
-      // Delete any merge mappings pointing to the source category
+      // IMPORTANT: Create a merge mapping to preserve the alias
+      // This ensures if "fromCategoryName" is detected again, it auto-merges to target
       await tx.$executeRawUnsafe(
-        `DELETE FROM category_merges WHERE to_category_id = $1`,
+        `INSERT INTO category_merges (id, from_category_name, to_category_id, created_by)
+         VALUES (gen_random_uuid()::text, $1, $2, $3)
+         ON CONFLICT (from_category_name)
+         DO UPDATE SET to_category_id = $2, created_by = $3`,
+        fromCategory.category_name,
+        toCategoryId,
+        auth.session.user.id
+      );
+
+      // Delete any merge mappings pointing to the source category (redirect them)
+      // First, get all mappings pointing to the source
+      const mappingsToRedirect = await tx.$queryRawUnsafe<Array<{ from_category_name: string }>>(
+        `SELECT from_category_name FROM category_merges WHERE to_category_id = $1`,
         fromCategoryId
       );
+
+      // Update them to point to the new target instead
+      if (mappingsToRedirect.length > 0) {
+        await tx.$executeRawUnsafe(
+          `UPDATE category_merges SET to_category_id = $1 WHERE to_category_id = $2`,
+          toCategoryId,
+          fromCategoryId
+        );
+      }
 
       // Delete the source category
       await tx.item_categories.delete({
@@ -66,14 +88,16 @@ export async function POST(req: Request) {
       return {
         unitsTransferred: updateResult.count,
         fromCategoryName: fromCategory.category_name,
-        toCategoryName: toCategory.category_name
+        toCategoryName: toCategory.category_name,
+        aliasesPreserved: 1 + mappingsToRedirect.length // The deleted category + any mappings it had
       };
     });
 
     return NextResponse.json({
       ok: true,
       message: `Merged "${result.fromCategoryName}" into "${result.toCategoryName}"`,
-      unitsTransferred: result.unitsTransferred
+      unitsTransferred: result.unitsTransferred,
+      aliasesPreserved: result.aliasesPreserved
     });
 
   } catch (error: any) {

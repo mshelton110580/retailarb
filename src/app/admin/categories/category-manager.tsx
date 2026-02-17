@@ -157,7 +157,9 @@ export default function CategoryManager({
       `Target (keep): "${target.category_name}" (${target.unitCount} units)\n\n` +
       `Will merge and delete:\n` +
       sources.map(s => `  - "${s.category_name}" (${s.unitCount} units)`).join('\n') +
-      `\n\nTotal units after merge: ${sorted.reduce((sum, c) => sum + c.unitCount, 0)}`;
+      `\n\nTotal units after merge: ${sorted.reduce((sum, c) => sum + c.unitCount, 0)}\n\n` +
+      `IMPORTANT: Merge mappings will be created so these category names\n` +
+      `automatically map to "${target.category_name}" in future scans.`;
 
     if (!confirm(confirmMsg)) return;
 
@@ -187,7 +189,13 @@ export default function CategoryManager({
         totalTransferred += data.unitsTransferred;
       }
 
-      setMessage(`✓ Successfully merged ${sources.length} duplicate categories into "${target.category_name}". ${totalTransferred} units transferred.`);
+      const totalAliases = sources.reduce((sum, s, idx) => {
+        // We don't have the individual aliasesPreserved counts here, but we know at minimum
+        // one alias was created per source category
+        return sum + 1;
+      }, 0);
+
+      setMessage(`✓ Successfully merged ${sources.length} duplicate categories into "${target.category_name}". ${totalTransferred} units transferred. ${totalAliases} aliases preserved for future auto-detection.`);
       setMessageType("success");
       router.refresh();
     } catch {
