@@ -87,6 +87,7 @@ export default async function OnHandPage() {
       ebay_status: true,
       order: {
         select: {
+          totals: true,  // Current order total after any refunds
           order_items: {
             select: {
               item_id: true,
@@ -130,18 +131,26 @@ export default async function OnHandPage() {
     // Check if actual_refund is set and is a partial refund (not equal to estimated_refund)
     if (ret.actual_refund && Number(ret.actual_refund) !== estimatedRefund) {
       refundAmount = Number(ret.actual_refund);
-    } else if (ret.estimated_refund && ret.order?.order_items) {
-      // Calculate current order total for this specific item
-      const currentItemTotal = ret.order.order_items.reduce((sum, item) => {
-        if (item.item_id === itemId) {
-          return sum + Number(item.transaction_price) + Number(item.shipping_cost || 0);
-        }
-        return sum;
-      }, 0);
+    } else if (ret.estimated_refund && ret.order) {
+      // Use order.totals.total (current order total from eBay) if available
+      // This is the most accurate as it reflects the post-refund total
+      let currentOrderTotal = 0;
+
+      if (ret.order.totals && typeof ret.order.totals === 'object' && 'total' in ret.order.totals) {
+        currentOrderTotal = Number((ret.order.totals as any).total);
+      } else if (ret.order.order_items) {
+        // Fallback: sum up order items
+        currentOrderTotal = ret.order.order_items.reduce((sum, item) => {
+          if (item.item_id === itemId) {
+            return sum + Number(item.transaction_price) + Number(item.shipping_cost || 0);
+          }
+          return sum;
+        }, 0);
+      }
 
       // If estimated_refund > current_total, a refund was issued
-      if (estimatedRefund > currentItemTotal) {
-        refundAmount = estimatedRefund - currentItemTotal;
+      if (estimatedRefund > currentOrderTotal && currentOrderTotal > 0) {
+        refundAmount = estimatedRefund - currentOrderTotal;
       }
     } else if (ret.refund_amount && Number(ret.refund_amount) !== estimatedRefund) {
       // Only use refund_amount as last resort, and only if it's not equal to estimated_refund
