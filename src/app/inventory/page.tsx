@@ -126,6 +126,7 @@ export default async function InventoryPage({
       select: {
         id: true,
         order_id: true,
+        ebay_return_id: true,
         ebay_state: true,
         ebay_status: true,
         label_created_date: true,
@@ -137,6 +138,8 @@ export default async function InventoryPage({
         return_delivered_date: true,
         refund_issued_date: true,
         actual_refund: true,
+        estimated_refund: true,
+        escalated: true,
         respond_by_date: true,
       },
     }),
@@ -298,11 +301,11 @@ export default async function InventoryPage({
   const orderIdsWithReturns = new Set(returns.map((r) => r.order_id).filter((id): id is string => id !== null));
   const orderIdsWithINR = new Set(inrCases.map((i) => i.order_id).filter((id): id is string => id !== null));
 
-  // Create map from order_id to return ID for linking
+  // Create map from order_id to eBay return ID for linking
   const orderToReturnId = new Map<string, string>();
   for (const ret of returns) {
-    if (ret.order_id) {
-      orderToReturnId.set(ret.order_id, ret.id);
+    if (ret.order_id && ret.ebay_return_id) {
+      orderToReturnId.set(ret.order_id, ret.ebay_return_id);
     }
   }
 
@@ -406,6 +409,35 @@ export default async function InventoryPage({
   }
 
   // === RETURN TRACKING CATEGORIZATION ===
+  // Helper function to determine if return is refunded (matches returns page logic)
+  function isReturnRefunded(ret: typeof returns[0]): boolean {
+    const actual = ret.actual_refund !== null ? Number(ret.actual_refund) : null;
+    const estimated = ret.estimated_refund !== null ? Number(ret.estimated_refund) : null;
+    const isEsc = ret.escalated || ret.ebay_status === "ESCALATED";
+
+    // Explicit partial or full refund status
+    if (ret.ebay_status === "LESS_THAN_A_FULL_REFUND_ISSUED" || ret.ebay_status === "REFUND_ISSUED") {
+      return true;
+    }
+
+    // Closed states indicate refund issued
+    if (ret.ebay_state === "REFUND_ISSUED" || ret.ebay_state === "RETURN_CLOSED") {
+      return true;
+    }
+
+    // If we have actual refund data and it's > 0
+    if (actual !== null && actual > 0) {
+      return true;
+    }
+
+    // Check refund_issued_date
+    if (ret.refund_issued_date) {
+      return true;
+    }
+
+    return false;
+  }
+
   // Categorize returns based on their tracking status
   for (const returnCase of returns) {
     if (!returnCase.order_id) continue; // Skip returns without linked orders
@@ -414,8 +446,8 @@ export default async function InventoryPage({
     const shipment = shipments.find(s => s.order_id === returnCase.order_id);
     if (!shipment) continue;
 
-    // 1. Return Refunded (final state)
-    if (returnCase.refund_issued_date || returnCase.actual_refund) {
+    // 1. Return Refunded (final state) - use same logic as returns page
+    if (isReturnRefunded(returnCase)) {
       buckets.return_refunded.push(shipment);
       continue;
     }
@@ -588,12 +620,15 @@ export default async function InventoryPage({
                         Order {shipment.order_id}
                       </Link>
                       {orderToReturnId.has(shipment.order_id) && (
-                        <Link
+                        <a
                           className="text-xs text-red-400 hover:text-red-300 hover:underline"
-                          href={`/returns?id=${orderToReturnId.get(shipment.order_id)}`}
+                          href={`https://www.ebay.com/rt/ReturnDetails?returnId=${orderToReturnId.get(shipment.order_id)}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          title="View return on eBay"
                         >
-                          [View Return]
-                        </Link>
+                          [View Return ↗]
+                        </a>
                       )}
                     </div>
                     <div className="flex gap-2">
