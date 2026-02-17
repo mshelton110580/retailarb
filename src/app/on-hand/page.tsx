@@ -213,6 +213,12 @@ export default async function OnHandPage() {
       const badUnitsCount = badUnitsSet ? badUnitsSet.size : 0;
       const isThisUnitBad = badUnitsSet ? badUnitsSet.has(unit.id) : false;
 
+      // Debug logging for order 22-14005-91657
+      if (unit.order?.order_id === "22-14005-91657") {
+        console.log(`[Unit ${unit.unit_index}] totalCost=${totalCost}, refundAmount=${refundAmount}, unitsScanned=${unitsScanned}, badUnitsCount=${badUnitsCount}, isThisUnitBad=${isThisUnitBad}`);
+        console.log(`[Unit ${unit.unit_index}] Condition check: refundAmount > 0 = ${refundAmount > 0}, refundAmount < totalCost = ${refundAmount < totalCost}, unitsScanned > 1 = ${unitsScanned > 1}`);
+      }
+
       // Smart refund distribution for lots with partial refunds
       if (refundAmount > 0 && refundAmount < totalCost && unitsScanned > 1) {
         // Partial refund on a lot
@@ -238,11 +244,17 @@ export default async function OnHandPage() {
             // Refund exceeds bad units' cost - zero out bad units and apply remainder to good units
             if (isThisUnitBad) {
               itemCost = 0; // Bad units are fully refunded
+              if (unit.order?.order_id === "22-14005-91657") {
+                console.log(`[Unit ${unit.unit_index}] BAD UNIT - itemCost set to 0`);
+              }
             } else {
               // Remaining refund after zeroing out bad units
               const remainingRefund = refundAmount - badUnitsTotalCost;
               const refundPerGoodUnit = remainingRefund / goodUnitsCount;
               itemCost = Math.max(0, perUnitCost - refundPerGoodUnit);
+              if (unit.order?.order_id === "22-14005-91657") {
+                console.log(`[Unit ${unit.unit_index}] GOOD UNIT - remainingRefund=${remainingRefund}, refundPerGoodUnit=${refundPerGoodUnit}, itemCost=${itemCost}`);
+              }
             }
           }
         }
@@ -250,6 +262,9 @@ export default async function OnHandPage() {
         // Full refund, no refund, or single unit - use simple distribution
         const costAfterRefund = Math.max(0, totalCost - refundAmount);
         itemCost = costAfterRefund / unitsScanned;
+        if (unit.order?.order_id === "22-14005-91657") {
+          console.log(`[Unit ${unit.unit_index}] FALLBACK - costAfterRefund=${costAfterRefund}, itemCost=${itemCost}`);
+        }
       }
     }
 
