@@ -425,6 +425,16 @@ export default async function InventoryPage({
       return true;
     }
 
+    // CLOSED status with actual refund means refund was issued
+    if (ret.ebay_status === "CLOSED" && actual !== null && actual > 0) {
+      return true;
+    }
+
+    // CLOSED state with actual refund means refund was issued
+    if (ret.ebay_state === "CLOSED" && actual !== null && actual > 0) {
+      return true;
+    }
+
     // If we have actual refund data and it's > 0
     if (actual !== null && actual > 0) {
       return true;
@@ -454,6 +464,12 @@ export default async function InventoryPage({
     const isDelivered = !!returnCase.return_delivered_date;
     const isRefunded = isReturnRefunded(returnCase);
 
+    // Check status/state for implicit label availability
+    const statusIndicatesLabelReady =
+      returnCase.ebay_status === "READY_FOR_SHIPPING" ||
+      returnCase.ebay_state === "ITEM_READY_TO_SHIP" ||
+      returnCase.ebay_state === "RETURN_SHIPPED";
+
     // 1. FIRST PRIORITY: Refunded returns (any partial or full refund)
     if (isRefunded) {
       buckets.return_refunded.push(shipment);
@@ -479,7 +495,8 @@ export default async function InventoryPage({
     }
 
     // 5. Print Label (label created/ready but not downloaded/printed yet)
-    if (hasLabel && !hasLabelPdf && !isShipped) {
+    // Include returns where eBay status indicates label is ready even if API didn't return label URL
+    if ((hasLabel || statusIndicatesLabelReady) && !hasLabelPdf && !isShipped) {
       buckets.return_print_label.push(shipment);
       continue;
     }
