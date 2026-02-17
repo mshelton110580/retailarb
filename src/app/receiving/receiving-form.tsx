@@ -6,12 +6,19 @@ import { useRouter } from "next/navigation";
 type ScanResultItem = {
   orderId: string;
   unitIndex: number;
+  unitId: string;
   expectedUnits: number | string;
   scannedSoFar: number;
   remaining: number | null;
   scanStatus: string;
   isLot: boolean;
   condition: string;
+  categoryInfo: {
+    categoryId: string | null;
+    confidence: "high" | "medium" | "low";
+    requiresManualSelection: boolean;
+    reason?: string;
+  };
   item: { title: string; itemId: string; qty: number };
   allItems: Array<{ title: string; qty: number; itemId: string }>;
   error?: string;
@@ -24,6 +31,12 @@ type ScanResponse = {
   results: ScanResultItem[];
 };
 
+type Category = {
+  id: string;
+  category_name: string;
+  gtin: string | null;
+};
+
 export default function ReceivingForm() {
   const router = useRouter();
   const [status, setStatus] = useState<string | null>(null);
@@ -32,6 +45,14 @@ export default function ReceivingForm() {
   const [loading, setLoading] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   const trackingRef = useRef<HTMLInputElement>(null);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loadingCategories, setLoadingCategories] = useState(false);
+  const [pendingCategorySelection, setPendingCategorySelection] = useState<{
+    unitId: string;
+    unitIndex: number;
+    title: string;
+    reason: string;
+  } | null>(null);
 
   // Keep tracking input focused at all times for barcode scanner
   useEffect(() => {
@@ -140,6 +161,61 @@ export default function ReceivingForm() {
     const trackingValue = trackingRef.current?.value || "";
     submitScan(trackingValue);
   }
+
+  async function loadCategories() {
+    if (categories.length > 0) return;
+
+    setLoadingCategories(true);
+    try {
+      const res = await fetch("/api/categories");
+      const data = await res.json();
+      if (res.ok) {
+        setCategories(data.categories);
+      }
+    } catch (err) {
+      console.error("Failed to load categories:", err);
+    } finally {
+      setLoadingCategories(false);
+    }
+  }
+
+  async function handleCategorySelection(unitId: string, categoryId: string | null) {
+    try {
+      const res = await fetch(`/api/receiving/unit/${unitId}/category`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ categoryId })
+      });
+
+      if (res.ok) {
+        setPendingCategorySelection(null);
+        setStatus("✓ Category assigned successfully");
+        setStatusType("success");
+        router.refresh();
+      } else {
+        const data = await res.json();
+        setStatus(`Error assigning category: ${data.error}`);
+        setStatusType("error");
+      }
+    } catch {
+      setStatus("Network error while assigning category");
+      setStatusType("error");
+    }
+  }
+
+  // Check if scan result requires manual category selection
+  useEffect(() => {
+    if (result?.results?.[0]?.categoryInfo?.requiresManualSelection) {
+      const r = result.results[0];
+      setPendingCategorySelection({
+        unitId: r.unitId,
+        unitIndex: r.unitIndex,
+        title: r.item.title,
+        reason: r.categoryInfo.reason || "Manual selection required"
+      });
+      loadCategories();
+    }
+  }, [result]);
 
   const statusColorMap = {
     success: "text-green-400 border-green-800",
@@ -259,6 +335,66 @@ export default function ReceivingForm() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Category selection prompt */}
+      {pendingCategorySelection && (
+        <div className="rounded-lg border border-indigo-800 bg-slate-900 p-4">
+          <h3 className="text-sm font-semibold text-indigo-400">Category Selection Required</h3>
+          <p className="mt-1 text-xs text-slate-400">
+            Unit #{pendingCategorySelection.unitIndex}: {pendingCategorySelection.title}
+          </p>
+          <p className="mt-1 text-xs text-yellow-400">
+            {pendingCategorySelection.reason}
+          </p>
+
+          <div className="mt-3 space-y-2">
+            {loadingCategories ? (
+              <p className="text-sm text-slate-500">Loading categories...</p>
+            ) : (
+              <>
+                <label className="block text-xs text-slate-400">
+                  Select product category for this unit:
+                </label>
+                <select
+                  className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
+                  onChange={(e) => handleCategorySelection(pendingCategorySelection.unitId, e.target.value || null)}
+                  defaultValue=""
+                >
+                  <option value="">-- Select Category --</option>
+                  {categories.map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.category_name}
+                    </option>
+                  ))}
+                </select>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setPendingCategorySelection(null);
+                      setStatus("⚠ Category selection skipped - you can assign it later from the scans list");
+                      setStatusType("warning");
+                    }}
+                    className="rounded border border-slate-700 px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800"
+                  >
+                    Skip (Assign Later)
+                  </button>
+                  <a
+                    href="/on-hand"
+                    className="rounded border border-indigo-700 px-3 py-1.5 text-xs text-indigo-400 hover:bg-indigo-900"
+                  >
+                    View All Products
+                  </a>
+                </div>
+
+                <p className="text-[10px] text-slate-500">
+                  Tip: You can also edit the category later from the scans list below using the "Edit Cat" button.
+                </p>
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>
