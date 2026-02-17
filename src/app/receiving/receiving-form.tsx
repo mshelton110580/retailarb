@@ -55,6 +55,7 @@ export default function ReceivingForm() {
     reason: string;
     suggestedCategoryName?: string;
   } | null>(null);
+  const [editedCategoryName, setEditedCategoryName] = useState<string>("");
 
   // Keep tracking input focused at all times for barcode scanner
   useEffect(() => {
@@ -281,13 +282,15 @@ export default function ReceivingForm() {
   useEffect(() => {
     if (result?.results?.[0]?.categoryInfo?.requiresManualSelection) {
       const r = result.results[0];
+      const suggestedName = r.categoryInfo.suggestedCategoryName || "";
       setPendingCategorySelection({
         unitId: r.unitId,
         unitIndex: r.unitIndex,
         title: r.item.title,
         reason: r.categoryInfo.reason || "Manual selection required",
-        suggestedCategoryName: r.categoryInfo.suggestedCategoryName
+        suggestedCategoryName: suggestedName
       });
+      setEditedCategoryName(suggestedName);
       loadCategories();
     }
   }, [result]);
@@ -423,13 +426,27 @@ export default function ReceivingForm() {
             </p>
 
             {pendingCategorySelection.suggestedCategoryName && (
-              <div className="mt-3 rounded-lg bg-blue-900/30 border border-blue-800 p-3">
-                <p className="text-sm font-medium text-blue-300">
-                  System detected: <span className="font-bold text-blue-200">{pendingCategorySelection.suggestedCategoryName}</span>
-                </p>
-                <p className="mt-1 text-xs text-blue-400">
-                  Create as new category or merge with an existing one below
-                </p>
+              <div className="mt-3 space-y-2">
+                <div className="rounded-lg bg-blue-900/30 border border-blue-800 p-3">
+                  <p className="text-sm font-medium text-blue-300">
+                    System detected: <span className="font-bold text-blue-200">{pendingCategorySelection.suggestedCategoryName}</span>
+                  </p>
+                  <p className="mt-1 text-xs text-blue-400">
+                    Edit the name below, create as new, or merge with existing category
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 mb-1">
+                    Category Name:
+                  </label>
+                  <input
+                    type="text"
+                    value={editedCategoryName}
+                    onChange={(e) => setEditedCategoryName(e.target.value)}
+                    className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                    placeholder="Enter category name"
+                  />
+                </div>
               </div>
             )}
 
@@ -443,11 +460,12 @@ export default function ReceivingForm() {
                     <button
                       onClick={() => handleCreateNewCategory(
                         pendingCategorySelection.unitId,
-                        pendingCategorySelection.suggestedCategoryName!
+                        editedCategoryName.trim()
                       )}
-                      className="w-full rounded-lg bg-green-600 hover:bg-green-700 px-4 py-3 text-sm font-medium text-white transition-colors shadow-lg"
+                      disabled={!editedCategoryName.trim()}
+                      className="w-full rounded-lg bg-green-600 hover:bg-green-700 px-4 py-3 text-sm font-medium text-white transition-colors shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      ✓ Create New Category: "{pendingCategorySelection.suggestedCategoryName}"
+                      ✓ Create New Category{editedCategoryName.trim() ? `: "${editedCategoryName.trim()}"` : ""}
                     </button>
                   )}
 
@@ -463,7 +481,7 @@ export default function ReceivingForm() {
                           handleCategorySelection(
                             pendingCategorySelection.unitId,
                             e.target.value,
-                            pendingCategorySelection.suggestedCategoryName
+                            editedCategoryName.trim() || pendingCategorySelection.suggestedCategoryName
                           );
                         }
                       }}
@@ -478,7 +496,7 @@ export default function ReceivingForm() {
                     </select>
                     {pendingCategorySelection.suggestedCategoryName && (
                       <p className="mt-2 text-xs text-slate-500">
-                        Merging will automatically map "{pendingCategorySelection.suggestedCategoryName}" to the selected category for all future scans
+                        Merging will automatically map "{editedCategoryName.trim() || pendingCategorySelection.suggestedCategoryName}" to the selected category for all future scans
                       </p>
                     )}
                   </div>
