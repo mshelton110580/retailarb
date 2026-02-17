@@ -84,6 +84,7 @@ export default async function ReceivingPage({
               scanStatus: m.shipment!.scan_status,
               isLot: m.shipment!.is_lot,
               receivedUnits: units.map((u) => ({
+                id: u.id,
                 unitIndex: u.unit_index,
                 title: u.listing?.title ?? "Unknown",
                 condition: u.condition_status,

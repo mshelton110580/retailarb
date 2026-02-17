@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 type ReceivedUnit = {
+  id: string;
   unitIndex: number;
   title: string;
   condition: string;
@@ -44,6 +45,7 @@ const conditionColors: Record<string, string> = {
 export default function ScanList({ scans }: { scans: EnrichedScan[] }) {
   const router = useRouter();
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [deletingUnit, setDeletingUnit] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   async function handleDelete(scanId: string) {
@@ -70,6 +72,33 @@ export default function ScanList({ scans }: { scans: EnrichedScan[] }) {
       setMessage("Network error. Please try again.");
     } finally {
       setDeleting(null);
+    }
+  }
+
+  async function handleDeleteUnit(unitId: string, unitIndex: number) {
+    if (!confirm(`Delete unit #${unitIndex}? This will remove this individual item from the lot/order.`)) {
+      return;
+    }
+
+    setDeletingUnit(unitId);
+    setMessage(null);
+
+    try {
+      const res = await fetch(`/api/receiving/unit/${unitId}`, {
+        method: "DELETE"
+      });
+      const data = await res.json();
+
+      if (res.ok) {
+        setMessage(data.message);
+        router.refresh();
+      } else {
+        setMessage(`Error: ${data.error}`);
+      }
+    } catch {
+      setMessage("Network error. Please try again.");
+    } finally {
+      setDeletingUnit(null);
     }
   }
 
@@ -211,6 +240,14 @@ export default function ScanList({ scans }: { scans: EnrichedScan[] }) {
                               {unit.notes && (
                                 <span className="text-slate-500 italic">({unit.notes})</span>
                               )}
+                              <button
+                                onClick={() => handleDeleteUnit(unit.id, unit.unitIndex)}
+                                disabled={deletingUnit === unit.id}
+                                className="ml-auto rounded border border-red-800 px-1.5 py-0.5 text-[10px] text-red-400 hover:bg-red-900 disabled:opacity-50"
+                                title="Delete this unit"
+                              >
+                                {deletingUnit === unit.id ? "..." : "×"}
+                              </button>
                             </div>
                           ))}
                         </div>

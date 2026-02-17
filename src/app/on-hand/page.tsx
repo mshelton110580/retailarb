@@ -113,14 +113,14 @@ export default async function OnHandPage() {
     }
   }
 
-  // Group by product and inventory state
+  // Group by product name (not category_id) to combine duplicate products
   const productMap = new Map<string, ProductStats>();
   const productUnits = new Map<string, UnitDetail[]>();
 
   for (const unit of units) {
     if (!unit.category) continue;
 
-    const categoryId = unit.category.id;
+    const productKey = unit.category.category_name; // Group by name, not ID
 
     // Calculate per-unit cost by dividing total price by number of units scanned
     let itemCost = 0;
@@ -156,11 +156,11 @@ export default async function OnHandPage() {
       itemCost = totalCost / unitsScanned;
     }
 
-    if (!productMap.has(categoryId)) {
-      productMap.set(categoryId, {
-        categoryId,
+    if (!productMap.has(productKey)) {
+      productMap.set(productKey, {
+        categoryId: unit.category.id, // Keep first category ID for reference
         productName: unit.category.category_name,
-        gtin: unit.category.gtin,
+        gtin: unit.category.gtin, // Keep first GTIN found (may be null)
         onHand: 0,
         toBeReturned: 0,
         partsRepair: 0,
@@ -172,7 +172,7 @@ export default async function OnHandPage() {
       });
     }
 
-    const stats = productMap.get(categoryId)!;
+    const stats = productMap.get(productKey)!;
 
     stats.totalValue += itemCost;
 
@@ -195,11 +195,11 @@ export default async function OnHandPage() {
     }
 
     // Store unit details for expandable view
-    if (!productUnits.has(categoryId)) {
-      productUnits.set(categoryId, []);
+    if (!productUnits.has(productKey)) {
+      productUnits.set(productKey, []);
     }
 
-    productUnits.get(categoryId)!.push({
+    productUnits.get(productKey)!.push({
       id: unit.id,
       order_id: unit.order?.order_id || "Unknown",
       item_id: unit.item_id,
@@ -298,9 +298,9 @@ export default async function OnHandPage() {
               <tbody className="divide-y divide-slate-800">
                 {products.map((product) => (
                   <ProductRow
-                    key={product.categoryId}
+                    key={product.productName}
                     product={product}
-                    units={productUnits.get(product.categoryId) || []}
+                    units={productUnits.get(product.productName) || []}
                   />
                 ))}
               </tbody>
