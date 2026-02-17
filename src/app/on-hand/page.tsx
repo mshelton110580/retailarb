@@ -400,7 +400,7 @@ export default async function OnHandPage() {
                   <ProductRow
                     key={product.productName}
                     product={product}
-                    units={productUnits.get(product.productName) || []}
+                    units={productUnits.get(product.productName.toLowerCase()) || []}
                   />
                 ))}
               </tbody>
