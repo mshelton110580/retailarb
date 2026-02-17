@@ -409,39 +409,28 @@ export default async function InventoryPage({
   }
 
   // === RETURN TRACKING CATEGORIZATION ===
-  // Helper function to determine if return is refunded (matches returns page logic)
-  function isReturnRefunded(ret: typeof returns[0]): boolean {
-    const actual = ret.actual_refund !== null ? Number(ret.actual_refund) : null;
-    const estimated = ret.estimated_refund !== null ? Number(ret.estimated_refund) : null;
-    const isEsc = ret.escalated || ret.ebay_status === "ESCALATED";
+  // Helper function to determine if return is closed (matches returns page logic)
+  // IMPORTANT: A closed return should NEVER appear in "Awaiting Response"
+  // Closed returns go to "Refunded" category (full, partial, or no refund)
+  const CLOSED_STATES = ["CLOSED"];
 
-    // Explicit partial or full refund status
-    if (ret.ebay_status === "LESS_THAN_A_FULL_REFUND_ISSUED" || ret.ebay_status === "REFUND_ISSUED") {
+  function isReturnClosed(ret: typeof returns[0]): boolean {
+    // Check for CLOSED state or status
+    if (ret.ebay_state && CLOSED_STATES.includes(ret.ebay_state)) {
       return true;
     }
 
-    // Closed states indicate refund issued
+    if (ret.ebay_status && CLOSED_STATES.includes(ret.ebay_status)) {
+      return true;
+    }
+
+    // These states also indicate closure
     if (ret.ebay_state === "REFUND_ISSUED" || ret.ebay_state === "RETURN_CLOSED") {
       return true;
     }
 
-    // CLOSED status with actual refund means refund was issued
-    if (ret.ebay_status === "CLOSED" && actual !== null && actual > 0) {
-      return true;
-    }
-
-    // CLOSED state with actual refund means refund was issued
-    if (ret.ebay_state === "CLOSED" && actual !== null && actual > 0) {
-      return true;
-    }
-
-    // If we have actual refund data and it's > 0
-    if (actual !== null && actual > 0) {
-      return true;
-    }
-
-    // Check refund_issued_date
-    if (ret.refund_issued_date) {
+    // Explicit refund statuses mean it's closed
+    if (ret.ebay_status === "REFUND_ISSUED" || ret.ebay_status === "LESS_THAN_A_FULL_REFUND_ISSUED") {
       return true;
     }
 
@@ -462,7 +451,7 @@ export default async function InventoryPage({
     const hasTracking = !!returnCase.return_tracking_number;
     const isShipped = !!returnCase.return_shipped_date;
     const isDelivered = !!returnCase.return_delivered_date;
-    const isRefunded = isReturnRefunded(returnCase);
+    const isClosed = isReturnClosed(returnCase);
 
     // Check status/state for implicit label availability
     const statusIndicatesLabelReady =
@@ -470,8 +459,9 @@ export default async function InventoryPage({
       returnCase.ebay_state === "ITEM_READY_TO_SHIP" ||
       returnCase.ebay_state === "RETURN_SHIPPED";
 
-    // 1. FIRST PRIORITY: Refunded returns (any partial or full refund)
-    if (isRefunded) {
+    // 1. FIRST PRIORITY: Closed returns (full/partial/no refund - anything closed goes here)
+    // This prevents closed returns from appearing in "Awaiting Response"
+    if (isClosed) {
       buckets.return_refunded.push(shipment);
       continue;
     }
