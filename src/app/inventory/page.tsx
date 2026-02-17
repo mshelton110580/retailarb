@@ -446,44 +446,47 @@ export default async function InventoryPage({
     const shipment = shipments.find(s => s.order_id === returnCase.order_id);
     if (!shipment) continue;
 
-    // IMPORTANT: Check refund status FIRST - refunded returns should not appear in any other category
-    if (isReturnRefunded(returnCase)) {
+    // Define helper flags for clearer logic
+    const hasLabel = !!(returnCase.label_created_date || returnCase.label_url);
+    const hasLabelPdf = !!returnCase.label_pdf_path;
+    const hasTracking = !!returnCase.return_tracking_number;
+    const isShipped = !!returnCase.return_shipped_date;
+    const isDelivered = !!returnCase.return_delivered_date;
+    const isRefunded = isReturnRefunded(returnCase);
+
+    // 1. FIRST PRIORITY: Refunded returns (any partial or full refund)
+    if (isRefunded) {
       buckets.return_refunded.push(shipment);
-      continue; // Skip all other checks
+      continue;
     }
 
     // 2. Return Delivered (waiting for refund)
-    if (returnCase.return_delivered_date) {
+    if (isDelivered) {
       buckets.return_delivered.push(shipment);
       continue;
     }
 
     // 3. Return In Transit (tracking shows in transit)
-    if (returnCase.return_shipped_date ||
-        (returnCase.return_tracking_number && returnCase.return_tracking_status &&
-         returnCase.return_tracking_status !== "DELIVERED")) {
+    if (isShipped || (hasTracking && returnCase.return_tracking_status && returnCase.return_tracking_status !== "DELIVERED")) {
       buckets.return_in_transit.push(shipment);
       continue;
     }
 
     // 4. Label Printed (label downloaded/printed but not shipped yet)
-    if (returnCase.label_pdf_path && !returnCase.return_shipped_date) {
+    if (hasLabelPdf && !isShipped) {
       buckets.return_label_printed.push(shipment);
       continue;
     }
 
-    // 5. Print Label (label created/ready but not printed)
-    if ((returnCase.label_created_date || returnCase.label_url) && !returnCase.label_pdf_path && !returnCase.return_shipped_date) {
+    // 5. Print Label (label created/ready but not downloaded/printed yet)
+    if (hasLabel && !hasLabelPdf && !isShipped) {
       buckets.return_print_label.push(shipment);
       continue;
     }
 
-    // 6. Filed - Awaiting Response (return filed but no label yet and not shipped)
-    // Only categorize here if truly waiting - no label, no tracking, not shipped
-    const hasNoLabel = !returnCase.label_created_date && !returnCase.label_url;
-    const hasNoTracking = !returnCase.return_tracking_number && !returnCase.return_shipped_date;
-
-    if ((returnCase.ebay_state || returnCase.ebay_status) && hasNoLabel && hasNoTracking) {
+    // 6. Filed - Awaiting Response (return filed but NOTHING else has happened)
+    // ONLY if: has ebay_state/status AND no label AND no tracking AND not shipped
+    if ((returnCase.ebay_state || returnCase.ebay_status) && !hasLabel && !hasTracking && !isShipped) {
       buckets.return_filed_awaiting_response.push(shipment);
     }
   }
