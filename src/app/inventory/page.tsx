@@ -83,8 +83,33 @@ export default async function InventoryPage({
     select: { order_id: true, item_id: true, condition_status: true }
   });
 
-  // Fetch return and INR counts (filtered by order purchase_date to match date range)
-  const [returnCount, openReturnCount, inrCount, openInrCount] = await Promise.all([
+  // Fetch returns and INR cases (filtered by order purchase_date to match date range)
+  const [returns, inrCases, returnCount, openReturnCount, inrCount, openInrCount] = await Promise.all([
+    // Fetch all returns to get order IDs with filed returns
+    prisma.returns.findMany({
+      where: {
+        order: {
+          purchase_date: {
+            gte: dateRange.from,
+            lte: dateRange.to,
+          },
+        },
+      },
+      select: { order_id: true },
+    }),
+    // Fetch all INR cases to get order IDs with filed INR cases
+    prisma.inr_cases.findMany({
+      where: {
+        order: {
+          purchase_date: {
+            gte: dateRange.from,
+            lte: dateRange.to,
+          },
+        },
+      },
+      select: { order_id: true },
+    }),
+    // Return counts
     prisma.returns.count({
       where: {
         order: {
@@ -143,6 +168,10 @@ export default async function InventoryPage({
       .map((u) => u.order_id)
   );
 
+  // Create sets of order IDs with filed returns or INR cases
+  const orderIdsWithReturns = new Set(returns.map((r) => r.order_id).filter((id): id is string => id !== null));
+  const orderIdsWithINR = new Set(inrCases.map((i) => i.order_id).filter((id): id is string => id !== null));
+
   // Categorize shipments into buckets
   const buckets: Record<BucketKey, typeof shipments> = {
     total_orders: [],
@@ -194,13 +223,13 @@ export default async function InventoryPage({
 
     // === ACTION ITEMS ===
 
-    // Never shipped: no tracking, not delivered, not cancelled
-    if (!hasTracking && !isDelivered && !isCancelled) {
+    // Never shipped: no tracking, not delivered, not cancelled, no INR case filed
+    if (!hasTracking && !isDelivered && !isCancelled && !orderIdsWithINR.has(orderId)) {
       buckets.never_shipped.push(shipment);
     }
 
-    // Overdue: has tracking, no delivery, past expected date, not cancelled
-    if (!isCancelled) {
+    // Overdue: has tracking, no delivery, past expected date, not cancelled, no INR case filed
+    if (!isCancelled && !orderIdsWithINR.has(orderId)) {
       let expectedBy: Date | null = null;
       if (shipment.estimated_max) {
         expectedBy = new Date(shipment.estimated_max);
@@ -218,8 +247,8 @@ export default async function InventoryPage({
       buckets.delivered_not_checked_in.push(shipment);
     }
 
-    // Needs return: checked in with bad condition
-    if (needsReturnOrderIds.has(orderId)) {
+    // Needs return: checked in with bad condition, but no return filed yet
+    if (needsReturnOrderIds.has(orderId) && !orderIdsWithReturns.has(orderId)) {
       buckets.needs_return.push(shipment);
     }
 
