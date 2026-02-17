@@ -121,14 +121,20 @@ async function main() {
     }
 
     console.log(`Item ${itemId}:`);
-    console.log(`  Recommended state: ${recommendedState}`);
+    console.log(`  Recommended state: ${recommendedState} (for bad units)`);
+    console.log(`  Good units should stay: on_hand`);
     console.log(`  Matching units: ${matchingUnits.length}`);
 
+    const badConditions = ["damaged", "wrong_item", "missing_parts", "defective"];
+
     for (const unit of matchingUnits) {
-      if (unit.inventory_state !== recommendedState) {
-        console.log(`    ❌ Unit #${unit.unit_index}: ${unit.inventory_state} → should be ${recommendedState}`);
+      const isBadUnit = badConditions.includes(unit.condition_status);
+      const correctState = isBadUnit ? recommendedState : "on_hand";
+
+      if (unit.inventory_state !== correctState) {
+        console.log(`    ❌ Unit #${unit.unit_index} (${unit.condition_status}): ${unit.inventory_state} → should be ${correctState}`);
       } else {
-        console.log(`    ✅ Unit #${unit.unit_index}: ${unit.inventory_state} (correct)`);
+        console.log(`    ✅ Unit #${unit.unit_index} (${unit.condition_status}): ${unit.inventory_state} (correct)`);
       }
     }
     console.log();
@@ -164,13 +170,20 @@ async function main() {
       }
 
       if (recommendedState) {
+        const badConditions = ["damaged", "wrong_item", "missing_parts", "defective"];
+
         for (const unit of matchingUnits) {
-          if (unit.inventory_state !== recommendedState) {
+          // Only bad units should go to parts_repair/returned/to_be_returned
+          // Good units should stay on_hand (unless they were physically returned)
+          const isBadUnit = badConditions.includes(unit.condition_status);
+          const correctState = isBadUnit ? recommendedState : "on_hand";
+
+          if (unit.inventory_state !== correctState) {
             await prisma.received_units.update({
               where: { id: unit.id },
-              data: { inventory_state: recommendedState }
+              data: { inventory_state: correctState }
             });
-            console.log(`✅ Fixed unit #${unit.unit_index}: ${unit.inventory_state} → ${recommendedState}`);
+            console.log(`✅ Fixed unit #${unit.unit_index} (${unit.condition_status}): ${unit.inventory_state} → ${correctState}`);
             fixCount++;
           }
         }
