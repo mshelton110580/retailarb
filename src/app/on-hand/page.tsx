@@ -141,9 +141,9 @@ export default async function OnHandPage() {
         refundAmount = estimatedRefund - currentItemTotal;
       }
 
-      // Track CURRENT order total (what's in the database now after any refund)
-      // This is used for calculating per-unit costs
-      originalCostMap.set(key, currentItemTotal);
+      // Track ORIGINAL order total (estimated_refund = what was originally paid before refund)
+      // This is used for calculating per-unit costs based on original value
+      originalCostMap.set(key, estimatedRefund);
     }
 
     // If we have a refund, track it
@@ -222,25 +222,27 @@ export default async function OnHandPage() {
           // All units are good - distribute refund equally
           itemCost = (totalCost - refundAmount) / unitsScanned;
         } else {
-          // Mixed good/bad units - distribute refund among bad units only
-          const expectedBadRefund = perUnitCost * badUnitsCount;
-          const refundMatchesBadUnits = Math.abs(refundAmount - expectedBadRefund) < 1; // Within $1
+          // Mixed good/bad units
+          const badUnitsTotalCost = perUnitCost * badUnitsCount;
+          const goodUnitsCount = unitsScanned - badUnitsCount;
 
-          if (refundMatchesBadUnits) {
-            // Refund matches bad units perfectly - assign refund only to bad units
-            if (isThisUnitBad) {
-              itemCost = 0; // Bad unit fully refunded
-            } else {
-              itemCost = perUnitCost; // Good unit keeps full cost
-            }
-          } else {
-            // Partial refund doesn't match - distribute among bad units only
-            // This shows remaining unreimbursed cost on bad units
+          if (refundAmount <= badUnitsTotalCost) {
+            // Refund is less than or equal to bad units' cost - apply to bad units only
             if (isThisUnitBad) {
               const refundPerBadUnit = refundAmount / badUnitsCount;
-              itemCost = perUnitCost - refundPerBadUnit; // Remaining cost after partial refund
+              itemCost = Math.max(0, perUnitCost - refundPerBadUnit);
             } else {
-              itemCost = perUnitCost; // Good unit keeps full cost
+              itemCost = perUnitCost; // Good units keep full cost
+            }
+          } else {
+            // Refund exceeds bad units' cost - zero out bad units and apply remainder to good units
+            if (isThisUnitBad) {
+              itemCost = 0; // Bad units are fully refunded
+            } else {
+              // Remaining refund after zeroing out bad units
+              const remainingRefund = refundAmount - badUnitsTotalCost;
+              const refundPerGoodUnit = remainingRefund / goodUnitsCount;
+              itemCost = Math.max(0, perUnitCost - refundPerGoodUnit);
             }
           }
         }
