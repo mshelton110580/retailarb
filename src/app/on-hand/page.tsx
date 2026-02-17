@@ -74,14 +74,23 @@ export default async function OnHandPage() {
       item_id: true,
       ebay_item_id: true,
       actual_refund: true,
-      estimated_refund: true  // This is the original total paid (item + shipping)
+      estimated_refund: true,  // This is the original total paid (item + shipping)
+      return_shipped_date: true,
+      return_delivered_date: true,
+      ebay_state: true,
+      ebay_status: true
     }
   });
 
-  // Build maps for refunded amounts and original costs by order_id + item_id
+  // Build maps for refunded amounts, original costs, and return info by order_id + item_id
   // Note: Some returns have ebay_item_id instead of item_id, so we need both
   const refundMap = new Map<string, number>();
   const originalCostMap = new Map<string, number>();  // estimated_refund = original total paid
+  const returnInfoMap = new Map<string, {
+    refundAmount: number;
+    wasReturned: boolean;  // true if return was delivered
+    wasShipped: boolean;   // true if return was shipped
+  }>();
 
   for (const ret of returns) {
     if (!ret.order_id || !ret.actual_refund) continue;
@@ -100,16 +109,33 @@ export default async function OnHandPage() {
     if (ret.estimated_refund) {
       originalCostMap.set(key, Number(ret.estimated_refund));
     }
+
+    // Track return status for inventory state decisions
+    returnInfoMap.set(key, {
+      refundAmount: Number(ret.actual_refund),
+      wasReturned: Boolean(ret.return_delivered_date),
+      wasShipped: Boolean(ret.return_shipped_date)
+    });
   }
 
   // For lots and multi-qty items, we need to count how many units were scanned
-  // to divide the price correctly
+  // to divide the price correctly. Also track good vs not-good units for smart refund distribution
   const orderItemUnitCounts = new Map<string, number>();
+  const orderItemBadUnits = new Map<string, Set<string>>();  // Map of order_item_id -> set of bad unit IDs
+  const badConditions = ["damaged", "wrong_item", "missing_parts", "defective"];
 
   for (const unit of units) {
     if (unit.order_item_id) {
       const count = orderItemUnitCounts.get(unit.order_item_id) || 0;
       orderItemUnitCounts.set(unit.order_item_id, count + 1);
+
+      // Track bad units for smart refund distribution
+      if (badConditions.includes(unit.condition_status)) {
+        if (!orderItemBadUnits.has(unit.order_item_id)) {
+          orderItemBadUnits.set(unit.order_item_id, new Set());
+        }
+        orderItemBadUnits.get(unit.order_item_id)!.add(unit.id);
+      }
     }
   }
 
@@ -122,7 +148,7 @@ export default async function OnHandPage() {
 
     const productKey = unit.category.category_name; // Group by name, not ID
 
-    // Calculate per-unit cost by dividing total price by number of units scanned
+    // Calculate per-unit cost with smart refund distribution
     let itemCost = 0;
     if (unit.order_item) {
       let totalCost = 0;
@@ -140,20 +166,42 @@ export default async function OnHandPage() {
         totalCost = totalPrice + totalShipping;
       }
 
-      // Subtract any refunds for this order/item
-      if (refundKey) {
-        const refundAmount = refundMap.get(refundKey) || 0;
-        totalCost = Math.max(0, totalCost - refundAmount);
-      }
-
-      // Get the number of units scanned for this order_item
+      const refundAmount = refundKey ? (refundMap.get(refundKey) || 0) : 0;
       const unitsScanned = orderItemUnitCounts.get(unit.order_item.id) || 1;
+      const badUnitsSet = orderItemBadUnits.get(unit.order_item.id);
+      const badUnitsCount = badUnitsSet ? badUnitsSet.size : 0;
+      const isThisUnitBad = badUnitsSet ? badUnitsSet.has(unit.id) : false;
 
-      // Divide total cost by number of units scanned
-      // This handles both lots (qty=1 but 3 units scanned → $30/3 = $10 each)
-      // and multi-qty (qty=2, 2 units scanned → $60/2 = $30 each)
-      // Now also accounts for refunds (full or partial)
-      itemCost = totalCost / unitsScanned;
+      // Smart refund distribution for lots with partial refunds
+      if (refundAmount > 0 && refundAmount < totalCost && unitsScanned > 1) {
+        // Partial refund on a lot
+        const perUnitCost = totalCost / unitsScanned;
+
+        if (badUnitsCount === 0) {
+          // All units are good - distribute refund equally
+          itemCost = (totalCost - refundAmount) / unitsScanned;
+        } else {
+          // Mixed good/bad units - try to match refund to bad units
+          const expectedBadRefund = perUnitCost * badUnitsCount;
+          const refundMatchesBadUnits = Math.abs(refundAmount - expectedBadRefund) < 1; // Within $1
+
+          if (refundMatchesBadUnits) {
+            // Refund matches bad units perfectly - assign refund only to bad units
+            if (isThisUnitBad) {
+              itemCost = 0; // Bad unit fully refunded
+            } else {
+              itemCost = perUnitCost; // Good unit keeps full cost
+            }
+          } else {
+            // Refund doesn't match - distribute equally (fallback)
+            itemCost = (totalCost - refundAmount) / unitsScanned;
+          }
+        }
+      } else {
+        // Full refund, no refund, or single unit - use simple distribution
+        const costAfterRefund = Math.max(0, totalCost - refundAmount);
+        itemCost = costAfterRefund / unitsScanned;
+      }
     }
 
     if (!productMap.has(productKey)) {
