@@ -95,9 +95,12 @@ export default async function OrdersPage({
                           {item.title ?? `Item ${item.item_id}`}
                         </a>
                         <span className="text-slate-500">x{item.qty}</span>
-                        {item.transaction_price && (
-                          <span className="text-slate-500">${Number(item.transaction_price).toFixed(2)}</span>
-                        )}
+                        <span className="text-slate-500">
+                          Total: $
+                          {order.totals && typeof order.totals === "object" && "total" in (order.totals as any)
+                            ? Number((order.totals as any).total).toFixed(2)
+                            : "0.00"}
+                        </span>
                         <a
                           href={`https://www.ebay.com/itm/${item.item_id}`}
                           target="_blank"

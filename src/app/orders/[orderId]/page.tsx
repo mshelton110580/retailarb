@@ -100,10 +100,12 @@ export default async function OrderDetailPage({ params }: { params: { orderId: s
                   <div className="mt-1 flex items-center gap-3 text-xs text-slate-400">
                     <span>Item ID: {item.item_id}</span>
                     <span>Qty: {item.qty}</span>
-                    <span>Price: ${Number(item.transaction_price).toFixed(2)}</span>
-                    {item.shipping_cost && (
-                      <span>Shipping: ${Number(item.shipping_cost).toFixed(2)}</span>
-                    )}
+                    <span>
+                      Total: $
+                      {order.totals && typeof order.totals === "object" && "total" in (order.totals as any)
+                        ? Number((order.totals as any).total).toFixed(2)
+                        : "0.00"}
+                    </span>
                   </div>
                 </div>
                 <a
