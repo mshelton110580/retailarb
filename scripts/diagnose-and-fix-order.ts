@@ -22,6 +22,7 @@ async function main() {
       id: true,
       item_id: true,
       ebay_item_id: true,
+      refund_amount: true,
       actual_refund: true,
       estimated_refund: true,
       return_shipped_date: true,
@@ -36,6 +37,7 @@ async function main() {
   for (const ret of returns) {
     console.log(`  Return ID: ${ret.id}`);
     console.log(`    Item ID: ${ret.item_id || ret.ebay_item_id || "N/A"}`);
+    console.log(`    Refund Amount: $${ret.refund_amount || 0}`);
     console.log(`    Actual Refund: $${ret.actual_refund || 0}`);
     console.log(`    Estimated Refund: $${ret.estimated_refund || 0}`);
     console.log(`    Return Shipped: ${ret.return_shipped_date || "No"}`);
@@ -83,7 +85,9 @@ async function main() {
     return sum + price + shipping;
   }, 0);
 
-  console.log(`Order Total: $${orderTotal.toFixed(2)}\n`);
+  console.log(`Order Total from items: $${orderTotal.toFixed(2)}`);
+  console.log(`Units scanned: ${units.length}`);
+  console.log(`Per-unit cost: $${units.length > 0 ? (orderTotal / units.length).toFixed(2) : 0}\n`);
 
   // 4. Determine what the state should be
   console.log("=== Recommended Fixes ===\n");
@@ -94,11 +98,18 @@ async function main() {
 
     const matchingUnits = units.filter(u => u.item_id === itemId);
 
-    // Check if there was a partial refund by comparing estimated_refund to order total
+    // Calculate actual refund using: estimated_refund - current_order_total
+    // This is the most reliable method since refund_amount/actual_refund can be null even when refund issued
     const estimatedRefund = Number(ret.estimated_refund) || 0;
     const actualRefund = Number(ret.actual_refund) || 0;
-    const hasPartialRefund = estimatedRefund > 0 && estimatedRefund < orderTotal;
-    const hasRefund = actualRefund > 0 || hasPartialRefund;
+    const refundAmount = Number(ret.refund_amount) || 0;
+
+    // Calculate what the actual refund is
+    const calculatedRefund = estimatedRefund > orderTotal ? estimatedRefund - orderTotal : 0;
+
+    const hasPartialRefund = calculatedRefund > 0 && calculatedRefund < orderTotal;
+    const hasFullRefund = calculatedRefund >= orderTotal;
+    const hasRefund = calculatedRefund > 0;
 
     let recommendedState = "unknown";
 
@@ -116,11 +127,14 @@ async function main() {
     }
 
     console.log(`Item ${itemId}:`);
+    console.log(`  Refund data:`);
+    console.log(`    refund_amount: $${refundAmount}`);
+    console.log(`    actual_refund: $${actualRefund}`);
+    console.log(`    estimated_refund (original total): $${estimatedRefund}`);
+    console.log(`    calculated_refund (estimated - current): $${calculatedRefund.toFixed(2)}`);
     if (hasPartialRefund) {
       console.log(`  ⚠️  Partial refund detected: Order total $${orderTotal.toFixed(2)}, Estimated refund $${estimatedRefund.toFixed(2)}`);
     }
-
-    console.log(`Item ${itemId}:`);
     console.log(`  Recommended state: ${recommendedState} (for bad units)`);
     console.log(`  Good units should stay: on_hand`);
     console.log(`  Matching units: ${matchingUnits.length}`);
@@ -153,11 +167,13 @@ async function main() {
 
       const matchingUnits = units.filter(u => u.item_id === itemId);
 
-      // Check for refund (actual or partial via estimated_refund)
+      // Calculate actual refund using: estimated_refund - current_order_total
       const estimatedRefund = Number(ret.estimated_refund) || 0;
-      const actualRefund = Number(ret.actual_refund) || 0;
-      const hasPartialRefund = estimatedRefund > 0 && estimatedRefund < orderTotal;
-      const hasRefund = actualRefund > 0 || hasPartialRefund;
+
+      // Calculate what the actual refund is
+      const calculatedRefund = estimatedRefund > orderTotal ? estimatedRefund - orderTotal : 0;
+
+      const hasRefund = calculatedRefund > 0;
 
       let recommendedState: "on_hand" | "to_be_returned" | "parts_repair" | "returned" | null = null;
 

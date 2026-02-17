@@ -8,12 +8,12 @@ import { prisma } from "../src/lib/db";
 async function main() {
   console.log("Finding units with refunds but no return shipped...");
 
-  // Get all returns with refunds but no shipping
-  // This includes cases where a refund was issued without the item being returned
+  // Get all returns with estimated_refund (original total) where no return was shipped
+  // We'll calculate actual refund as: estimated_refund - current_order_total
   const returns = await prisma.returns.findMany({
     where: {
       order_id: { not: null },
-      actual_refund: { not: null },
+      estimated_refund: { not: null },
       return_shipped_date: null,
       return_delivered_date: null
     },
@@ -22,10 +22,21 @@ async function main() {
       order_id: true,
       item_id: true,
       ebay_item_id: true,
-      actual_refund: true,
+      estimated_refund: true,
       refund_issued_date: true,
       ebay_state: true,
-      ebay_status: true
+      ebay_status: true,
+      order: {
+        select: {
+          order_items: {
+            select: {
+              item_id: true,
+              transaction_price: true,
+              shipping_cost: true
+            }
+          }
+        }
+      }
     }
   });
 
@@ -34,16 +45,35 @@ async function main() {
   let updatedCount = 0;
 
   for (const ret of returns) {
-    if (!ret.order_id) continue;
+    if (!ret.order_id || !ret.order?.order_items) continue;
 
     // Use item_id if available, otherwise use ebay_item_id
     const itemId = ret.item_id || ret.ebay_item_id;
+    if (!itemId) continue;
 
-    // Find all received units for this order/item
+    // Calculate actual refund: estimated_refund - current_order_total
+    const estimatedRefund = Number(ret.estimated_refund);
+    const currentItemTotal = ret.order.order_items.reduce((sum, item) => {
+      if (item.item_id === itemId) {
+        return sum + Number(item.transaction_price) + Number(item.shipping_cost || 0);
+      }
+      return sum;
+    }, 0);
+
+    const calculatedRefund = estimatedRefund > currentItemTotal ? estimatedRefund - currentItemTotal : 0;
+
+    // Only process if there's actually a refund
+    if (calculatedRefund <= 0) continue;
+
+    console.log(`Order ${ret.order_id}, Item ${itemId}: Refund = $${calculatedRefund.toFixed(2)} (estimated: $${estimatedRefund}, current: $${currentItemTotal.toFixed(2)})`);
+
+    // Find all received units for this order/item that are bad condition
+    const badConditions = ["damaged", "wrong_item", "missing_parts", "defective"];
     const units = await prisma.received_units.findMany({
       where: {
         order_id: ret.order_id,
-        item_id: itemId || undefined,
+        item_id: itemId,
+        condition_status: { in: badConditions },
         inventory_state: "to_be_returned" // Only update if currently marked as to_be_returned
       }
     });
@@ -54,7 +84,7 @@ async function main() {
         data: { inventory_state: "parts_repair" }
       });
 
-      console.log(`Updated unit ${unit.id} (order ${ret.order_id}, item ${itemId}) from to_be_returned → parts_repair`);
+      console.log(`  Updated unit ${unit.id} (${unit.condition_status}) from to_be_returned → parts_repair`);
       updatedCount++;
     }
   }

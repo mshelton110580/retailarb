@@ -67,18 +67,36 @@ export default async function OnHandPage() {
   const returns = await prisma.returns.findMany({
     where: {
       order_id: { not: null },
-      actual_refund: { not: null }
+      OR: [
+        { actual_refund: { not: null } },
+        { refund_amount: { not: null } },
+        { estimated_refund: { not: null } }  // Include all returns with estimated_refund
+      ]
     },
     select: {
       order_id: true,
       item_id: true,
       ebay_item_id: true,
+      refund_amount: true,
       actual_refund: true,
       estimated_refund: true,  // This is the original total paid (item + shipping)
       return_shipped_date: true,
       return_delivered_date: true,
+      refund_issued_date: true,
       ebay_state: true,
-      ebay_status: true
+      ebay_status: true,
+      order: {
+        select: {
+          order_items: {
+            select: {
+              item_id: true,
+              transaction_price: true,
+              shipping_cost: true,
+              qty: true
+            }
+          }
+        }
+      }
     }
   });
 
@@ -93,7 +111,7 @@ export default async function OnHandPage() {
   }>();
 
   for (const ret of returns) {
-    if (!ret.order_id || !ret.actual_refund) continue;
+    if (!ret.order_id) continue;
 
     // Use item_id if available, otherwise use ebay_item_id
     const itemId = ret.item_id || ret.ebay_item_id;
@@ -101,21 +119,43 @@ export default async function OnHandPage() {
 
     const key = `${ret.order_id}-${itemId}`;
 
-    // Track actual refund amount
-    const existing = refundMap.get(key) || 0;
-    refundMap.set(key, existing + Number(ret.actual_refund));
+    // Calculate actual refund amount
+    // The most reliable method: estimated_refund - current_order_total
+    // estimated_refund = original total paid (before any refund)
+    // current_order_total = sum of current transaction_price + shipping from order_items
+    let refundAmount = 0;
 
-    // Track original cost (estimated_refund = what was originally paid)
-    if (ret.estimated_refund) {
-      originalCostMap.set(key, Number(ret.estimated_refund));
+    if (ret.estimated_refund && ret.order?.order_items) {
+      const estimatedRefund = Number(ret.estimated_refund);
+
+      // Calculate current order total for this specific item
+      const currentItemTotal = ret.order.order_items.reduce((sum, item) => {
+        if (item.item_id === itemId) {
+          return sum + Number(item.transaction_price) + Number(item.shipping_cost || 0);
+        }
+        return sum;
+      }, 0);
+
+      // If estimated_refund > current_total, a refund was issued
+      if (estimatedRefund > currentItemTotal) {
+        refundAmount = estimatedRefund - currentItemTotal;
+      }
+
+      // Track original cost (estimated_refund = what was originally paid)
+      originalCostMap.set(key, estimatedRefund);
     }
 
-    // Track return status for inventory state decisions
-    returnInfoMap.set(key, {
-      refundAmount: Number(ret.actual_refund),
-      wasReturned: Boolean(ret.return_delivered_date),
-      wasShipped: Boolean(ret.return_shipped_date)
-    });
+    // If we have a refund, track it
+    if (refundAmount > 0) {
+      const existing = refundMap.get(key) || 0;
+      refundMap.set(key, existing + refundAmount);
+
+      returnInfoMap.set(key, {
+        refundAmount: refundAmount,
+        wasReturned: Boolean(ret.return_delivered_date),
+        wasShipped: Boolean(ret.return_shipped_date)
+      });
+    }
   }
 
   // For lots and multi-qty items, we need to count how many units were scanned
