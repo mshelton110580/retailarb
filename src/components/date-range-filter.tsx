@@ -3,7 +3,7 @@
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { useCallback, useMemo } from "react";
 
-type PresetDays = 30 | 60 | 90;
+type PresetDays = 30 | 60 | 90 | "all";
 
 /**
  * Compute the ISO date string (YYYY-MM-DD) for N days ago from today.
@@ -31,9 +31,14 @@ function parseDateRange(params: URLSearchParams): {
   const fromParam = params.get("from");
   const toParam = params.get("to");
 
+  // If "All Time" is selected
+  if (range === "all") {
+    return { from: "2000-01-01", to: todayStr(), activePreset: "all" };
+  }
+
   // If a preset range is specified
   if (range === "30" || range === "60" || range === "90") {
-    const days = Number(range) as PresetDays;
+    const days = Number(range) as 30 | 60 | 90;
     return { from: daysAgo(days), to: todayStr(), activePreset: days };
   }
 
@@ -86,7 +91,7 @@ export default function DateRangeFilter() {
     [updateParams]
   );
 
-  const presets: PresetDays[] = [30, 60, 90];
+  const presets: PresetDays[] = [30, 60, 90, "all"];
 
   return (
     <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -101,7 +106,7 @@ export default function DateRangeFilter() {
               : "bg-slate-800 text-slate-300 hover:bg-slate-700"
           }`}
         >
-          {days}d
+          {days === "all" ? "All Time" : `${days}d`}
         </button>
       ))}
 
