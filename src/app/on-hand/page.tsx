@@ -2,6 +2,7 @@ import PageHeader from "@/components/page-header";
 import { prisma } from "@/lib/db";
 import Link from "next/link";
 import ProductRow from "./product-row";
+import fs from "fs";
 
 type ProductStats = {
   categoryId: string;
@@ -215,8 +216,9 @@ export default async function OnHandPage() {
 
       // Debug logging for order 22-14005-91657
       if (unit.order?.order_id === "22-14005-91657") {
-        console.log(`[Unit ${unit.unit_index}] totalCost=${totalCost}, refundAmount=${refundAmount}, unitsScanned=${unitsScanned}, badUnitsCount=${badUnitsCount}, isThisUnitBad=${isThisUnitBad}`);
-        console.log(`[Unit ${unit.unit_index}] Condition check: refundAmount > 0 = ${refundAmount > 0}, refundAmount < totalCost = ${refundAmount < totalCost}, unitsScanned > 1 = ${unitsScanned > 1}`);
+        const logMsg = `[Unit ${unit.unit_index}] totalCost=${totalCost}, refundAmount=${refundAmount}, unitsScanned=${unitsScanned}, badUnitsCount=${badUnitsCount}, isThisUnitBad=${isThisUnitBad}\n` +
+                       `[Unit ${unit.unit_index}] Condition check: refundAmount > 0 = ${refundAmount > 0}, refundAmount < totalCost = ${refundAmount < totalCost}, unitsScanned > 1 = ${unitsScanned > 1}\n`;
+        fs.appendFileSync("/tmp/onhand-debug.log", logMsg);
       }
 
       // Smart refund distribution for lots with partial refunds
@@ -245,7 +247,7 @@ export default async function OnHandPage() {
             if (isThisUnitBad) {
               itemCost = 0; // Bad units are fully refunded
               if (unit.order?.order_id === "22-14005-91657") {
-                console.log(`[Unit ${unit.unit_index}] BAD UNIT - itemCost set to 0`);
+                fs.appendFileSync("/tmp/onhand-debug.log", `[Unit ${unit.unit_index}] BAD UNIT - itemCost set to 0\n`);
               }
             } else {
               // Remaining refund after zeroing out bad units
@@ -253,7 +255,7 @@ export default async function OnHandPage() {
               const refundPerGoodUnit = remainingRefund / goodUnitsCount;
               itemCost = Math.max(0, perUnitCost - refundPerGoodUnit);
               if (unit.order?.order_id === "22-14005-91657") {
-                console.log(`[Unit ${unit.unit_index}] GOOD UNIT - remainingRefund=${remainingRefund}, refundPerGoodUnit=${refundPerGoodUnit}, itemCost=${itemCost}`);
+                fs.appendFileSync("/tmp/onhand-debug.log", `[Unit ${unit.unit_index}] GOOD UNIT - remainingRefund=${remainingRefund}, refundPerGoodUnit=${refundPerGoodUnit}, itemCost=${itemCost}\n`);
               }
             }
           }
@@ -263,7 +265,7 @@ export default async function OnHandPage() {
         const costAfterRefund = Math.max(0, totalCost - refundAmount);
         itemCost = costAfterRefund / unitsScanned;
         if (unit.order?.order_id === "22-14005-91657") {
-          console.log(`[Unit ${unit.unit_index}] FALLBACK - costAfterRefund=${costAfterRefund}, itemCost=${itemCost}`);
+          fs.appendFileSync("/tmp/onhand-debug.log", `[Unit ${unit.unit_index}] FALLBACK - costAfterRefund=${costAfterRefund}, itemCost=${itemCost}\n`);
         }
       }
     }
