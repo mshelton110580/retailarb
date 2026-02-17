@@ -63,7 +63,7 @@ export default async function OnHandPage() {
     }
   });
 
-  // Fetch all returns to calculate refunded amounts per order/item
+  // Fetch all returns to calculate refunded amounts and original costs per order/item
   const returns = await prisma.returns.findMany({
     where: {
       order_id: { not: null },
@@ -73,13 +73,16 @@ export default async function OnHandPage() {
       order_id: true,
       item_id: true,
       ebay_item_id: true,
-      actual_refund: true
+      actual_refund: true,
+      estimated_refund: true  // This is the original total paid (item + shipping)
     }
   });
 
-  // Build a map of refunded amounts by order_id + item_id
+  // Build maps for refunded amounts and original costs by order_id + item_id
   // Note: Some returns have ebay_item_id instead of item_id, so we need both
   const refundMap = new Map<string, number>();
+  const originalCostMap = new Map<string, number>();  // estimated_refund = original total paid
+
   for (const ret of returns) {
     if (!ret.order_id || !ret.actual_refund) continue;
 
@@ -88,8 +91,15 @@ export default async function OnHandPage() {
     if (!itemId) continue;
 
     const key = `${ret.order_id}-${itemId}`;
+
+    // Track actual refund amount
     const existing = refundMap.get(key) || 0;
     refundMap.set(key, existing + Number(ret.actual_refund));
+
+    // Track original cost (estimated_refund = what was originally paid)
+    if (ret.estimated_refund) {
+      originalCostMap.set(key, Number(ret.estimated_refund));
+    }
   }
 
   // For lots and multi-qty items, we need to count how many units were scanned
@@ -115,13 +125,23 @@ export default async function OnHandPage() {
     // Calculate per-unit cost by dividing total price by number of units scanned
     let itemCost = 0;
     if (unit.order_item) {
-      const totalPrice = Number(unit.order_item.transaction_price);
-      const totalShipping = Number(unit.order_item.shipping_cost) || 0;
-      let totalCost = totalPrice + totalShipping;
+      let totalCost = 0;
+      const refundKey = unit.order?.order_id && unit.order_item.item_id
+        ? `${unit.order.order_id}-${unit.order_item.item_id}`
+        : null;
+
+      // First, try to get the original cost from estimated_refund (most accurate)
+      if (refundKey && originalCostMap.has(refundKey)) {
+        totalCost = originalCostMap.get(refundKey)!;
+      } else {
+        // Fall back to transaction_price + shipping_cost
+        const totalPrice = Number(unit.order_item.transaction_price);
+        const totalShipping = Number(unit.order_item.shipping_cost) || 0;
+        totalCost = totalPrice + totalShipping;
+      }
 
       // Subtract any refunds for this order/item
-      if (unit.order?.order_id && unit.order_item.item_id) {
-        const refundKey = `${unit.order.order_id}-${unit.order_item.item_id}`;
+      if (refundKey) {
         const refundAmount = refundMap.get(refundKey) || 0;
         totalCost = Math.max(0, totalCost - refundAmount);
       }
