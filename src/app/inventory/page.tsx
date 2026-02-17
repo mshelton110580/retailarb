@@ -32,6 +32,7 @@ const cardConfig: Array<{
 }> = [
   // Primary delivery status
   { key: "total_orders", label: "Total Orders", color: "text-white", border: "border-slate-500", section: "primary" },
+  { key: "cancelled", label: "Cancelled & Refunded", color: "text-slate-400", border: "border-slate-600", description: "Order cancelled on eBay, refunded (not actionable)", section: "primary" },
   { key: "delivered", label: "Delivered", color: "text-green-400", border: "border-green-600", description: "eBay confirms delivery", section: "primary" },
   { key: "shipped", label: "Shipped", color: "text-blue-400", border: "border-blue-600", description: "Tracking uploaded, not yet delivered", section: "primary" },
   // Warehouse status
@@ -39,7 +40,6 @@ const cardConfig: Array<{
   { key: "not_checked_in", label: "Not Checked In", color: "text-yellow-400", border: "border-yellow-600", description: "Not yet scanned at warehouse", section: "warehouse" },
   // Action items
   { key: "delivered_not_checked_in", label: "Delivered — Not Checked In", color: "text-purple-400", border: "border-purple-600", description: "eBay says delivered but not scanned at warehouse — possible return to sender", section: "action" },
-  { key: "cancelled", label: "Cancelled", color: "text-slate-400", border: "border-slate-600", description: "Order cancelled on eBay", section: "action" },
   { key: "never_shipped", label: "Never Shipped", color: "text-rose-400", border: "border-rose-600", description: "No tracking info uploaded (excludes cancelled)", section: "action" },
   { key: "overdue_not_received", label: "Overdue — Not Received", color: "text-amber-400", border: "border-amber-600", description: "Has tracking, past estimated delivery, no delivery confirmation", section: "action" },
   { key: "needs_return", label: "Needs Return", color: "text-red-400", border: "border-red-600", description: "Checked in with bad condition", section: "action" },
