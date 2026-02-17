@@ -75,7 +75,17 @@ async function main() {
     console.log();
   }
 
-  // 3. Determine what the state should be
+  // 3. Calculate order totals
+  const orderTotal = units.reduce((sum, unit) => {
+    if (!unit.order_item) return sum;
+    const price = Number(unit.order_item.transaction_price);
+    const shipping = Number(unit.order_item.shipping_cost) || 0;
+    return sum + price + shipping;
+  }, 0);
+
+  console.log(`Order Total: $${orderTotal.toFixed(2)}\n`);
+
+  // 4. Determine what the state should be
   console.log("=== Recommended Fixes ===\n");
 
   for (const ret of returns) {
@@ -84,19 +94,30 @@ async function main() {
 
     const matchingUnits = units.filter(u => u.item_id === itemId);
 
+    // Check if there was a partial refund by comparing estimated_refund to order total
+    const estimatedRefund = Number(ret.estimated_refund) || 0;
+    const actualRefund = Number(ret.actual_refund) || 0;
+    const hasPartialRefund = estimatedRefund > 0 && estimatedRefund < orderTotal;
+    const hasRefund = actualRefund > 0 || hasPartialRefund;
+
     let recommendedState = "unknown";
 
     // Check if return was delivered
     if (ret.return_delivered_date || ret.return_shipped_date) {
       recommendedState = "returned";
     }
-    // Refund issued but not returned
-    else if ((ret.refund_issued_date || ret.actual_refund) && !ret.return_shipped_date && !ret.return_delivered_date) {
+    // Refund issued but not returned (check both actual_refund and estimated_refund)
+    else if (hasRefund && !ret.return_shipped_date && !ret.return_delivered_date) {
       recommendedState = "parts_repair";
     }
     // Return open but not shipped
     else if (ret.ebay_state === "RETURN_OPEN" || ret.ebay_status === "WAITING_FOR_SHIPPING_LABEL") {
       recommendedState = "to_be_returned";
+    }
+
+    console.log(`Item ${itemId}:`);
+    if (hasPartialRefund) {
+      console.log(`  ⚠️  Partial refund detected: Order total $${orderTotal.toFixed(2)}, Estimated refund $${estimatedRefund.toFixed(2)}`);
     }
 
     console.log(`Item ${itemId}:`);
@@ -126,11 +147,17 @@ async function main() {
 
       const matchingUnits = units.filter(u => u.item_id === itemId);
 
+      // Check for refund (actual or partial via estimated_refund)
+      const estimatedRefund = Number(ret.estimated_refund) || 0;
+      const actualRefund = Number(ret.actual_refund) || 0;
+      const hasPartialRefund = estimatedRefund > 0 && estimatedRefund < orderTotal;
+      const hasRefund = actualRefund > 0 || hasPartialRefund;
+
       let recommendedState: "on_hand" | "to_be_returned" | "parts_repair" | "returned" | null = null;
 
       if (ret.return_delivered_date || ret.return_shipped_date) {
         recommendedState = "returned";
-      } else if ((ret.refund_issued_date || ret.actual_refund) && !ret.return_shipped_date && !ret.return_delivered_date) {
+      } else if (hasRefund && !ret.return_shipped_date && !ret.return_delivered_date) {
         recommendedState = "parts_repair";
       } else if (ret.ebay_state === "RETURN_OPEN" || ret.ebay_status === "WAITING_FOR_SHIPPING_LABEL") {
         recommendedState = "to_be_returned";
