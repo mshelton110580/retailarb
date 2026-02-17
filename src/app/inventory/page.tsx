@@ -124,6 +124,7 @@ export default async function InventoryPage({
         ],
       },
       select: {
+        id: true,
         order_id: true,
         ebay_state: true,
         ebay_status: true,
@@ -296,6 +297,14 @@ export default async function InventoryPage({
   // Create sets of order IDs with filed returns or INR cases
   const orderIdsWithReturns = new Set(returns.map((r) => r.order_id).filter((id): id is string => id !== null));
   const orderIdsWithINR = new Set(inrCases.map((i) => i.order_id).filter((id): id is string => id !== null));
+
+  // Create map from order_id to return ID for linking
+  const orderToReturnId = new Map<string, string>();
+  for (const ret of returns) {
+    if (ret.order_id) {
+      orderToReturnId.set(ret.order_id, ret.id);
+    }
+  }
 
   // Categorize shipments into buckets
   const buckets: Record<BucketKey, typeof shipments> = {
@@ -574,9 +583,19 @@ export default async function InventoryPage({
               filteredItems.map((shipment) => (
                 <div key={shipment.id} className="rounded border border-slate-800 p-3">
                   <div className="flex items-center justify-between">
-                    <Link className="font-medium text-blue-400" href={`/orders/${shipment.order_id}`}>
-                      Order {shipment.order_id}
-                    </Link>
+                    <div className="flex items-center gap-2">
+                      <Link className="font-medium text-blue-400" href={`/orders/${shipment.order_id}`}>
+                        Order {shipment.order_id}
+                      </Link>
+                      {orderToReturnId.has(shipment.order_id) && (
+                        <Link
+                          className="text-xs text-red-400 hover:text-red-300 hover:underline"
+                          href={`/returns?id=${orderToReturnId.get(shipment.order_id)}`}
+                        >
+                          [View Return]
+                        </Link>
+                      )}
+                    </div>
                     <div className="flex gap-2">
                       <span className={`rounded px-1.5 py-0.5 text-xs ${
                         shipment.order?.order_status === 'Cancelled' ? 'bg-slate-700 text-slate-300' :
