@@ -141,8 +141,9 @@ export default async function OnHandPage() {
         refundAmount = estimatedRefund - currentItemTotal;
       }
 
-      // Track original cost (estimated_refund = what was originally paid)
-      originalCostMap.set(key, estimatedRefund);
+      // Track CURRENT order total (what's in the database now after any refund)
+      // This is used for calculating per-unit costs
+      originalCostMap.set(key, currentItemTotal);
     }
 
     // If we have a refund, track it
