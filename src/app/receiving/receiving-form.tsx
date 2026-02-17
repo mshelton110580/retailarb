@@ -338,62 +338,67 @@ export default function ReceivingForm() {
         </div>
       )}
 
-      {/* Category selection prompt */}
+      {/* Category selection modal (blocking overlay) */}
       {pendingCategorySelection && (
-        <div className="rounded-lg border border-indigo-800 bg-slate-900 p-4">
-          <h3 className="text-sm font-semibold text-indigo-400">Category Selection Required</h3>
-          <p className="mt-1 text-xs text-slate-400">
-            Unit #{pendingCategorySelection.unitIndex}: {pendingCategorySelection.title}
-          </p>
-          <p className="mt-1 text-xs text-yellow-400">
-            {pendingCategorySelection.reason}
-          </p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-lg border border-indigo-800 bg-slate-900 p-6 shadow-2xl mx-4">
+            <h3 className="text-lg font-semibold text-indigo-400">⚠️ Category Selection Required</h3>
+            <p className="mt-2 text-sm text-slate-300">
+              <strong>Unit #{pendingCategorySelection.unitIndex}:</strong> {pendingCategorySelection.title}
+            </p>
+            <p className="mt-1 text-sm text-yellow-400">
+              {pendingCategorySelection.reason}
+            </p>
 
-          <div className="mt-3 space-y-2">
-            {loadingCategories ? (
-              <p className="text-sm text-slate-500">Loading categories...</p>
-            ) : (
-              <>
-                <label className="block text-xs text-slate-400">
-                  Select product category for this unit:
-                </label>
-                <select
-                  className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
-                  onChange={(e) => handleCategorySelection(pendingCategorySelection.unitId, e.target.value || null)}
-                  defaultValue=""
-                >
-                  <option value="">-- Select Category --</option>
-                  {categories.map((cat) => (
-                    <option key={cat.id} value={cat.id}>
-                      {cat.category_name}
-                    </option>
-                  ))}
-                </select>
+            <div className="mt-4 space-y-3">
+              {loadingCategories ? (
+                <p className="text-sm text-slate-500">Loading categories...</p>
+              ) : (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">
+                      Select the correct product category for this unit:
+                    </label>
+                    <select
+                      className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-300 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                      onChange={(e) => handleCategorySelection(pendingCategorySelection.unitId, e.target.value || null)}
+                      defaultValue=""
+                      autoFocus
+                    >
+                      <option value="">-- Select Category --</option>
+                      {categories.map((cat) => (
+                        <option key={cat.id} value={cat.id}>
+                          {cat.category_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => {
-                      setPendingCategorySelection(null);
-                      setStatus("⚠ Category selection skipped - you can assign it later from the scans list");
-                      setStatusType("warning");
-                    }}
-                    className="rounded border border-slate-700 px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800"
-                  >
-                    Skip (Assign Later)
-                  </button>
-                  <a
-                    href="/on-hand"
-                    className="rounded border border-indigo-700 px-3 py-1.5 text-xs text-indigo-400 hover:bg-indigo-900"
-                  >
-                    View All Products
-                  </a>
-                </div>
+                  <div className="flex gap-3 pt-2">
+                    <button
+                      onClick={() => {
+                        setPendingCategorySelection(null);
+                        setStatus("⚠ Category selection skipped - you can assign it later from the scans list");
+                        setStatusType("warning");
+                      }}
+                      className="flex-1 rounded border border-slate-700 px-4 py-2 text-sm text-slate-400 hover:bg-slate-800 transition-colors"
+                    >
+                      Skip for Now
+                    </button>
+                    <a
+                      href="/on-hand"
+                      className="flex-1 rounded border border-indigo-700 px-4 py-2 text-sm text-center text-indigo-400 hover:bg-indigo-900 transition-colors"
+                    >
+                      View All Products
+                    </a>
+                  </div>
 
-                <p className="text-[10px] text-slate-500">
-                  Tip: You can also edit the category later from the scans list below using the "Edit Cat" button.
-                </p>
-              </>
-            )}
+                  <p className="text-xs text-slate-500 text-center">
+                    You can edit the category later using the "Edit Cat" button on the scans list.
+                  </p>
+                </>
+              )}
+            </div>
           </div>
         </div>
       )}

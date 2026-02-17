@@ -381,6 +381,21 @@ export async function findOrCreateCategory(
     select: { id: true, category_keywords: true, category_name: true }
   });
 
+  // First check for exact name match (case-insensitive)
+  const categoryName = generateCategoryName(title);
+  const exactMatch = allCategories.find(
+    cat => cat.category_name.toLowerCase().trim() === categoryName.toLowerCase().trim()
+  );
+
+  if (exactMatch) {
+    return {
+      categoryId: exactMatch.id,
+      confidence: "high",
+      requiresManualSelection: false,
+      reason: "Exact category name match"
+    };
+  }
+
   let bestMatch: { id: string; score: number } | null = null;
 
   for (const category of allCategories) {
