@@ -440,7 +440,7 @@ export async function findOrCreateCategory(
   }
 
   // No good match - create new but require confirmation
-  const categoryName = generateCategoryName(title);
+  // categoryName already generated above for exact match check
 
   // Only auto-create if we have strong product info
   if (itemInfo.fullModel || (itemInfo.brand && itemInfo.productType)) {
