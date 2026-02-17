@@ -316,6 +316,7 @@ export async function findOrCreateCategory(
   confidence: "high" | "medium" | "low";
   requiresManualSelection: boolean;
   reason?: string;
+  suggestedCategoryName?: string;
 }> {
   // Check for multiple products in title
   const hasMultipleProducts = detectMultipleProducts(title);
@@ -376,15 +377,33 @@ export async function findOrCreateCategory(
     };
   }
 
+  // Generate category name for this item
+  const categoryName = generateCategoryName(title);
+  const normalizedName = categoryName.toLowerCase().trim();
+
+  // Check for existing category merge mapping first
+  const existingMerge = await prisma.$queryRawUnsafe<Array<{ to_category_id: string }>>(
+    `SELECT to_category_id FROM category_merges WHERE LOWER(TRIM(from_category_name)) = $1`,
+    normalizedName
+  );
+
+  if (existingMerge && existingMerge.length > 0) {
+    return {
+      categoryId: existingMerge[0].to_category_id,
+      confidence: "high",
+      requiresManualSelection: false,
+      reason: "Auto-merged based on previous selection"
+    };
+  }
+
   // Find categories and calculate similarity
   const allCategories = await prisma.item_categories.findMany({
     select: { id: true, category_keywords: true, category_name: true }
   });
 
-  // First check for exact name match (case-insensitive)
-  const categoryName = generateCategoryName(title);
+  // Check for exact name match (case-insensitive)
   const exactMatch = allCategories.find(
-    cat => cat.category_name.toLowerCase().trim() === categoryName.toLowerCase().trim()
+    cat => cat.category_name.toLowerCase().trim() === normalizedName
   );
 
   if (exactMatch) {
@@ -439,33 +458,14 @@ export async function findOrCreateCategory(
     };
   }
 
-  // No good match - create new but require confirmation
-  // categoryName already generated above for exact match check
-
-  // Only auto-create if we have strong product info
-  if (itemInfo.fullModel || (itemInfo.brand && itemInfo.productType)) {
-    const newCategory = await prisma.item_categories.create({
-      data: {
-        gtin: null,
-        category_name: categoryName,
-        category_keywords: itemInfo.coreTerms
-      }
-    });
-
-    return {
-      categoryId: newCategory.id,
-      confidence: "medium",
-      requiresManualSelection: false,
-      reason: "New category created with identifiable product info"
-    };
-  }
-
-  // Unclear title - require manual selection
+  // No good match - ALWAYS require manual selection for new categories
+  // This allows user to merge with existing similar categories
   return {
     categoryId: null,
     confidence: "low",
     requiresManualSelection: true,
-    reason: "Unclear or generic title - manual selection required"
+    reason: `New category "${categoryName}" - select existing to merge or confirm new`,
+    suggestedCategoryName: categoryName
   };
 }
 

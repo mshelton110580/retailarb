@@ -257,7 +257,8 @@ export async function POST(req: Request) {
           categoryId: categoryResult.categoryId,
           confidence: categoryResult.confidence,
           requiresManualSelection: categoryResult.requiresManualSelection,
-          reason: categoryResult.reason
+          reason: categoryResult.reason,
+          suggestedCategoryName: categoryResult.suggestedCategoryName
         },
         item: {
           title: targetItem.title,
