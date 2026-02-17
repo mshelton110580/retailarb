@@ -83,20 +83,50 @@ export default async function InventoryPage({
     select: { order_id: true, item_id: true, condition_status: true }
   });
 
-  // Fetch return and INR counts
+  // Fetch return and INR counts (filtered by order purchase_date to match date range)
   const [returnCount, openReturnCount, inrCount, openInrCount] = await Promise.all([
-    prisma.returns.count(),
     prisma.returns.count({
       where: {
+        order: {
+          purchase_date: {
+            gte: dateRange.from,
+            lte: dateRange.to,
+          },
+        },
+      },
+    }),
+    prisma.returns.count({
+      where: {
+        order: {
+          purchase_date: {
+            gte: dateRange.from,
+            lte: dateRange.to,
+          },
+        },
         OR: [
           { ebay_state: { notIn: ["RETURN_CLOSED", "REFUND_ISSUED"] } },
           { ebay_state: null, scrape_state: { not: "COMPLETE" } },
         ],
       },
     }),
-    prisma.inr_cases.count(),
     prisma.inr_cases.count({
       where: {
+        order: {
+          purchase_date: {
+            gte: dateRange.from,
+            lte: dateRange.to,
+          },
+        },
+      },
+    }),
+    prisma.inr_cases.count({
+      where: {
+        order: {
+          purchase_date: {
+            gte: dateRange.from,
+            lte: dateRange.to,
+          },
+        },
         OR: [
           { ebay_status: { not: "CLOSED" } },
           { ebay_status: null },
