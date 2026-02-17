@@ -57,7 +57,8 @@ export default async function OnHandPage() {
       },
       order: {
         select: {
-          order_id: true
+          order_id: true,
+          totals: true
         }
       }
     }
@@ -115,9 +116,20 @@ export default async function OnHandPage() {
     // Calculate per-unit cost by dividing total price by number of units scanned
     let itemCost = 0;
     if (unit.order_item) {
-      const totalPrice = Number(unit.order_item.transaction_price);
-      const totalShipping = Number(unit.order_item.shipping_cost) || 0;
-      let totalCost = totalPrice + totalShipping;
+      // Use order.totals.total if available (includes item + shipping + taxes)
+      // Otherwise fall back to transaction_price + shipping_cost
+      let totalCost = 0;
+      const orderTotal = unit.order?.totals?.total;
+
+      if (orderTotal && Number(orderTotal) > 0) {
+        // Order total includes all costs (item + shipping)
+        totalCost = Number(orderTotal);
+      } else {
+        // Fall back to item price + shipping
+        const totalPrice = Number(unit.order_item.transaction_price);
+        const totalShipping = Number(unit.order_item.shipping_cost) || 0;
+        totalCost = totalPrice + totalShipping;
+      }
 
       // Subtract any refunds for this order/item
       if (unit.order?.order_id && unit.order_item.item_id) {
