@@ -9,7 +9,7 @@ import FilterLink from "@/components/filter-link";
 import { Decimal } from "@prisma/client/runtime/library";
 import { JsonValue } from "@prisma/client/runtime/library";
 
-type FilterType = "all" | "open" | "closed_full_refund" | "closed_partial_refund" | "closed_no_refund" | "escalated" | "late";
+type FilterType = "all" | "open" | "open_not_escalated" | "closed_full_refund" | "closed_partial_refund" | "closed_no_refund_delivered" | "closed_no_refund_not_delivered" | "escalated" | "late";
 
 // All statuses that indicate the case is closed (regardless of how it was closed)
 const CLOSED_STATUSES = ["CLOSED", "CS_CLOSED", "OTHER"];
@@ -38,48 +38,42 @@ function getOrderTotal(totals: JsonValue | undefined | null): number | null {
 /**
  * Determine INR refund type for a closed case.
  *
- * Rules:
- * 1. If the order also has a return filed, the item was received (a return
- *    requires receipt). The INR was resolved without an INR refund — any
- *    refund belongs to the return, not the INR. → "none"
+ * Key insight: eBay sets claim_amount to the remaining order balance at the
+ * time the INR was filed. Comparing claim_amount to the current order_total
+ * (balance after INR closure) reveals whether a refund was issued via INR:
  *
- * 2. If the order has NO return:
- *    a. With order data: use order_total as remaining balance.
- *       - order_total = 0 → "full" (fully refunded via INR)
- *       - claim >= order_total → "full" (total not yet adjusted)
- *       - 0 < claim < order_total → "partial"
- *       - claim = 0 → "none"
- *    b. Without order data (older than 90-day sync window):
- *       - claim > 0 → "full" (assume full refund for older INR-only cases)
- *       - claim = 0 → "none"
+ *   order_total == 0              → full refund
+ *   order_total < claim_amount    → partial refund issued during INR
+ *   order_total == claim_amount   → no refund (INR closed/withdrawn without payment)
+ *
+ * This handles the case where a seller partial-refunded before the INR was
+ * filed (reducing order_total before claim_amount was set), then the INR was
+ * withdrawn — claim_amount and order_total will match, correctly → "none".
+ *
+ * Rules:
+ * 1. If a return was also filed → item was received, no INR refund → "none"
+ * 2. With both claim_amount and order_total → compare as above
+ * 3. Without order data → "none" (cannot determine)
  */
 function getRefundType(
   claimAmount: Decimal | null,
   orderTotals: JsonValue | undefined | null,
   hasReturn: boolean,
 ): "full" | "partial" | "none" {
-  // If a return was also filed, the item was received — no INR refund
   if (hasReturn) return "none";
 
-  const claimAmt = Number(claimAmount ?? 0);
   const orderTotal = getOrderTotal(orderTotals);
+  const claimAmt = claimAmount !== null ? Number(claimAmount) : null;
 
-  // If we have order data, use order_total as remaining balance
   if (orderTotal !== null) {
-    if (orderTotal === 0) {
-      return "full";
-    }
-    if (claimAmt > 0) {
-      if (claimAmt >= orderTotal) {
-        return "full";
-      }
+    if (orderTotal === 0) return "full";
+    if (claimAmt !== null && claimAmt > 0 && orderTotal < claimAmt) {
+      // Order total dropped during the INR — a refund was issued
       return "partial";
     }
     return "none";
   }
 
-  // No order in database — fall back to claim_amount
-  if (claimAmt > 0) return "full";
   return "none";
 }
 
@@ -100,7 +94,12 @@ export default async function INRPage({
       },
     },
     include: {
-      order: { include: { order_items: true } },
+      order: {
+        include: {
+          order_items: true,
+          shipments: { select: { derived_status: true, delivered_at: true } },
+        }
+      },
       listing: { select: { title: true } },
     },
     orderBy: { created_at: "desc" },
@@ -116,13 +115,15 @@ export default async function INRPage({
     if (ret.order_id) returnOrderIds.add(ret.order_id);
   }
 
-  // Enrich each INR case with refund type
+  // Enrich each INR case with refund type and delivery status
   const enrichedCases = inrCases.map((inr) => {
     const hasReturn = inr.order_id ? returnOrderIds.has(inr.order_id) : false;
     const refundType = isClosed(inr.ebay_status)
       ? getRefundType(inr.claim_amount, inr.order?.totals, hasReturn)
       : null;
-    return { ...inr, hasReturn, refundType };
+    const shipment = inr.order?.shipments?.[0];
+    const isDelivered = shipment?.derived_status === "delivered" || shipment?.delivered_at != null;
+    return { ...inr, hasReturn, refundType, isDelivered };
   });
 
   // Build a set of all ebay_item_ids that have INR cases (for cross-referencing late shipments)
@@ -167,17 +168,21 @@ export default async function INRPage({
 
   // Filter helpers using enriched cases
   const openCases = enrichedCases.filter((c) => isOpen(c.ebay_status));
+  const openNotEscalated = enrichedCases.filter((c) => isOpen(c.ebay_status) && !c.escalated_to_case);
   const closedFullRefund = enrichedCases.filter((c) => isClosed(c.ebay_status) && c.refundType === "full");
   const closedPartialRefund = enrichedCases.filter((c) => isClosed(c.ebay_status) && c.refundType === "partial");
-  const closedNoRefund = enrichedCases.filter((c) => isClosed(c.ebay_status) && c.refundType === "none");
+  const closedNoRefundDelivered = enrichedCases.filter((c) => isClosed(c.ebay_status) && c.refundType === "none" && c.isDelivered);
+  const closedNoRefundNotDelivered = enrichedCases.filter((c) => isClosed(c.ebay_status) && c.refundType === "none" && !c.isDelivered);
   const escalatedCases = enrichedCases.filter((c) => c.escalated_to_case);
 
   // Counts
   const totalCount = enrichedCases.length;
   const openCount = openCases.length;
+  const openNotEscalatedCount = openNotEscalated.length;
   const closedFullRefundCount = closedFullRefund.length;
   const closedPartialRefundCount = closedPartialRefund.length;
-  const closedNoRefundCount = closedNoRefund.length;
+  const closedNoRefundDeliveredCount = closedNoRefundDelivered.length;
+  const closedNoRefundNotDeliveredCount = closedNoRefundNotDelivered.length;
   const escalatedCount = escalatedCases.length;
   const lateCount = lateShipments.length;
 
@@ -185,26 +190,32 @@ export default async function INRPage({
   const filteredCases =
     filter === "open"
       ? openCases
-      : filter === "closed_full_refund"
-        ? closedFullRefund
-        : filter === "closed_partial_refund"
-          ? closedPartialRefund
-          : filter === "closed_no_refund"
-            ? closedNoRefund
-            : filter === "escalated"
-              ? escalatedCases
-              : filter === "late"
-                ? []
-                : enrichedCases;
+      : filter === "open_not_escalated"
+        ? openNotEscalated
+        : filter === "closed_full_refund"
+          ? closedFullRefund
+          : filter === "closed_partial_refund"
+            ? closedPartialRefund
+            : filter === "closed_no_refund_delivered"
+              ? closedNoRefundDelivered
+              : filter === "closed_no_refund_not_delivered"
+                ? closedNoRefundNotDelivered
+                : filter === "escalated"
+                  ? escalatedCases
+                  : filter === "late"
+                    ? []
+                    : enrichedCases;
 
   const showLateShipments = filter === "all" || filter === "late";
 
   const filterLabels: Record<FilterType, string> = {
     all: "All INR Cases",
     open: "Open INR Cases",
+    open_not_escalated: "Open — Action Required",
     closed_full_refund: "Closed — Full Refund",
     closed_partial_refund: "Closed — Partial Refund",
-    closed_no_refund: "Closed — No Refund",
+    closed_no_refund_delivered: "Closed — No Refund (Delivered)",
+    closed_no_refund_not_delivered: "Closed — No Refund (Not Delivered)",
     escalated: "Escalated INR Cases",
     late: "Late Shipments (No INR)",
   };
@@ -222,11 +233,12 @@ export default async function INRPage({
 
   const cards: { key: FilterType; label: string; count: number; color: string; activeRing: string }[] = [
     { key: "all", label: "Total INR Cases", count: totalCount, color: "text-slate-400", activeRing: "ring-slate-500" },
-    { key: "open", label: "Open", count: openCount, color: "text-yellow-400", activeRing: "ring-yellow-500" },
+    { key: "open_not_escalated", label: "Open — Action Required", count: openNotEscalatedCount, color: "text-yellow-400", activeRing: "ring-yellow-500" },
+    { key: "escalated", label: "Escalated", count: escalatedCount, color: "text-purple-400", activeRing: "ring-purple-500" },
     { key: "closed_full_refund", label: "Closed (Full Refund)", count: closedFullRefundCount, color: "text-green-400", activeRing: "ring-green-500" },
     { key: "closed_partial_refund", label: "Closed (Partial Refund)", count: closedPartialRefundCount, color: "text-orange-400", activeRing: "ring-orange-500" },
-    { key: "closed_no_refund", label: "Closed (No Refund)", count: closedNoRefundCount, color: "text-red-400", activeRing: "ring-red-500" },
-    { key: "escalated", label: "Escalated", count: escalatedCount, color: "text-purple-400", activeRing: "ring-purple-500" },
+    { key: "closed_no_refund_delivered", label: "Closed — No Refund (Delivered)", count: closedNoRefundDeliveredCount, color: "text-blue-400", activeRing: "ring-blue-500" },
+    { key: "closed_no_refund_not_delivered", label: "Closed — No Refund (Not Delivered)", count: closedNoRefundNotDeliveredCount, color: "text-red-400", activeRing: "ring-red-500" },
     { key: "late", label: "Late (No INR)", count: lateCount, color: "text-amber-400", activeRing: "ring-amber-500" },
   ];
 
@@ -242,7 +254,7 @@ export default async function INRPage({
       </div>
 
       {/* Summary Cards — clickable filters */}
-      <div className="grid gap-4 md:grid-cols-4 lg:grid-cols-7">
+      <div className="grid gap-4 md:grid-cols-4 lg:grid-cols-8">
         {cards.map((card) => (
           <FilterLink
             key={card.key}
@@ -329,19 +341,45 @@ export default async function INRPage({
                           {/* Refund indicator for closed cases */}
                           {inr.refundType === "full" && (
                             <span className="rounded bg-green-900 px-2 py-0.5 text-xs text-green-300">
-                              Full Refund{claimAmt > 0 ? `: $${claimAmt.toFixed(2)}` : ""}
+                              Full Refund
                             </span>
                           )}
-                          {inr.refundType === "partial" && (
-                            <span className="rounded bg-orange-900 px-2 py-0.5 text-xs text-orange-300">
-                              Partial Refund{orderTotal !== null ? ` ($${orderTotal.toFixed(2)} remaining)` : ""}
-                            </span>
-                          )}
+                          {inr.refundType === "partial" && (() => {
+                            const claimAmt = inr.claim_amount ? Number(inr.claim_amount) : null;
+                            const orderTotal = getOrderTotal(inr.order?.totals);
+                            const refundedAmt = (claimAmt !== null && orderTotal !== null) ? claimAmt - orderTotal : null;
+                            return (
+                              <span className="rounded bg-orange-900 px-2 py-0.5 text-xs text-orange-300">
+                                Partial Refund{refundedAmt !== null ? `: $${refundedAmt.toFixed(2)}` : ""}
+                              </span>
+                            );
+                          })()}
                           {inr.refundType === "none" && (
                             <span className="rounded bg-red-900 px-2 py-0.5 text-xs text-red-300">
                               No Refund{inr.hasReturn ? " (Item Received — Return Filed)" : ""}
                             </span>
                           )}
+                          {/* Delivery status for closed no-refund INRs without a return */}
+                          {inr.refundType === "none" && !inr.hasReturn && isClosed(inr.ebay_status) && (() => {
+                            const shipment = inr.order?.shipments?.[0];
+                            const status = shipment?.derived_status;
+                            const deliveredAt = shipment?.delivered_at;
+                            if (status === "delivered" || deliveredAt) {
+                              return (
+                                <span className="rounded bg-blue-900 px-2 py-0.5 text-xs text-blue-300">
+                                  Delivered{deliveredAt ? ` ${new Date(deliveredAt).toLocaleDateString()}` : ""}
+                                </span>
+                              );
+                            }
+                            if (status === "not_received" || status === "not_delivered" || status === "shipped") {
+                              return (
+                                <span className="rounded bg-yellow-900 px-2 py-0.5 text-xs text-yellow-300" title="INR closed but item not yet confirmed delivered">
+                                  {status === "shipped" ? "In Transit" : "Not Confirmed Delivered"}
+                                </span>
+                              );
+                            }
+                            return null;
+                          })()}
                         </div>
 
                         {/* Item info with eBay link */}

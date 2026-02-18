@@ -25,6 +25,161 @@ import { updateInventoryStatesFromReturns } from "@/lib/inventory-transitions";
  * 2. Inquiries — INR inquiries filed by the buyer
  * 3. Cases — escalated INR cases and direct cases (skipped inquiry step)
  */
+export async function syncReturnsAndINR(): Promise<{ returns: number; inquiries: number; cases: number; errors: string[] }> {
+  const accounts = await prisma.ebay_accounts.findMany({ select: { id: true } });
+  if (accounts.length === 0) throw new Error("No eBay accounts connected");
+
+  const now = new Date();
+
+  // Match the order sync window: 90 days
+  // (eBay Post-Order API allows up to 18 months, but we sync 90 days to match order history)
+  const EARLIEST_DATE = new Date(now);
+  EARLIEST_DATE.setDate(EARLIEST_DATE.getDate() - 90);
+  const windows: Array<{ from: string; to: string }> = [{
+    from: EARLIEST_DATE.toISOString(),
+    to: now.toISOString(),
+  }];
+  console.log(`[Return/INR Sync] Syncing from ${EARLIEST_DATE.toISOString()} to ${now.toISOString()} (90-day window to match orders)`);
+
+  let totalReturns = 0;
+  let totalInquiries = 0;
+  let totalCases = 0;
+  const errors: string[] = [];
+
+  for (const account of accounts) {
+    // Get a fresh token for each account
+    const { token } = await getValidAccessToken(account.id);
+
+    // ============================================================
+    // STEP 1: SYNC RETURNS (role=BUYER — we are the buyer)
+    // ============================================================
+    for (const window of windows) {
+      try {
+        let offset = 0;
+        let hasMore = true;
+
+        while (hasMore) {
+          const result = await searchReturns(token, {
+            dateFrom: window.from,
+            dateTo: window.to,
+            role: "BUYER",
+            limit: 200,
+            offset,
+          });
+
+          console.log(`[Sync Returns] Window ${window.from.slice(0,10)} to ${window.to.slice(0,10)}: Got ${result.members.length} returns (offset=${offset}, total=${result.paginationOutput.totalEntries})`);
+
+          for (const ret of result.members) {
+            try {
+              await upsertReturn(ret, token);
+              totalReturns++;
+            } catch (err: any) {
+              console.error(`[Sync Returns] Failed to upsert return ${ret.returnId}:`, err.message);
+            }
+          }
+
+          const total = result.paginationOutput.totalEntries;
+          offset += result.members.length;
+          hasMore = offset < total && result.members.length > 0;
+        }
+      } catch (err: any) {
+        console.error(`[Sync Returns] Window ${window.from.slice(0,10)} to ${window.to.slice(0,10)} failed:`, err.message);
+        errors.push(`Returns (${window.from.slice(0,10)}): ${err.message}`);
+      }
+    }
+
+    // ============================================================
+    // STEP 2: SYNC INQUIRIES (INR)
+    // ============================================================
+    for (const window of windows) {
+      try {
+        let offset = 0;
+        let hasMore = true;
+
+        while (hasMore) {
+          const result = await searchInquiries(token, {
+            dateFrom: window.from,
+            dateTo: window.to,
+            limit: 200,
+            offset,
+          });
+
+          console.log(`[Sync Inquiries] Window ${window.from.slice(0,10)} to ${window.to.slice(0,10)}: Got ${result.members.length} inquiries (offset=${offset}, total=${result.paginationOutput.totalEntries})`);
+
+          for (const inq of result.members) {
+            try {
+              await upsertInquiry(inq, token);
+              totalInquiries++;
+            } catch (err: any) {
+              console.error(`[Sync Inquiries] Failed to upsert inquiry ${inq.inquiryId}:`, err.message);
+            }
+          }
+
+          const total = result.paginationOutput.totalEntries;
+          offset += result.members.length;
+          hasMore = offset < total && result.members.length > 0;
+        }
+      } catch (err: any) {
+        console.error(`[Sync Inquiries] Window ${window.from.slice(0,10)} to ${window.to.slice(0,10)} failed:`, err.message);
+        errors.push(`Inquiries (${window.from.slice(0,10)}): ${err.message}`);
+      }
+    }
+
+    // ============================================================
+    // STEP 3: SYNC CASES (escalated INR / direct cases)
+    // These are cases that either:
+    //   a) Were escalated from an inquiry (already have an inquiry record)
+    //   b) Were filed directly as a case (no inquiry record exists)
+    // We store direct cases as new inr_cases records.
+    // For escalated cases, we update the existing inquiry record.
+    // ============================================================
+    for (const window of windows) {
+      try {
+        let offset = 0;
+        let hasMore = true;
+
+        while (hasMore) {
+          const result = await searchCases(token, {
+            dateFrom: window.from,
+            dateTo: window.to,
+            limit: 200,
+            offset,
+          });
+
+          console.log(`[Sync Cases] Window ${window.from.slice(0,10)} to ${window.to.slice(0,10)}: Got ${result.members.length} cases (offset=${offset}, total=${result.paginationOutput.totalEntries})`);
+
+          for (const cs of result.members) {
+            try {
+              await upsertCase(cs);
+              totalCases++;
+            } catch (err: any) {
+              console.error(`[Sync Cases] Failed to upsert case ${cs.caseId}:`, err.message);
+            }
+          }
+
+          const total = result.paginationOutput.totalEntries;
+          offset += result.members.length;
+          hasMore = offset < total && result.members.length > 0;
+        }
+      } catch (err: any) {
+        console.error(`[Sync Cases] Window ${window.from.slice(0,10)} to ${window.to.slice(0,10)} failed:`, err.message);
+        errors.push(`Cases (${window.from.slice(0,10)}): ${err.message}`);
+      }
+    }
+  }
+
+  // After syncing all returns, update inventory states based on return statuses
+  try {
+    await updateInventoryStatesFromReturns();
+    console.log("[Return Sync] Inventory states updated based on return statuses");
+  } catch (err: any) {
+    console.error("[Return Sync] Failed to update inventory states:", err.message);
+    errors.push(`Inventory state update failed: ${err.message}`);
+  }
+
+  return { returns: totalReturns, inquiries: totalInquiries, cases: totalCases, errors };
+}
+
 export async function POST(req: Request) {
   const auth = await requireRole(["ADMIN"]);
   if (!auth.ok) {
@@ -32,163 +187,11 @@ export async function POST(req: Request) {
   }
 
   try {
-    const accounts = await prisma.ebay_accounts.findMany({ select: { id: true } });
-    if (accounts.length === 0) {
-      return NextResponse.json({ error: "No eBay accounts connected" }, { status: 400 });
-    }
-
-    const now = new Date();
-
-    // Match the order sync window: 90 days
-    // (eBay Post-Order API allows up to 18 months, but we sync 90 days to match order history)
-    const EARLIEST_DATE = new Date(now);
-    EARLIEST_DATE.setDate(EARLIEST_DATE.getDate() - 90);
-    const windows: Array<{ from: string; to: string }> = [{
-      from: EARLIEST_DATE.toISOString(),
-      to: now.toISOString(),
-    }];
-    console.log(`[Return/INR Sync] Syncing from ${EARLIEST_DATE.toISOString()} to ${now.toISOString()} (90-day window to match orders)`);
-
-    let totalReturns = 0;
-    let totalInquiries = 0;
-    let totalCases = 0;
-    const errors: string[] = [];
-
-    for (const account of accounts) {
-      // Get a fresh token for each account
-      const { token } = await getValidAccessToken(account.id);
-
-      // ============================================================
-      // STEP 1: SYNC RETURNS (role=BUYER — we are the buyer)
-      // ============================================================
-      for (const window of windows) {
-        try {
-          let offset = 0;
-          let hasMore = true;
-
-          while (hasMore) {
-            const result = await searchReturns(token, {
-              dateFrom: window.from,
-              dateTo: window.to,
-              role: "BUYER",
-              limit: 200,
-              offset,
-            });
-
-            console.log(`[Sync Returns] Window ${window.from.slice(0,10)} to ${window.to.slice(0,10)}: Got ${result.members.length} returns (offset=${offset}, total=${result.paginationOutput.totalEntries})`);
-
-            for (const ret of result.members) {
-              try {
-                await upsertReturn(ret, token);
-                totalReturns++;
-              } catch (err: any) {
-                console.error(`[Sync Returns] Failed to upsert return ${ret.returnId}:`, err.message);
-              }
-            }
-
-            const total = result.paginationOutput.totalEntries;
-            offset += result.members.length;
-            hasMore = offset < total && result.members.length > 0;
-          }
-        } catch (err: any) {
-          console.error(`[Sync Returns] Window ${window.from.slice(0,10)} to ${window.to.slice(0,10)} failed:`, err.message);
-          errors.push(`Returns (${window.from.slice(0,10)}): ${err.message}`);
-        }
-      }
-
-      // ============================================================
-      // STEP 2: SYNC INQUIRIES (INR)
-      // ============================================================
-      for (const window of windows) {
-        try {
-          let offset = 0;
-          let hasMore = true;
-
-          while (hasMore) {
-            const result = await searchInquiries(token, {
-              dateFrom: window.from,
-              dateTo: window.to,
-              limit: 200,
-              offset,
-            });
-
-            console.log(`[Sync Inquiries] Window ${window.from.slice(0,10)} to ${window.to.slice(0,10)}: Got ${result.members.length} inquiries (offset=${offset}, total=${result.paginationOutput.totalEntries})`);
-
-            for (const inq of result.members) {
-              try {
-                await upsertInquiry(inq, token);
-                totalInquiries++;
-              } catch (err: any) {
-                console.error(`[Sync Inquiries] Failed to upsert inquiry ${inq.inquiryId}:`, err.message);
-              }
-            }
-
-            const total = result.paginationOutput.totalEntries;
-            offset += result.members.length;
-            hasMore = offset < total && result.members.length > 0;
-          }
-        } catch (err: any) {
-          console.error(`[Sync Inquiries] Window ${window.from.slice(0,10)} to ${window.to.slice(0,10)} failed:`, err.message);
-          errors.push(`Inquiries (${window.from.slice(0,10)}): ${err.message}`);
-        }
-      }
-
-      // ============================================================
-      // STEP 3: SYNC CASES (escalated INR / direct cases)
-      // These are cases that either:
-      //   a) Were escalated from an inquiry (already have an inquiry record)
-      //   b) Were filed directly as a case (no inquiry record exists)
-      // We store direct cases as new inr_cases records.
-      // For escalated cases, we update the existing inquiry record.
-      // ============================================================
-      for (const window of windows) {
-        try {
-          let offset = 0;
-          let hasMore = true;
-
-          while (hasMore) {
-            const result = await searchCases(token, {
-              dateFrom: window.from,
-              dateTo: window.to,
-              limit: 200,
-              offset,
-            });
-
-            console.log(`[Sync Cases] Window ${window.from.slice(0,10)} to ${window.to.slice(0,10)}: Got ${result.members.length} cases (offset=${offset}, total=${result.paginationOutput.totalEntries})`);
-
-            for (const cs of result.members) {
-              try {
-                await upsertCase(cs);
-                totalCases++;
-              } catch (err: any) {
-                console.error(`[Sync Cases] Failed to upsert case ${cs.caseId}:`, err.message);
-              }
-            }
-
-            const total = result.paginationOutput.totalEntries;
-            offset += result.members.length;
-            hasMore = offset < total && result.members.length > 0;
-          }
-        } catch (err: any) {
-          console.error(`[Sync Cases] Window ${window.from.slice(0,10)} to ${window.to.slice(0,10)} failed:`, err.message);
-          errors.push(`Cases (${window.from.slice(0,10)}): ${err.message}`);
-        }
-      }
-    }
-
-    // After syncing all returns, update inventory states based on return statuses
-    try {
-      await updateInventoryStatesFromReturns();
-      console.log("[Return Sync] Inventory states updated based on return statuses");
-    } catch (err: any) {
-      console.error("[Return Sync] Failed to update inventory states:", err.message);
-      errors.push(`Inventory state update failed: ${err.message}`);
-    }
-
+    const result = await syncReturnsAndINR();
     return NextResponse.json({
       ok: true,
-      synced: { returns: totalReturns, inquiries: totalInquiries, cases: totalCases },
-      errors: errors.length > 0 ? errors : undefined,
+      synced: { returns: result.returns, inquiries: result.inquiries, cases: result.cases },
+      errors: result.errors.length > 0 ? result.errors : undefined,
     });
   } catch (error: any) {
     console.error("Return/INR sync failed:", error);
@@ -259,6 +262,7 @@ async function upsertReturn(ret: EbayReturnSummary, token: string) {
   const estimatedRefund = ret.buyerTotalRefund?.estimatedRefundAmount?.value ?? null;
   // refund_amount keeps the best available (actual if present, else estimated)
   const refundAmount = actualRefund ?? estimatedRefund ?? null;
+
   const refundCurrency =
     ret.buyerTotalRefund?.actualRefundAmount?.currency ??
     ret.buyerTotalRefund?.estimatedRefundAmount?.currency ??

@@ -79,19 +79,8 @@ function getReturnRefundType(ret: {
     return "full";
   }
 
-  // No actual_refund data — for escalated returns, use order_total as fallback
-  // Formula: implied_refund = estimated_refund - order_total
-  //   order_total = 0 → Full Refund (entire amount refunded)
-  //   order_total > 0 but < estimated_refund → Partial Refund
-  //   order_total >= estimated_refund → No Refund
+  // No actual_refund data — escalated returns without actual_refund data are indeterminate
   if (isEsc) {
-    const orderTotal = getOrderTotal(ret.orderTotals);
-    if (orderTotal !== null) {
-      if (orderTotal === 0) return "full";
-      if (estimated !== null && estimated > 0 && orderTotal < estimated) return "partial";
-      return "none";
-    }
-    // No order data available (older than 90-day sync window)
     return "escalated";
   }
 
@@ -306,12 +295,9 @@ export default async function ReturnsPage({
                         )}
                         {/* Refund type badge */}
                         {ret.refundType === "full" && (() => {
-                          const orderTotal = ret.order?.totals ? getOrderTotal(ret.order.totals) : null;
-                          const refundAmt = ret.actual_refund
-                            ? Number(ret.actual_refund)
-                            : (ret.estimated_refund && orderTotal !== null)
-                              ? Number(ret.estimated_refund) - orderTotal
-                              : null;
+                          // Only show dollar amount if actual_refund is present.
+                          // estimated_refund is eBay's projected max, not the amount paid out.
+                          const refundAmt = ret.actual_refund ? Number(ret.actual_refund) : null;
                           return (
                             <span className="rounded bg-green-900 px-2 py-0.5 text-xs text-green-300">
                               Full Refund{refundAmt !== null ? `: $${refundAmt.toFixed(2)}` : ""}
@@ -319,12 +305,11 @@ export default async function ReturnsPage({
                           );
                         })()}
                         {ret.refundType === "partial" && (() => {
-                          const orderTotal = ret.order?.totals ? getOrderTotal(ret.order.totals) : null;
                           const refundAmt = ret.actual_refund
                             ? Number(ret.actual_refund)
-                            : (ret.estimated_refund && orderTotal !== null)
-                              ? Number(ret.estimated_refund) - orderTotal
-                              : (ret.refund_amount ? Number(ret.refund_amount) : null);
+                            : ret.refund_amount
+                              ? Number(ret.refund_amount)
+                              : null;
                           const totalPaid = ret.estimated_refund ? Number(ret.estimated_refund) : null;
                           return (
                             <span className="rounded bg-orange-900 px-2 py-0.5 text-xs text-orange-300">

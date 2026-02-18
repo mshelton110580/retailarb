@@ -33,7 +33,19 @@ export async function DELETE(req: Request) {
   if (!id) {
     return NextResponse.json({ error: "Missing account id" }, { status: 400 });
   }
-  await prisma.ebay_accounts.delete({ where: { id } });
+
+  // orders.ebay_account_id is non-nullable, so we can't delete the account while orders reference it.
+  // If orders exist, clear the tokens to effectively disconnect (revoke access) without deleting the record.
+  const orderCount = await prisma.orders.count({ where: { ebay_account_id: id } });
+  await prisma.targets.updateMany({ where: { ebay_account_id: id }, data: { ebay_account_id: null } });
+  if (orderCount > 0) {
+    await prisma.ebay_accounts.update({
+      where: { id },
+      data: { token_encrypted: "", refresh_token_encrypted: "", token_expiry: new Date(0) }
+    });
+  } else {
+    await prisma.ebay_accounts.delete({ where: { id } });
+  }
   return NextResponse.json({ ok: true });
 }
 
