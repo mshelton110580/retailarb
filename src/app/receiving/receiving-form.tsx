@@ -56,6 +56,7 @@ export default function ReceivingForm() {
     suggestedCategoryName?: string;
   } | null>(null);
   const [editedCategoryName, setEditedCategoryName] = useState<string>("");
+  const [createMergeMapping, setCreateMergeMapping] = useState<boolean>(true);
 
   // Keep tracking input focused at all times for barcode scanner
   useEffect(() => {
@@ -182,10 +183,10 @@ export default function ReceivingForm() {
     }
   }
 
-  async function handleCategorySelection(unitId: string, categoryId: string | null, suggestedName?: string) {
+  async function handleCategorySelection(unitId: string, categoryId: string | null, suggestedName?: string, shouldCreateMerge?: boolean) {
     try {
-      // If user selected an existing category and we have a suggested name, create a merge mapping
-      if (categoryId && suggestedName) {
+      // Only create merge mapping if explicitly requested
+      if (categoryId && suggestedName && shouldCreateMerge) {
         const mergeRes = await fetch("/api/categories/merge", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -212,8 +213,10 @@ export default function ReceivingForm() {
 
       if (res.ok) {
         setPendingCategorySelection(null);
-        if (suggestedName && categoryId) {
+        if (suggestedName && categoryId && shouldCreateMerge) {
           setStatus(`✓ Category merged: "${suggestedName}" → existing category. Future scans will auto-merge.`);
+        } else if (suggestedName && categoryId && !shouldCreateMerge) {
+          setStatus(`✓ Category assigned (no alias created). "${suggestedName}" will prompt again on future scans.`);
         } else {
           setStatus("✓ Category assigned successfully");
         }
@@ -291,6 +294,7 @@ export default function ReceivingForm() {
         suggestedCategoryName: suggestedName
       });
       setEditedCategoryName(suggestedName);
+      setCreateMergeMapping(true); // Default to creating merge mapping
       loadCategories();
     }
   }, [result]);
@@ -469,10 +473,10 @@ export default function ReceivingForm() {
                     </button>
                   )}
 
-                  {/* Merge with existing category */}
+                  {/* Assign to existing category */}
                   <div>
                     <label className="block text-sm font-medium text-slate-400 mb-2">
-                      Or merge with existing category:
+                      Or assign to existing category:
                     </label>
                     <select
                       className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-300 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
@@ -481,24 +485,44 @@ export default function ReceivingForm() {
                           handleCategorySelection(
                             pendingCategorySelection.unitId,
                             e.target.value,
-                            editedCategoryName.trim() || pendingCategorySelection.suggestedCategoryName
+                            editedCategoryName.trim() || pendingCategorySelection.suggestedCategoryName,
+                            createMergeMapping
                           );
                         }
                       }}
                       defaultValue=""
                     >
-                      <option value="">-- Select Existing Category to Merge --</option>
+                      <option value="">-- Select Existing Category --</option>
                       {categories.map((cat) => (
                         <option key={cat.id} value={cat.id}>
                           {cat.category_name}
                         </option>
                       ))}
                     </select>
-                    {pendingCategorySelection.suggestedCategoryName && (
-                      <p className="mt-2 text-xs text-slate-500">
-                        Merging will automatically map "{editedCategoryName.trim() || pendingCategorySelection.suggestedCategoryName}" to the selected category for all future scans
-                      </p>
-                    )}
+
+                    {/* Checkbox to control merge mapping creation */}
+                    <div className="mt-3 flex items-start gap-2">
+                      <input
+                        type="checkbox"
+                        id="createMergeMapping"
+                        checked={createMergeMapping}
+                        onChange={(e) => setCreateMergeMapping(e.target.checked)}
+                        className="mt-0.5 rounded border-slate-700 bg-slate-950 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <label htmlFor="createMergeMapping" className="text-xs text-slate-400 cursor-pointer">
+                        <span className="font-medium text-slate-300">Create alias for future scans</span>
+                        <br />
+                        {createMergeMapping ? (
+                          <span className="text-green-400">
+                            ✓ "{editedCategoryName.trim() || pendingCategorySelection.suggestedCategoryName}" will automatically map to selected category in future scans
+                          </span>
+                        ) : (
+                          <span className="text-yellow-400">
+                            ⚠ One-time assignment only. You'll be prompted again if this name appears in future scans.
+                          </span>
+                        )}
+                      </label>
+                    </div>
                   </div>
 
                   <div className="flex gap-3 pt-2 border-t border-slate-800">
