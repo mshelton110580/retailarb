@@ -40,7 +40,7 @@ const cardConfig: Array<{
   { key: "total_orders", label: "Total Orders", color: "text-white", border: "border-slate-500", section: "primary" },
   { key: "cancelled", label: "Cancelled & Refunded", color: "text-slate-400", border: "border-slate-600", description: "Order cancelled on eBay, refunded (not actionable)", section: "primary" },
   { key: "delivered", label: "Delivered", color: "text-green-400", border: "border-green-600", description: "eBay confirms delivery", section: "primary" },
-  { key: "shipped", label: "Shipped", color: "text-blue-400", border: "border-blue-600", description: "Tracking uploaded, not yet delivered", section: "primary" },
+  { key: "shipped", label: "In Transit", color: "text-blue-400", border: "border-blue-600", description: "Has tracking, within expected delivery window, not refunded", section: "primary" },
   // Warehouse status
   { key: "checked_in", label: "Checked In", color: "text-emerald-400", border: "border-emerald-600", description: "Scanned at warehouse", section: "warehouse" },
   { key: "not_checked_in", label: "Not Checked In", color: "text-yellow-400", border: "border-yellow-600", description: "Not yet scanned at warehouse", section: "warehouse" },
@@ -168,7 +168,11 @@ export default async function InventoryPage({
           },
         ],
       },
-      select: { order_id: true },
+      select: {
+        order_id: true,
+        ebay_status: true,
+        ebay_state: true
+      },
     }),
     // Return counts
     prisma.returns.count({
@@ -298,8 +302,30 @@ export default async function InventoryPage({
   );
 
   // Create sets of order IDs with filed returns or INR cases
-  const orderIdsWithReturns = new Set(returns.map((r) => r.order_id).filter((id): id is string => id !== null));
-  const orderIdsWithINR = new Set(inrCases.map((i) => i.order_id).filter((id): id is string => id !== null));
+  // For returns: only include open returns (not closed/refunded)
+  const orderIdsWithReturns = new Set(
+    returns
+      .filter((r) => {
+        // Exclude closed returns
+        if (r.ebay_state === "CLOSED" || r.ebay_state === "RETURN_CLOSED" || r.ebay_state === "REFUND_ISSUED") {
+          return false;
+        }
+        if (r.ebay_status === "CLOSED" || r.ebay_status === "REFUND_ISSUED" || r.ebay_status === "LESS_THAN_A_FULL_REFUND_ISSUED") {
+          return false;
+        }
+        return true;
+      })
+      .map((r) => r.order_id)
+      .filter((id): id is string => id !== null)
+  );
+
+  // For INR: only include open cases (not closed)
+  const orderIdsWithINR = new Set(
+    inrCases
+      .filter((i) => i.ebay_status !== "CLOSED" && i.ebay_state !== "CLOSED")
+      .map((i) => i.order_id)
+      .filter((id): id is string => id !== null)
+  );
 
   // Create map from order_id to eBay return ID for linking
   const orderToReturnId = new Map<string, string>();
@@ -347,18 +373,43 @@ export default async function InventoryPage({
     // Total orders — every shipment
     buckets.total_orders.push(shipment);
 
-    // === PRIMARY STATUS (mutually exclusive) ===
-    // Only categorize as cancelled/refunded if no return or INR case has been filed
-    if ((isCancelled || isRefunded) && !orderIdsWithReturns.has(orderId) && !orderIdsWithINR.has(orderId)) {
-      buckets.cancelled.push(shipment);
-    } else if (isDelivered) {
+    // === PRIMARY STATUS (mutually exclusive and exhaustive) ===
+    // IMPORTANT: Every shipment must fall into exactly ONE of these categories
+    // Order matters: check most definitive states first
+    if (isDelivered) {
       buckets.delivered.push(shipment);
-    } else if (hasTracking) {
-      buckets.shipped.push(shipment);
+    } else if ((isCancelled || isRefunded) && !orderIdsWithReturns.has(orderId) && !orderIdsWithINR.has(orderId)) {
+      // Cancelled/refunded with no open return/INR case
+      buckets.cancelled.push(shipment);
+    } else if (hasTracking && !isCancelled && !isRefunded) {
+      // "In Transit" = has tracking, not delivered, not cancelled/refunded, within expected delivery window
+      // Calculate expected delivery date
+      let expectedBy: Date | null = null;
+      if (shipment.estimated_max) {
+        expectedBy = new Date(shipment.estimated_max);
+      } else if (shipment.order?.purchase_date) {
+        expectedBy = new Date(shipment.order.purchase_date);
+        expectedBy.setDate(expectedBy.getDate() + DEFAULT_TRANSIT_DAYS);
+      }
+
+      // Only count as "shipped/in transit" if within expected delivery window
+      if (!expectedBy || now <= expectedBy) {
+        buckets.shipped.push(shipment);
+      } else {
+        // Has tracking but past expected delivery → goes to "never shipped" catchall
+        // (will be caught by "Overdue" action item)
+        buckets.never_shipped.push(shipment);
+      }
+    } else {
+      // Everything else = never shipped (catchall ensures exhaustiveness)
+      // Includes: true never shipped, refunded with open INR/return, overdue shipments
+      buckets.never_shipped.push(shipment);
     }
 
-    // === WAREHOUSE STATUS (mutually exclusive, excludes cancelled) ===
-    if (!isCancelled) {
+    // === WAREHOUSE STATUS (mutually exclusive, excludes truly cancelled orders) ===
+    // Include orders with returns/INR even if "cancelled" (they need to be checked in/returned)
+    const isTrulyCancelled = (isCancelled || isRefunded) && !orderIdsWithReturns.has(orderId) && !orderIdsWithINR.has(orderId);
+    if (!isTrulyCancelled) {
       if (isCheckedIn) {
         buckets.checked_in.push(shipment);
       } else {
@@ -367,11 +418,6 @@ export default async function InventoryPage({
     }
 
     // === ACTION ITEMS ===
-
-    // Never shipped: no tracking, not delivered, not cancelled/refunded, no INR case filed
-    if (!hasTracking && !isDelivered && !isCancelled && !isRefunded && !orderIdsWithINR.has(orderId)) {
-      buckets.never_shipped.push(shipment);
-    }
 
     // Overdue: has tracking, no delivery, past expected date, not cancelled/refunded, no INR case filed
     if (!isCancelled && !isRefunded && !orderIdsWithINR.has(orderId)) {
@@ -568,7 +614,7 @@ export default async function InventoryPage({
       {/* Primary Delivery Status */}
       <div>
         <h2 className="mb-2 text-sm font-medium text-slate-400 uppercase tracking-wider">Delivery Status</h2>
-        <p className="mb-3 text-xs text-slate-600">Delivered + Shipped + Cancelled + Never Shipped = Total Orders</p>
+        <p className="mb-3 text-xs text-slate-600">Delivered + In Transit + Cancelled + Never Shipped = Total Orders</p>
         <div className="grid gap-4 md:grid-cols-4">
           {renderCards(primaryCards)}
         </div>
@@ -643,13 +689,43 @@ export default async function InventoryPage({
                       <span className={`rounded px-1.5 py-0.5 text-xs ${
                         shipment.order?.order_status === 'Cancelled' ? 'bg-slate-700 text-slate-300' :
                         shipment.delivered_at ? 'bg-green-900 text-green-300' :
-                        (shipment.tracking_numbers?.length ?? 0) > 0 ? 'bg-blue-900 text-blue-300' :
-                        'bg-rose-900 text-rose-300'
+                        (() => {
+                          // Check if overdue
+                          const hasTracking = (shipment.tracking_numbers?.length ?? 0) > 0;
+                          if (hasTracking && !shipment.delivered_at) {
+                            let expectedBy: Date | null = null;
+                            if (shipment.estimated_max) {
+                              expectedBy = new Date(shipment.estimated_max);
+                            } else if (shipment.order?.purchase_date) {
+                              expectedBy = new Date(shipment.order.purchase_date);
+                              expectedBy.setDate(expectedBy.getDate() + DEFAULT_TRANSIT_DAYS);
+                            }
+                            if (expectedBy && now > expectedBy) {
+                              return 'bg-amber-900 text-amber-300'; // Overdue
+                            }
+                          }
+                          return hasTracking ? 'bg-blue-900 text-blue-300' : 'bg-rose-900 text-rose-300';
+                        })()
                       }`}>
                         {shipment.order?.order_status === 'Cancelled' ? 'Cancelled' :
                          shipment.delivered_at ? 'Delivered' :
-                         (shipment.tracking_numbers?.length ?? 0) > 0 ? 'Shipped' :
-                         'Never Shipped'}
+                         (() => {
+                           const hasTracking = (shipment.tracking_numbers?.length ?? 0) > 0;
+                           if (hasTracking && !shipment.delivered_at) {
+                             let expectedBy: Date | null = null;
+                             if (shipment.estimated_max) {
+                               expectedBy = new Date(shipment.estimated_max);
+                             } else if (shipment.order?.purchase_date) {
+                               expectedBy = new Date(shipment.order.purchase_date);
+                               expectedBy.setDate(expectedBy.getDate() + DEFAULT_TRANSIT_DAYS);
+                             }
+                             if (expectedBy && now > expectedBy) {
+                               return 'Overdue';
+                             }
+                             return 'In Transit';
+                           }
+                           return 'Never Shipped';
+                         })()}
                       </span>
                       <span className={`rounded px-1.5 py-0.5 text-xs ${shipment.checked_in_at ? 'bg-emerald-900 text-emerald-300' : 'bg-yellow-900 text-yellow-300'}`}>
                         {shipment.checked_in_at ? `Checked in: ${shipment.checked_in_at.toISOString().slice(0, 10)}` : 'Not checked in'}

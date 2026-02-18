@@ -72,12 +72,14 @@ function extractValue(obj: any): string | undefined {
 function parseOrdersFromResponse(ordersRaw: any): GetOrdersResult["orders"] {
   return safeArray(ordersRaw).map((order: any) => {
     // Collect all tracking details from TRANSACTION level (where eBay puts them)
-    const allTrackingDetails: Array<{ carrier?: string; trackingNumber?: string }> = [];
+    const allTrackingDetails: Array<{ carrier?: string; trackingNumber?: string; deliveryDate?: string; deliveryTime?: string }> = [];
 
     const transactions = safeArray(order.TransactionArray?.Transaction).map((transaction: any) => {
       const txTracking = safeArray(transaction?.ShippingDetails?.ShipmentTrackingDetails).map((detail: any) => ({
         carrier: detail?.ShippingCarrierUsed ? String(detail.ShippingCarrierUsed) : undefined,
-        trackingNumber: detail?.ShipmentTrackingNumber ? String(detail.ShipmentTrackingNumber) : undefined
+        trackingNumber: detail?.ShipmentTrackingNumber ? String(detail.ShipmentTrackingNumber) : undefined,
+        deliveryDate: detail?.DeliveryDate ? String(detail.DeliveryDate) : undefined,
+        deliveryTime: detail?.DeliveryTime ? String(detail.DeliveryTime) : undefined
       }));
       allTrackingDetails.push(...txTracking);
 
@@ -93,7 +95,9 @@ function parseOrdersFromResponse(ordersRaw: any): GetOrdersResult["orders"] {
     // Also check order-level ShippingDetails for tracking (fallback)
     const orderLevelTracking = safeArray(order?.ShippingDetails?.ShipmentTrackingDetails).map((detail: any) => ({
       carrier: detail?.ShippingCarrierUsed ? String(detail.ShippingCarrierUsed) : undefined,
-      trackingNumber: detail?.ShipmentTrackingNumber ? String(detail.ShipmentTrackingNumber) : undefined
+      trackingNumber: detail?.ShipmentTrackingNumber ? String(detail.ShipmentTrackingNumber) : undefined,
+      deliveryDate: detail?.DeliveryDate ? String(detail.DeliveryDate) : undefined,
+      deliveryTime: detail?.DeliveryTime ? String(detail.DeliveryTime) : undefined
     }));
 
     // Merge and deduplicate tracking numbers
@@ -128,6 +132,20 @@ function parseOrdersFromResponse(ordersRaw: any): GetOrdersResult["orders"] {
     if (!actualDelivery) {
       const fallbackPkg = order?.ShippingDetails?.ShippingPackageInfo;
       if (fallbackPkg?.ActualDeliveryTime) actualDelivery = String(fallbackPkg.ActualDeliveryTime);
+    }
+
+    // Additional fallback: check tracking details for delivery date/time
+    if (!actualDelivery) {
+      for (const t of [...allTrackingDetails, ...orderLevelTracking]) {
+        if (t.deliveryTime) {
+          actualDelivery = t.deliveryTime;
+          break;
+        }
+        if (t.deliveryDate) {
+          actualDelivery = t.deliveryDate;
+          break;
+        }
+      }
     }
 
     return {

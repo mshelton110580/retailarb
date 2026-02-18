@@ -8,6 +8,7 @@ import {
   searchCases,
   getReturnTracking,
   getReturnDetail,
+  getInquiry,
   type EbayReturnSummary,
   type EbayInquirySummary,
   type EbayCaseSummary,
@@ -17,7 +18,7 @@ import { updateInventoryStatesFromReturns } from "@/lib/inventory-transitions";
 /**
  * POST /api/sync/returns
  * Syncs return requests, INR inquiries, and escalated/direct cases from eBay Post-Order API.
- * Searches the last 18 months in 90-day windows with full pagination.
+ * Searches the last 90 days to match the order sync window (full pagination).
  *
  * Three sync steps:
  * 1. Returns (role=BUYER) — buyer return requests
@@ -38,22 +39,15 @@ export async function POST(req: Request) {
 
     const now = new Date();
 
-    // eBay Post-Order API allows searching up to 18 months back.
-    // Build 90-day windows from 18 months ago to now.
+    // Match the order sync window: 90 days
+    // (eBay Post-Order API allows up to 18 months, but we sync 90 days to match order history)
     const EARLIEST_DATE = new Date(now);
-    EARLIEST_DATE.setMonth(EARLIEST_DATE.getMonth() - 18);
-    const windows: Array<{ from: string; to: string }> = [];
-    let windowStart = new Date(EARLIEST_DATE);
-    while (windowStart < now) {
-      const windowEnd = new Date(windowStart);
-      windowEnd.setDate(windowStart.getDate() + 90);
-      windows.push({
-        from: windowStart.toISOString(),
-        to: windowEnd > now ? now.toISOString() : windowEnd.toISOString(),
-      });
-      windowStart = new Date(windowEnd);
-    }
-    console.log(`[Return/INR Sync] ${windows.length} windows from ${EARLIEST_DATE.toISOString()} to ${now.toISOString()}`);
+    EARLIEST_DATE.setDate(EARLIEST_DATE.getDate() - 90);
+    const windows: Array<{ from: string; to: string }> = [{
+      from: EARLIEST_DATE.toISOString(),
+      to: now.toISOString(),
+    }];
+    console.log(`[Return/INR Sync] Syncing from ${EARLIEST_DATE.toISOString()} to ${now.toISOString()} (90-day window to match orders)`);
 
     let totalReturns = 0;
     let totalInquiries = 0;
@@ -122,7 +116,7 @@ export async function POST(req: Request) {
 
             for (const inq of result.members) {
               try {
-                await upsertInquiry(inq);
+                await upsertInquiry(inq, token);
                 totalInquiries++;
               } catch (err: any) {
                 console.error(`[Sync Inquiries] Failed to upsert inquiry ${inq.inquiryId}:`, err.message);
@@ -361,11 +355,62 @@ async function upsertReturn(ret: EbayReturnSummary, token: string) {
 // UPSERT INQUIRY (INR)
 // ============================================================
 
-async function upsertInquiry(inq: EbayInquirySummary) {
+async function upsertInquiry(inq: EbayInquirySummary, token: string) {
   const inquiryId = String(inq.inquiryId);
   const itemId = inq.itemId ? String(inq.itemId) : null;
 
   const resolvedOrderId = await resolveOrderId(itemId, null);
+
+  // Fetch full inquiry details to get tracking/delivery information
+  let fullInquiry: any = null;
+  try {
+    fullInquiry = await getInquiry(token, inquiryId);
+
+    // Extract delivery information from inquiry tracking details
+    if (resolvedOrderId && fullInquiry?.inquiryHistoryDetails?.shipmentTrackingDetails) {
+      const trackingDetails = fullInquiry.inquiryHistoryDetails.shipmentTrackingDetails;
+
+      // Check if the tracking shows delivered status
+      if (trackingDetails.currentStatus === 'DELIVERED') {
+        // Look for delivery date in the history
+        const history = fullInquiry.inquiryHistoryDetails?.history || [];
+        let deliveryDate: Date | null = null;
+
+        // Search history for delivery-related events or system closure
+        for (const event of history) {
+          const eventDate = event.date?.value;
+          const action = event.action?.toLowerCase() || '';
+
+          // Look for case expiration (usually happens after delivery confirmation)
+          if (action.includes('expired') && eventDate) {
+            deliveryDate = new Date(eventDate);
+            console.log(`[Sync Inquiries] Order ${resolvedOrderId}: Found delivery via case expiration on ${eventDate}`);
+            break;
+          }
+        }
+
+        // If we found a delivery date, update the shipment
+        if (deliveryDate && resolvedOrderId) {
+          try {
+            const updated = await prisma.shipments.updateMany({
+              where: { order_id: resolvedOrderId },
+              data: {
+                delivered_at: deliveryDate,
+                last_refreshed_at: new Date()
+              }
+            });
+            if (updated.count > 0) {
+              console.log(`[Sync Inquiries] Order ${resolvedOrderId}: Updated delivery date to ${deliveryDate.toISOString()}`);
+            }
+          } catch (err: any) {
+            console.error(`[Sync Inquiries] Failed to update shipment delivery for ${resolvedOrderId}:`, err.message);
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    console.error(`[Sync Inquiries] Could not fetch full inquiry ${inquiryId}:`, err.message);
+  }
 
   const creationDateStr = inq.creationDate?.value ?? null;
   const lastModifiedStr = inq.lastModifiedDate?.value ?? null;

@@ -35,6 +35,11 @@ type EnrichedScan = {
   }>;
 };
 
+type GroupedScan = {
+  tracking_last8: string;
+  scans: EnrichedScan[];
+};
+
 const conditionColors: Record<string, string> = {
   good: "bg-green-900 text-green-300",
   "new_sealed": "bg-blue-900 text-blue-300",
@@ -52,7 +57,7 @@ type Category = {
   gtin: string | null;
 };
 
-export default function ScanList({ scans }: { scans: EnrichedScan[] }) {
+export default function ScanList({ groupedScans }: { groupedScans: GroupedScan[] }) {
   const router = useRouter();
   const [deleting, setDeleting] = useState<string | null>(null);
   const [deletingUnit, setDeletingUnit] = useState<string | null>(null);
@@ -63,26 +68,32 @@ export default function ScanList({ scans }: { scans: EnrichedScan[] }) {
   const [creatingCategory, setCreatingCategory] = useState<string | null>(null);
   const [newCategoryName, setNewCategoryName] = useState<string>("");
 
-  async function handleDelete(scanId: string) {
-    if (!confirm("Delete this scan? This will reverse the check-in and remove received units for the matched order(s).")) {
+  async function handleDeleteLot(trackingLast8: string, scanIds: string[]) {
+    const scanCount = scanIds.length;
+    if (!confirm(`Delete entire lot (...${trackingLast8})? This will delete ${scanCount} scan${scanCount > 1 ? 's' : ''} and reverse all check-ins for this tracking number.`)) {
       return;
     }
 
-    setDeleting(scanId);
+    setDeleting(trackingLast8);
     setMessage(null);
 
     try {
-      const res = await fetch(`/api/receiving/scan/${scanId}`, {
-        method: "DELETE"
-      });
-      const data = await res.json();
+      // Delete all scans for this tracking number
+      for (const scanId of scanIds) {
+        const res = await fetch(`/api/receiving/scan/${scanId}`, {
+          method: "DELETE"
+        });
 
-      if (res.ok) {
-        setMessage(data.message);
-        router.refresh();
-      } else {
-        setMessage(`Error: ${data.error}`);
+        if (!res.ok) {
+          const data = await res.json();
+          setMessage(`Error deleting scan: ${data.error}`);
+          setDeleting(null);
+          return;
+        }
       }
+
+      setMessage(`✓ Successfully deleted ${scanCount} scan${scanCount > 1 ? 's' : ''} for lot ...${trackingLast8}`);
+      router.refresh();
     } catch {
       setMessage("Network error. Please try again.");
     } finally {
@@ -231,44 +242,55 @@ export default function ScanList({ scans }: { scans: EnrichedScan[] }) {
         <p className="mt-2 rounded bg-slate-800 px-3 py-2 text-sm text-yellow-400">{message}</p>
       )}
       <div className="mt-3 space-y-2 text-sm text-slate-300">
-        {scans.length === 0 ? (
+        {groupedScans.length === 0 ? (
           <p>No scans yet.</p>
         ) : (
-          scans.map((scan) => (
-            <div key={scan.id} className="rounded border border-slate-800 p-3">
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono font-medium">...{scan.tracking_last8}</span>
-                    <span
-                      className={`rounded px-1.5 py-0.5 text-xs ${
-                        scan.resolution_state === "MATCHED"
-                          ? "bg-green-900 text-green-300"
-                          : "bg-yellow-900 text-yellow-300"
-                      }`}
-                    >
-                      {scan.resolution_state}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500">
-                    {new Date(scan.scanned_at).toLocaleString()} · by {scan.scanned_by}
-                  </p>
-                  {scan.notes && (
-                    <p className="mt-1 text-xs text-slate-400">Notes: {scan.notes}</p>
-                  )}
-                </div>
-                <button
-                  onClick={() => handleDelete(scan.id)}
-                  disabled={deleting === scan.id}
-                  className="rounded border border-red-800 px-2 py-1 text-xs text-red-400 hover:bg-red-900 disabled:opacity-50"
-                >
-                  {deleting === scan.id ? "Deleting..." : "Delete"}
-                </button>
-              </div>
+          groupedScans.map((group) => {
+            // Use the most recent scan for display purposes
+            const latestScan = group.scans[0];
+            // Merge all matched orders from all scans in the group
+            const allMatchedOrders = group.scans.flatMap(s => s.matchedOrders);
 
-              {scan.matchedOrders.length > 0 && (
+            return (
+              <div key={group.tracking_last8} className="rounded border border-slate-800 p-3">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-medium">...{group.tracking_last8}</span>
+                      {group.scans.length > 1 && (
+                        <span className="rounded bg-fuchsia-900 px-1.5 py-0.5 text-xs text-fuchsia-300">
+                          {group.scans.length} units
+                        </span>
+                      )}
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-xs ${
+                          latestScan.resolution_state === "MATCHED"
+                            ? "bg-green-900 text-green-300"
+                            : "bg-yellow-900 text-yellow-300"
+                        }`}
+                      >
+                        {latestScan.resolution_state}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Last scan: {new Date(latestScan.scanned_at).toLocaleString()} · by {latestScan.scanned_by}
+                    </p>
+                    {latestScan.notes && (
+                      <p className="mt-1 text-xs text-slate-400">Notes: {latestScan.notes}</p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => handleDeleteLot(group.tracking_last8, group.scans.map(s => s.id))}
+                    disabled={deleting === group.tracking_last8}
+                    className="rounded border border-red-800 px-2 py-1 text-xs text-red-400 hover:bg-red-900 disabled:opacity-50"
+                  >
+                    {deleting === group.tracking_last8 ? "Deleting..." : "Delete Lot"}
+                  </button>
+                </div>
+
+                {allMatchedOrders.length > 0 && (
                 <div className="mt-2 space-y-2">
-                  {scan.matchedOrders.map((order, i) => (
+                  {allMatchedOrders.map((order, i) => (
                     <div key={i} className="rounded bg-slate-800 px-3 py-2">
                       {/* Order header */}
                       <div className="flex items-center gap-2">
@@ -465,8 +487,9 @@ export default function ScanList({ scans }: { scans: EnrichedScan[] }) {
                   ))}
                 </div>
               )}
-            </div>
-          ))
+              </div>
+            );
+          })
         )}
       </div>
     </section>

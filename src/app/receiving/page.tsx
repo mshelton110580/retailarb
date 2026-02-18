@@ -114,6 +114,20 @@ export default async function ReceivingPage({
     })
   );
 
+  // Group scans by tracking_last8 (for lots where multiple units share same tracking)
+  const groupedScans = enrichedScans.reduce((groups, scan) => {
+    const existing = groups.find(g => g.tracking_last8 === scan.tracking_last8);
+    if (existing) {
+      existing.scans.push(scan);
+    } else {
+      groups.push({
+        tracking_last8: scan.tracking_last8,
+        scans: [scan]
+      });
+    }
+    return groups;
+  }, [] as Array<{ tracking_last8: string; scans: typeof enrichedScans }>);
+
   return (
     <div className="space-y-6">
       <PageHeader title="Receiving" />
@@ -122,7 +136,7 @@ export default async function ReceivingPage({
         <span className="text-sm text-slate-400">{enrichedScans.length} scans</span>
       </div>
       <ReceivingForm />
-      <ScanList scans={enrichedScans} />
+      <ScanList groupedScans={groupedScans} />
     </div>
   );
 }
