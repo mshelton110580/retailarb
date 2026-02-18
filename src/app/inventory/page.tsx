@@ -44,7 +44,7 @@ const cardConfig: Array<{
   { key: "shipped", label: "In Transit", color: "text-blue-400", border: "border-blue-600", description: "Has tracking, within expected delivery window, not refunded", section: "primary" },
   // Warehouse status
   { key: "checked_in", label: "Checked In", color: "text-emerald-400", border: "border-emerald-600", description: "Scanned at warehouse", section: "warehouse" },
-  { key: "not_checked_in", label: "Not Checked In", color: "text-yellow-400", border: "border-yellow-600", description: "Not yet scanned at warehouse", section: "warehouse" },
+  { key: "not_checked_in", label: "Not Checked In", color: "text-yellow-400", border: "border-yellow-600", description: "Not yet scanned at warehouse (includes cancelled orders)", section: "warehouse" },
   // Action items
   { key: "delivered_not_checked_in", label: "Delivered — Not Checked In", color: "text-purple-400", border: "border-purple-600", description: "eBay says delivered but not scanned at warehouse — possible return to sender", section: "action" },
   { key: "never_shipped", label: "Never Shipped", color: "text-rose-400", border: "border-rose-600", description: "No tracking info uploaded (excludes cancelled)", section: "action" },
@@ -374,16 +374,14 @@ export default async function InventoryPage({
       buckets.never_shipped.push(shipment);
     }
 
-    // === WAREHOUSE STATUS (mutually exclusive, excludes truly cancelled orders) ===
-    // Include orders with returns/INR even if "cancelled" (they need to be checked in/returned)
-    // Also include delivered orders even if cancelled (physical item exists, needs tracking)
-    const isTrulyCancelled = (isCancelled || isRefunded) && !orderIdsWithReturns.has(orderId) && !orderIdsWithINR.has(orderId) && !isDelivered;
-    if (!isTrulyCancelled) {
-      if (isCheckedIn) {
-        buckets.checked_in.push(shipment);
-      } else {
-        buckets.not_checked_in.push(shipment);
-      }
+    // === WAREHOUSE STATUS ===
+    // All shipments appear here — cancelled orders that haven't been checked in
+    // still need to be accounted for (item may still arrive or need processing).
+    // Only exclude: truly cancelled orders that ARE already checked in (already handled).
+    if (isCheckedIn) {
+      buckets.checked_in.push(shipment);
+    } else {
+      buckets.not_checked_in.push(shipment);
     }
 
     // === ACTION ITEMS ===
@@ -402,8 +400,8 @@ export default async function InventoryPage({
       }
     }
 
-    // Delivered but not checked in (exclude truly cancelled orders to match warehouse status)
-    if (isDelivered && !isCheckedIn && !isTrulyCancelled) {
+    // Delivered but not checked in
+    if (isDelivered && !isCheckedIn) {
       buckets.delivered_not_checked_in.push(shipment);
     }
 
@@ -594,7 +592,7 @@ export default async function InventoryPage({
       {/* Warehouse Status */}
       <div>
         <h2 className="mb-2 text-sm font-medium text-slate-400 uppercase tracking-wider">Warehouse Status</h2>
-        <p className="mb-3 text-xs text-slate-600">Checked In + Not Checked In = Total Orders (excluding cancelled)</p>
+        <p className="mb-3 text-xs text-slate-600">Checked In + Not Checked In = Total Orders</p>
         <div className="grid gap-4 md:grid-cols-4">
           {renderCards(warehouseCards)}
         </div>
