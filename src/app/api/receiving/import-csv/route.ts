@@ -29,9 +29,9 @@ function parseTimestamp(raw: string): Date | null {
   return null;
 }
 
-function last8(value: string) {
+function lastN(value: string, n: number) {
   const digits = value.replace(/\D/g, "");
-  return digits.slice(-8);
+  return digits.slice(-n);
 }
 
 export interface ImportRow {
@@ -89,23 +89,33 @@ export async function POST(req: Request) {
       totalSkipped++;
       continue;
     }
-    const tracking_last8 = last8(trackingInput);
+    const trackingDigits = trackingInput.replace(/\D/g, "");
     const qty = Math.max(1, Math.floor(Number(row.quantity) || 1));
     const conditionStatus = row.condition_status?.trim() || "good";
     const scannedAt = parseTimestamp(row.timestamp) ?? new Date();
     const inventoryId = row.inventory_id?.trim() || null;
 
-    // Find matching shipment via tracking number (exact then last-8)
+    // Find matching shipment via tracking number:
+    // 1. Exact match
+    // 2. Last-12-digit suffix match (more specific than last-8 to avoid false positives)
+    // Skip suffix fallback if the input has fewer than 12 digits (too ambiguous)
     let matches = await prisma.tracking_numbers.findMany({
       where: { tracking_number: trackingInput },
       include: { shipment: { include: { order: { include: { order_items: true } } } } }
     });
 
-    if (matches.length === 0) {
+    if (matches.length === 0 && trackingDigits.length >= 12) {
+      const last12 = lastN(trackingInput, 12);
       matches = await prisma.tracking_numbers.findMany({
-        where: { tracking_number: { endsWith: tracking_last8 } },
+        where: { tracking_number: { endsWith: last12 } },
         include: { shipment: { include: { order: { include: { order_items: true } } } } }
       });
+      // If still multiple matches, the suffix is too ambiguous — skip to avoid wrong assignments
+      if (matches.length > 1) {
+        results.push({ row: rowNum, tracking: trackingInput, status: "skipped", message: `Ambiguous tracking suffix — ${matches.length} possible matches` });
+        totalSkipped++;
+        continue;
+      }
     }
 
     if (matches.length === 0) {
