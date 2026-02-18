@@ -40,13 +40,17 @@ export async function POST(req: Request) {
   try {
     const res = await fetch(exportUrl, { headers: { "User-Agent": "Mozilla/5.0" } });
     if (!res.ok) {
-      return NextResponse.json(
-        { error: `Google Sheets returned ${res.status} — make sure the sheet is set to "Anyone with the link can view"` },
-        { status: 400 }
-      );
+      const statusText = res.status === 401 || res.status === 403
+        ? `Sheet is not publicly accessible (${res.status}) — set sharing to "Anyone with the link can view"`
+        : `Google Sheets returned ${res.status}`;
+      return NextResponse.json({ error: statusText }, { status: 400 });
     }
     const csv = await res.text();
-    return NextResponse.json({ csv });
+    // Return as plain text to avoid JSON encoding overhead on large sheets
+    return new Response(csv, {
+      status: 200,
+      headers: { "Content-Type": "text/csv; charset=utf-8" }
+    });
   } catch (err: any) {
     return NextResponse.json({ error: `Failed to fetch sheet: ${err.message}` }, { status: 500 });
   }

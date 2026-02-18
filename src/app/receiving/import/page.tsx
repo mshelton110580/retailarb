@@ -185,12 +185,13 @@ export default function ImportCSVPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: sheetUrl }),
       });
-      const data = await res.json();
       if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: "Failed to fetch sheet" }));
         setParseError(data.error ?? "Failed to fetch sheet");
         return;
       }
-      const { rows, errors } = csvToRows(data.csv);
+      const csvText = await res.text();
+      const { rows, errors } = csvToRows(csvText);
       if (errors.length) {
         setParseError(errors.join("; "));
         setPreview([]);
