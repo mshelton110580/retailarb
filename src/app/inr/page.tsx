@@ -9,7 +9,7 @@ import FilterLink from "@/components/filter-link";
 import { Decimal } from "@prisma/client/runtime/library";
 import { JsonValue } from "@prisma/client/runtime/library";
 
-type FilterType = "all" | "open" | "open_not_escalated" | "closed_full_refund" | "closed_partial_refund" | "closed_no_refund_delivered" | "closed_no_refund_not_delivered" | "escalated" | "late";
+type FilterType = "all" | "open" | "open_not_escalated" | "closed_full_refund" | "closed_partial_refund" | "closed_no_refund_delivered" | "closed_no_refund_not_delivered" | "late";
 
 // All statuses that indicate the case is closed (regardless of how it was closed)
 const CLOSED_STATUSES = ["CLOSED", "CS_CLOSED", "OTHER"];
@@ -173,8 +173,6 @@ export default async function INRPage({
   const closedPartialRefund = enrichedCases.filter((c) => isClosed(c.ebay_status) && c.refundType === "partial");
   const closedNoRefundDelivered = enrichedCases.filter((c) => isClosed(c.ebay_status) && c.refundType === "none" && c.isDelivered);
   const closedNoRefundNotDelivered = enrichedCases.filter((c) => isClosed(c.ebay_status) && c.refundType === "none" && !c.isDelivered);
-  const escalatedCases = enrichedCases.filter((c) => c.escalated_to_case);
-
   // Counts
   const totalCount = enrichedCases.length;
   const openCount = openCases.length;
@@ -183,7 +181,6 @@ export default async function INRPage({
   const closedPartialRefundCount = closedPartialRefund.length;
   const closedNoRefundDeliveredCount = closedNoRefundDelivered.length;
   const closedNoRefundNotDeliveredCount = closedNoRefundNotDelivered.length;
-  const escalatedCount = escalatedCases.length;
   const lateCount = lateShipments.length;
 
   // Apply filter
@@ -200,9 +197,7 @@ export default async function INRPage({
               ? closedNoRefundDelivered
               : filter === "closed_no_refund_not_delivered"
                 ? closedNoRefundNotDelivered
-                : filter === "escalated"
-                  ? escalatedCases
-                  : filter === "late"
+                : filter === "late"
                     ? []
                     : enrichedCases;
 
@@ -216,7 +211,6 @@ export default async function INRPage({
     closed_partial_refund: "Closed — Partial Refund",
     closed_no_refund_delivered: "Closed — No Refund (Delivered)",
     closed_no_refund_not_delivered: "Closed — No Refund (Not Delivered)",
-    escalated: "Escalated INR Cases",
     late: "Late Shipments (No INR)",
   };
 
@@ -234,7 +228,6 @@ export default async function INRPage({
   const cards: { key: FilterType; label: string; count: number; color: string; activeRing: string }[] = [
     { key: "all", label: "Total INR Cases", count: totalCount, color: "text-slate-400", activeRing: "ring-slate-500" },
     { key: "open_not_escalated", label: "Open — Action Required", count: openNotEscalatedCount, color: "text-yellow-400", activeRing: "ring-yellow-500" },
-    { key: "escalated", label: "Escalated", count: escalatedCount, color: "text-purple-400", activeRing: "ring-purple-500" },
     { key: "closed_full_refund", label: "Closed (Full Refund)", count: closedFullRefundCount, color: "text-green-400", activeRing: "ring-green-500" },
     { key: "closed_partial_refund", label: "Closed (Partial Refund)", count: closedPartialRefundCount, color: "text-orange-400", activeRing: "ring-orange-500" },
     { key: "closed_no_refund_delivered", label: "Closed — No Refund (Delivered)", count: closedNoRefundDeliveredCount, color: "text-blue-400", activeRing: "ring-blue-500" },
@@ -254,7 +247,7 @@ export default async function INRPage({
       </div>
 
       {/* Summary Cards — clickable filters */}
-      <div className="grid gap-4 md:grid-cols-4 lg:grid-cols-8">
+      <div className="grid gap-4 md:grid-cols-4 lg:grid-cols-7">
         {cards.map((card) => (
           <FilterLink
             key={card.key}
