@@ -1,4 +1,5 @@
 import PageHeader from "@/components/page-header";
+import Link from "next/link";
 import DateRangeFilter from "@/components/date-range-filter";
 import { getDateRangeFromParams } from "@/lib/date-range";
 import { prisma } from "@/lib/db";
@@ -130,7 +131,11 @@ export default async function ReceivingPage({
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Receiving" />
+      <PageHeader title="Receiving">
+        <Link href="/receiving/import" className="rounded border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800">
+          Import CSV
+        </Link>
+      </PageHeader>
       <div className="flex items-center justify-between">
         <DateRangeFilter />
         <span className="text-sm text-slate-400">{enrichedScans.length} scans</span>
