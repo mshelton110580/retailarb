@@ -1,7 +1,7 @@
 import PageHeader from "@/components/page-header";
 import DateRangeFilter from "@/components/date-range-filter";
 import { getDateRangeFromParams } from "@/lib/date-range";
-import SyncReturnsButton from "@/components/sync-returns-button";
+import SyncAllButton from "@/components/sync-all-button";
 import { prisma } from "@/lib/db";
 import Link from "next/link";
 import ReturnActions from "./return-actions";
@@ -208,7 +208,7 @@ export default async function ReturnsPage({
   return (
     <div className="space-y-6">
       <PageHeader title="Returns">
-        <SyncReturnsButton />
+        <SyncAllButton />
       </PageHeader>
 
       <div className="flex items-center justify-between">

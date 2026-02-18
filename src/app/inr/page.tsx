@@ -1,7 +1,7 @@
 import PageHeader from "@/components/page-header";
 import DateRangeFilter from "@/components/date-range-filter";
 import { getDateRangeFromParams } from "@/lib/date-range";
-import SyncReturnsButton from "@/components/sync-returns-button";
+import SyncAllButton from "@/components/sync-all-button";
 import { prisma } from "@/lib/db";
 import Link from "next/link";
 import INRAction from "./inr-action";
@@ -233,7 +233,7 @@ export default async function INRPage({
   return (
     <div className="space-y-6">
       <PageHeader title="Item Not Received (INR)">
-        <SyncReturnsButton />
+        <SyncAllButton />
       </PageHeader>
 
       <div className="flex items-center justify-between">

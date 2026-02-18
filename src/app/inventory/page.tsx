@@ -4,6 +4,7 @@ import { getDateRangeFromParams } from "@/lib/date-range";
 import FilterLink from "@/components/filter-link";
 import { prisma } from "@/lib/db";
 import Link from "next/link";
+import SyncAllButton from "@/components/sync-all-button";
 
 type BucketKey =
   | "total_orders"
@@ -96,32 +97,17 @@ export default async function InventoryPage({
     select: { order_id: true, item_id: true, condition_status: true }
   });
 
+  // Get all order IDs from shipments for return/INR lookups
+  const shipmentOrderIds = shipments.map(s => s.order_id).filter((id): id is string => id !== null);
+
   // Fetch returns and INR cases (filtered by order purchase_date OR creation_date to match date range)
   const [returns, inrCases, returnCount, openReturnCount, inrCount, openInrCount] = await Promise.all([
-    // Fetch all returns with tracking data
+    // Fetch ALL returns for these orders (not date-filtered) to correctly determine "truly cancelled"
     prisma.returns.findMany({
       where: {
-        OR: [
-          {
-            order: {
-              purchase_date: {
-                gte: dateRange.from,
-                lte: dateRange.to,
-              },
-            },
-          },
-          {
-            AND: [
-              { order_id: null },
-              {
-                creation_date: {
-                  gte: dateRange.from,
-                  lte: dateRange.to,
-                },
-              },
-            ],
-          },
-        ],
+        order_id: {
+          in: shipmentOrderIds
+        }
       },
       select: {
         id: true,
@@ -143,30 +129,12 @@ export default async function InventoryPage({
         respond_by_date: true,
       },
     }),
-    // Fetch all INR cases to get order IDs with filed INR cases
+    // Fetch ALL INR cases for these orders (not date-filtered) to correctly determine "truly cancelled"
     prisma.inr_cases.findMany({
       where: {
-        OR: [
-          {
-            order: {
-              purchase_date: {
-                gte: dateRange.from,
-                lte: dateRange.to,
-              },
-            },
-          },
-          {
-            AND: [
-              { order_id: null },
-              {
-                creation_date: {
-                  gte: dateRange.from,
-                  lte: dateRange.to,
-                },
-              },
-            ],
-          },
-        ],
+        order_id: {
+          in: shipmentOrderIds
+        }
       },
       select: {
         order_id: true,
@@ -605,7 +573,9 @@ export default async function InventoryPage({
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Inventory Dashboard" />
+      <PageHeader title="Inventory Dashboard">
+        <SyncAllButton />
+      </PageHeader>
 
       <div className="flex items-center justify-between">
         <DateRangeFilter />

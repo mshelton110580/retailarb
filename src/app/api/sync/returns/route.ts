@@ -248,6 +248,12 @@ async function upsertReturn(ret: EbayReturnSummary, token: string) {
 
   const resolvedOrderId = await resolveOrderId(itemId, rawOrderId);
 
+  // Skip returns that can't be linked to an order in our database
+  if (!resolvedOrderId) {
+    console.log(`[Sync Returns] Skipping return ${returnId} — no matching order found (item: ${itemId}, order: ${rawOrderId})`);
+    return;
+  }
+
   // Extract refund amounts — store actual and estimated separately
   const actualRefund = ret.buyerTotalRefund?.actualRefundAmount?.value ?? null;
   const estimatedRefund = ret.buyerTotalRefund?.estimatedRefundAmount?.value ?? null;
@@ -360,6 +366,12 @@ async function upsertInquiry(inq: EbayInquirySummary, token: string) {
   const itemId = inq.itemId ? String(inq.itemId) : null;
 
   const resolvedOrderId = await resolveOrderId(itemId, null);
+
+  // Skip inquiries that can't be linked to an order in our database
+  if (!resolvedOrderId) {
+    console.log(`[Sync Inquiries] Skipping inquiry ${inquiryId} — no matching order found (item: ${itemId})`);
+    return;
+  }
 
   // Fetch full inquiry details to get tracking/delivery information
   let fullInquiry: any = null;
@@ -477,6 +489,12 @@ async function upsertCase(cs: EbayCaseSummary) {
   const itemId = cs.itemId ? String(cs.itemId) : null;
 
   const resolvedOrderId = await resolveOrderId(itemId, null);
+
+  // Skip cases that can't be linked to an order in our database
+  if (!resolvedOrderId) {
+    console.log(`[Sync Cases] Skipping case ${caseId} — no matching order found (item: ${itemId})`);
+    return;
+  }
 
   const creationDateStr = cs.creationDate?.value ?? null;
   const lastModifiedStr = cs.lastModifiedDate?.value ?? null;

@@ -3,7 +3,7 @@ import DateRangeFilter from "@/components/date-range-filter";
 import { getDateRangeFromParams } from "@/lib/date-range";
 import { prisma } from "@/lib/db";
 import Link from "next/link";
-import RefreshButton from "./refresh-button";
+import SyncAllButton from "@/components/sync-all-button";
 
 const statusColors: Record<string, string> = {
   delivered: "bg-green-600",
@@ -54,7 +54,7 @@ export default async function OrdersPage({
   return (
     <div className="space-y-6">
       <PageHeader title="Orders">
-        <RefreshButton />
+        <SyncAllButton />
       </PageHeader>
       <div className="flex items-center justify-between">
         <DateRangeFilter />
