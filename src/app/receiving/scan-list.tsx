@@ -60,6 +60,8 @@ export default function ScanList({ scans }: { scans: EnrichedScan[] }) {
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(false);
+  const [creatingCategory, setCreatingCategory] = useState<string | null>(null);
+  const [newCategoryName, setNewCategoryName] = useState<string>("");
 
   async function handleDelete(scanId: string) {
     if (!confirm("Delete this scan? This will reverse the check-in and remove received units for the matched order(s).")) {
@@ -133,6 +135,13 @@ export default function ScanList({ scans }: { scans: EnrichedScan[] }) {
   }
 
   async function handleCategoryChange(unitId: string, categoryId: string | null) {
+    // Check if user selected "Create New Category" option
+    if (categoryId === "__CREATE_NEW__") {
+      setCreatingCategory(unitId);
+      setNewCategoryName("");
+      return;
+    }
+
     setMessage(null);
 
     try {
@@ -155,8 +164,63 @@ export default function ScanList({ scans }: { scans: EnrichedScan[] }) {
     }
   }
 
+  async function handleCreateNewCategory(unitId: string) {
+    if (!newCategoryName.trim()) {
+      setMessage("Category name cannot be empty");
+      return;
+    }
+
+    setMessage(null);
+
+    try {
+      // Create the category
+      const createRes = await fetch("/api/categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newCategoryName.trim() })
+      });
+
+      const createData = await createRes.json();
+
+      if (!createRes.ok) {
+        setMessage(`Error creating category: ${createData.error}`);
+        return;
+      }
+
+      const newCategoryId = createData.category?.id;
+
+      if (!newCategoryId) {
+        setMessage("Error: Failed to get new category ID");
+        return;
+      }
+
+      // Assign the new category to the unit
+      const assignRes = await fetch(`/api/receiving/unit/${unitId}/category`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ categoryId: newCategoryId })
+      });
+
+      if (assignRes.ok) {
+        setMessage(`✓ New category "${newCategoryName.trim()}" created and assigned`);
+        setCreatingCategory(null);
+        setEditingCategory(null);
+        setNewCategoryName("");
+        // Refresh categories list
+        setCategories([]);
+        router.refresh();
+      } else {
+        const assignData = await assignRes.json();
+        setMessage(`Error assigning category: ${assignData.error}`);
+      }
+    } catch {
+      setMessage("Network error. Please try again.");
+    }
+  }
+
   function handleEditCategory(unitId: string) {
     setEditingCategory(unitId);
+    setCreatingCategory(null);
     loadCategories();
   }
 
@@ -322,7 +386,7 @@ export default function ScanList({ scans }: { scans: EnrichedScan[] }) {
                               </div>
 
                               {/* Category editor */}
-                              {editingCategory === unit.id && (
+                              {editingCategory === unit.id && !creatingCategory && (
                                 <div className="flex items-center gap-2 border-l-2 border-indigo-700 pl-2">
                                   <span className="text-[10px] text-slate-400">Category:</span>
                                   {loadingCategories ? (
@@ -335,6 +399,9 @@ export default function ScanList({ scans }: { scans: EnrichedScan[] }) {
                                         onChange={(e) => handleCategoryChange(unit.id, e.target.value || null)}
                                       >
                                         <option value="">-- No Category --</option>
+                                        <option value="__CREATE_NEW__" className="bg-green-900 text-green-300">
+                                          + Create New Category
+                                        </option>
                                         {categories.map((cat) => (
                                           <option key={cat.id} value={cat.id}>
                                             {cat.category_name}
@@ -349,6 +416,45 @@ export default function ScanList({ scans }: { scans: EnrichedScan[] }) {
                                       </button>
                                     </>
                                   )}
+                                </div>
+                              )}
+
+                              {/* Create new category input */}
+                              {creatingCategory === unit.id && (
+                                <div className="flex items-center gap-2 border-l-2 border-green-700 pl-2">
+                                  <span className="text-[10px] text-green-400">New Category:</span>
+                                  <input
+                                    type="text"
+                                    value={newCategoryName}
+                                    onChange={(e) => setNewCategoryName(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        handleCreateNewCategory(unit.id);
+                                      } else if (e.key === "Escape") {
+                                        setCreatingCategory(null);
+                                        setNewCategoryName("");
+                                      }
+                                    }}
+                                    placeholder="Enter category name"
+                                    className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-[11px] text-slate-300 w-48"
+                                    autoFocus
+                                  />
+                                  <button
+                                    onClick={() => handleCreateNewCategory(unit.id)}
+                                    disabled={!newCategoryName.trim()}
+                                    className="rounded bg-green-600 hover:bg-green-700 px-2 py-1 text-[10px] text-white disabled:opacity-50"
+                                  >
+                                    Create
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      setCreatingCategory(null);
+                                      setNewCategoryName("");
+                                    }}
+                                    className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-slate-700"
+                                  >
+                                    Cancel
+                                  </button>
                                 </div>
                               )}
                             </div>
