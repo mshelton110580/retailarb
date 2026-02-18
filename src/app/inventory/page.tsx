@@ -408,7 +408,8 @@ export default async function InventoryPage({
 
     // === WAREHOUSE STATUS (mutually exclusive, excludes truly cancelled orders) ===
     // Include orders with returns/INR even if "cancelled" (they need to be checked in/returned)
-    const isTrulyCancelled = (isCancelled || isRefunded) && !orderIdsWithReturns.has(orderId) && !orderIdsWithINR.has(orderId);
+    // Also include delivered orders even if cancelled (physical item exists, needs tracking)
+    const isTrulyCancelled = (isCancelled || isRefunded) && !orderIdsWithReturns.has(orderId) && !orderIdsWithINR.has(orderId) && !isDelivered;
     if (!isTrulyCancelled) {
       if (isCheckedIn) {
         buckets.checked_in.push(shipment);
@@ -433,8 +434,8 @@ export default async function InventoryPage({
       }
     }
 
-    // Delivered but not checked in
-    if (isDelivered && !isCheckedIn && !isCancelled) {
+    // Delivered but not checked in (exclude truly cancelled orders to match warehouse status)
+    if (isDelivered && !isCheckedIn && !isTrulyCancelled) {
       buckets.delivered_not_checked_in.push(shipment);
     }
 
