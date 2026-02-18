@@ -75,11 +75,13 @@ function parseCSV(text: string): string[][] {
 }
 
 function csvToRows(text: string): { rows: ImportRow[]; errors: string[] } {
-  const parsed = parseCSV(text);
+  // Strip UTF-8 BOM if present (Google Sheets CSV export adds this)
+  const cleaned = text.replace(/^\uFEFF/, "");
+  const parsed = parseCSV(cleaned);
   if (parsed.length < 2) return { rows: [], errors: ["CSV has no data rows"] };
 
-  // Map header columns
-  const headers = parsed[0].map((h) => h.trim().toLowerCase());
+  // Map header columns — strip BOM and non-printable chars from each header
+  const headers = parsed[0].map((h) => h.replace(/^\uFEFF/, "").trim().toLowerCase());
   const colIndex: Record<string, number> = {};
   headers.forEach((h, i) => {
     const mapped = COL_ALIASES[h];
@@ -87,7 +89,9 @@ function csvToRows(text: string): { rows: ImportRow[]; errors: string[] } {
   });
 
   const errors: string[] = [];
-  if (!("tracking" in colIndex)) errors.push("Missing required column: tracking scan number");
+  if (!("tracking" in colIndex)) {
+    errors.push(`Missing required column: tracking scan number (found: ${headers.filter(Boolean).join(", ")})`);
+  }
   if (errors.length) return { rows: [], errors };
 
   const rows: ImportRow[] = [];

@@ -4,13 +4,28 @@ import { prisma } from "@/lib/db";
 import { TargetType, TargetStatus } from "@prisma/client";
 import { findOrCreateCategory, computeInventoryState, generateCategoryName } from "@/lib/item-categorization";
 
-// Parse a Google Sheets timestamp like "2023/07/01 12:05.45" or "7/1/2023 12:05:45"
+// Parse a Google Sheets timestamp in various formats:
+//   "2023/07/01 12:05.45"  "7/1/2023 12:05:45"  "2/18/2026 14:05:45"  "2026-02-18T14:05:45"
 function parseTimestamp(raw: string): Date | null {
   if (!raw?.trim()) return null;
-  // Normalise separators: replace "/" with "-" for date part, "." with ":" for time
-  const normalised = raw.trim().replace(/\./g, ":");
-  const d = new Date(normalised);
-  if (!isNaN(d.getTime())) return d;
+  const s = raw.replace(/^\uFEFF/, "").trim();
+
+  // Try native parse first (handles ISO and many locale formats)
+  const d1 = new Date(s);
+  if (!isNaN(d1.getTime())) return d1;
+
+  // Replace dots with colons in time part (Google Sheets quirk: "12:05.45" → "12:05:45")
+  const dotFixed = s.replace(/(\d{1,2}:\d{2})\.(\d{2})/, "$1:$2");
+  const d2 = new Date(dotFixed);
+  if (!isNaN(d2.getTime())) return d2;
+
+  // Handle M/D/YYYY H:MM:SS or MM/DD/YYYY H:MM:SS
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}:\d{2}(?::\d{2})?)$/);
+  if (m) {
+    const d3 = new Date(`${m[3]}-${m[1].padStart(2,"0")}-${m[2].padStart(2,"0")}T${m[4]}`);
+    if (!isNaN(d3.getTime())) return d3;
+  }
+
   return null;
 }
 
