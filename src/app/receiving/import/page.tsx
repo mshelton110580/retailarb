@@ -116,6 +116,8 @@ export default function ImportCSVPage() {
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   const [results, setResults] = useState<ImportResult[]>([]);
   const [fileName, setFileName] = useState<string>("");
+  const [sheetUrl, setSheetUrl] = useState<string>("");
+  const [fetchingSheet, setFetchingSheet] = useState(false);
 
   function handleFile(file: File) {
     setFileName(file.name);
@@ -169,6 +171,40 @@ export default function ImportCSVPage() {
     if (file) handleFile(file);
   }
 
+  async function handleFetchSheet() {
+    if (!sheetUrl.trim()) return;
+    setFetchingSheet(true);
+    setParseError("");
+    setSummary(null);
+    setResults([]);
+    setFileName("");
+
+    try {
+      const res = await fetch("/api/receiving/fetch-sheet", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: sheetUrl }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setParseError(data.error ?? "Failed to fetch sheet");
+        return;
+      }
+      const { rows, errors } = csvToRows(data.csv);
+      if (errors.length) {
+        setParseError(errors.join("; "));
+        setPreview([]);
+      } else {
+        setFileName("Google Sheet (live)");
+        setPreview(rows);
+      }
+    } catch (err: any) {
+      setParseError(err.message ?? "Failed to fetch sheet");
+    } finally {
+      setFetchingSheet(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader title="Import Scan Data (CSV)">
@@ -193,6 +229,34 @@ export default function ImportCSVPage() {
         </p>
       </section>
 
+      {/* Google Sheets URL */}
+      <section className="rounded-lg border border-slate-800 bg-slate-900 p-4 space-y-3">
+        <p className="text-sm font-medium text-slate-300">Import from Google Sheets URL</p>
+        <div className="flex gap-2">
+          <input
+            type="url"
+            placeholder="https://docs.google.com/spreadsheets/d/..."
+            value={sheetUrl}
+            onChange={(e) => setSheetUrl(e.target.value)}
+            className="flex-1 rounded border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+          />
+          <button
+            onClick={handleFetchSheet}
+            disabled={fetchingSheet || !sheetUrl.trim()}
+            className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50 whitespace-nowrap"
+          >
+            {fetchingSheet ? "Fetching…" : "Load Sheet"}
+          </button>
+        </div>
+        <p className="text-xs text-slate-500">Sheet must be set to <strong className="text-slate-400">Anyone with the link can view</strong>. Include the tab's <code className="bg-slate-800 px-1 rounded">gid=</code> parameter in the URL.</p>
+      </section>
+
+      <div className="flex items-center gap-3 text-xs text-slate-500">
+        <div className="flex-1 border-t border-slate-800" />
+        <span>or upload a file</span>
+        <div className="flex-1 border-t border-slate-800" />
+      </div>
+
       {/* Upload area */}
       <section
         className="rounded-lg border-2 border-dashed border-slate-700 bg-slate-900 p-8 text-center cursor-pointer hover:border-slate-500 transition-colors"
@@ -207,7 +271,7 @@ export default function ImportCSVPage() {
           className="hidden"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
         />
-        {fileName ? (
+        {fileName && fileName !== "Google Sheet (live)" ? (
           <p className="text-slate-300 font-medium">{fileName}</p>
         ) : (
           <p className="text-slate-400">Drop CSV file here or click to browse</p>
@@ -304,7 +368,7 @@ export default function ImportCSVPage() {
           )}
 
           <button
-            onClick={() => { setPreview([]); setSummary(null); setResults([]); setFileName(""); if (fileRef.current) fileRef.current.value = ""; }}
+            onClick={() => { setPreview([]); setSummary(null); setResults([]); setFileName(""); setSheetUrl(""); if (fileRef.current) fileRef.current.value = ""; }}
             className="rounded border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800"
           >
             Import another file
