@@ -87,6 +87,13 @@ function csvToRows(text: string): { rows: ImportRow[]; errors: string[] } {
     const mapped = COL_ALIASES[h];
     if (mapped && !(mapped in colIndex)) colIndex[mapped] = i;
   });
+  // If the first column header is blank but has date-like data, treat it as timestamp
+  if (!("timestamp" in colIndex) && headers[0] === "" && parsed.length > 1) {
+    const sample = parsed[1][0]?.trim() ?? "";
+    if (sample && /\d{4}|\d{1,2}\/\d{1,2}\/\d{4}/.test(sample)) {
+      colIndex["timestamp"] = 0;
+    }
+  }
 
   const errors: string[] = [];
   if (!("tracking" in colIndex)) {
