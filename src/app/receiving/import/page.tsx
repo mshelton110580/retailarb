@@ -104,7 +104,7 @@ function csvToRows(text: string): { rows: ImportRow[]; errors: string[] } {
   const rows: ImportRow[] = [];
   for (let i = 1; i < parsed.length; i++) {
     const cols = parsed[i];
-    const tracking = cols[colIndex["tracking"]]?.trim() ?? "";
+    const tracking = (cols[colIndex["tracking"]] ?? "").replace(/\0/g, "").replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").trim();
     if (!tracking) continue;
 
     rows.push({

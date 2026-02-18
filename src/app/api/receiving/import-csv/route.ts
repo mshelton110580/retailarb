@@ -82,7 +82,13 @@ export async function POST(req: Request) {
       continue;
     }
 
-    const trackingInput = row.tracking.trim();
+    // Strip null bytes and control characters that would cause PostgreSQL UTF-8 errors
+    const trackingInput = row.tracking.replace(/\0/g, "").replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").trim();
+    if (!trackingInput) {
+      results.push({ row: rowNum, tracking: row.tracking, status: "skipped", message: "Tracking number contains only invalid characters (possible misscan)" });
+      totalSkipped++;
+      continue;
+    }
     const tracking_last8 = last8(trackingInput);
     const qty = Math.max(1, Math.floor(Number(row.quantity) || 1));
     const conditionStatus = row.condition_status?.trim() || "good";
