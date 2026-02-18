@@ -150,29 +150,62 @@ export default function ImportCSVPage() {
     reader.readAsText(file);
   }
 
+  const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null);
+
   async function handleImport() {
     if (preview.length === 0) return;
     setImporting(true);
     setSummary(null);
     setResults([]);
+    setParseError("");
+
+    const BATCH_SIZE = 25;
+    const allResults: ImportResult[] = [];
+    let totalImported = 0, totalSkipped = 0, totalErrors = 0;
 
     try {
-      const res = await fetch("/api/receiving/import-csv", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows: preview }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setParseError(data.error ?? "Import failed");
-      } else {
-        setSummary(data.summary);
-        setResults(data.results);
+      for (let offset = 0; offset < preview.length; offset += BATCH_SIZE) {
+        const batch = preview.slice(offset, offset + BATCH_SIZE);
+        setImportProgress({ done: offset, total: preview.length });
+
+        const res = await fetch("/api/receiving/import-csv", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rows: batch }),
+        });
+
+        const bodyText = await res.text();
+        if (!res.ok) {
+          let errMsg = "Import failed";
+          try { errMsg = JSON.parse(bodyText).error ?? errMsg; } catch { if (bodyText.trim()) errMsg = bodyText.slice(0, 200); }
+          setParseError(`Batch ${Math.floor(offset / BATCH_SIZE) + 1} failed: ${errMsg}`);
+          setImporting(false);
+          setImportProgress(null);
+          return;
+        }
+
+        let data: any;
+        try { data = JSON.parse(bodyText); } catch {
+          setParseError(`Batch ${Math.floor(offset / BATCH_SIZE) + 1} returned invalid response`);
+          setImporting(false);
+          setImportProgress(null);
+          return;
+        }
+
+        allResults.push(...(data.results ?? []));
+        totalImported += data.summary?.imported ?? 0;
+        totalSkipped += data.summary?.skipped ?? 0;
+        totalErrors += data.summary?.errors ?? 0;
       }
+
+      setImportProgress({ done: preview.length, total: preview.length });
+      setSummary({ imported: totalImported, skipped: totalSkipped, errors: totalErrors, total: preview.length });
+      setResults(allResults);
     } catch (err: any) {
       setParseError(err.message ?? "Import failed");
     } finally {
       setImporting(false);
+      setImportProgress(null);
     }
   }
 
@@ -306,7 +339,9 @@ export default function ImportCSVPage() {
               disabled={importing}
               className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
             >
-              {importing ? "Importing…" : `Import ${preview.length} rows`}
+              {importing && importProgress
+                ? `Importing… ${importProgress.done}/${importProgress.total}`
+                : importing ? "Importing…" : `Import ${preview.length} rows`}
             </button>
           </div>
           <div className="overflow-x-auto">
