@@ -196,12 +196,14 @@ export default function ImportCSVPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: sheetUrl }),
       });
+      const bodyText = await res.text();
       if (!res.ok) {
-        const data = await res.json().catch(() => ({ error: "Failed to fetch sheet" }));
-        setParseError(data.error ?? "Failed to fetch sheet");
+        let errMsg = "Failed to fetch sheet";
+        try { errMsg = JSON.parse(bodyText).error ?? errMsg; } catch { if (bodyText.trim()) errMsg = bodyText.slice(0, 200); }
+        setParseError(errMsg);
         return;
       }
-      const csvText = await res.text();
+      const csvText = bodyText;
       const { rows, errors } = csvToRows(csvText);
       if (errors.length) {
         setParseError(errors.join("; "));

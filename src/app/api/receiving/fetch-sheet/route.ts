@@ -38,7 +38,14 @@ export async function POST(req: Request) {
   const exportUrl = `https://docs.google.com/spreadsheets/d/${parsed.spreadsheetId}/export?format=csv&gid=${parsed.gid}`;
 
   try {
-    const res = await fetch(exportUrl, { headers: { "User-Agent": "Mozilla/5.0" } });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    const res = await fetch(exportUrl, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+      signal: controller.signal,
+      redirect: "follow"
+    });
+    clearTimeout(timeout);
     if (!res.ok) {
       const statusText = res.status === 401 || res.status === 403
         ? `Sheet is not publicly accessible (${res.status}) — set sharing to "Anyone with the link can view"`
