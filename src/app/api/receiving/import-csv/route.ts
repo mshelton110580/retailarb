@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
 import { TargetType, TargetStatus } from "@prisma/client";
-import { findOrCreateCategory, computeInventoryState } from "@/lib/item-categorization";
+import { findOrCreateCategory, computeInventoryState, generateCategoryName } from "@/lib/item-categorization";
 
 // Parse a Google Sheets timestamp like "2023/07/01 12:05.45" or "7/1/2023 12:05:45"
 function parseTimestamp(raw: string): Date | null {
@@ -170,8 +170,30 @@ export async function POST(req: Request) {
             });
           }
 
-          // Find or create category
-          const categoryResult = await findOrCreateCategory(listing.gtin, listing.title);
+          // Find or create category.
+          // For imports we never have an interactive prompt, so if the detection logic
+          // wants manual selection but has a suggested name, we auto-create that category.
+          // If there's a best-match (any confidence), we use it rather than leaving null.
+          let categoryResult = await findOrCreateCategory(listing.gtin, listing.title);
+          if (categoryResult.categoryId === null && categoryResult.requiresManualSelection) {
+            // Auto-create from the suggested name (or derive one fresh)
+            const suggestedName = categoryResult.suggestedCategoryName ?? generateCategoryName(listing.title ?? "");
+            if (suggestedName) {
+              // Check if a category with this name already exists (race-safe)
+              const existing = await prisma.item_categories.findFirst({
+                where: { category_name: { equals: suggestedName, mode: "insensitive" } },
+                select: { id: true }
+              });
+              if (existing) {
+                categoryResult = { categoryId: existing.id, confidence: "medium", requiresManualSelection: false, reason: "Matched existing category by name" };
+              } else {
+                const created = await prisma.item_categories.create({
+                  data: { category_name: suggestedName, category_keywords: [] }
+                });
+                categoryResult = { categoryId: created.id, confidence: "low", requiresManualSelection: false, reason: "Auto-created from suggested name during import" };
+              }
+            }
+          }
 
           // Compute inventory state
           const existingReturn = await prisma.returns.findFirst({
