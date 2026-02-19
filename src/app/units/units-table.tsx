@@ -40,6 +40,40 @@ const SORT_FIELDS = [
   { value: "category", label: "Category" },
 ];
 
+// All available columns, in display order
+const ALL_COLUMNS = [
+  { key: "title",    label: "Title",     sortable: true,  defaultWidth: 260 },
+  { key: "order",    label: "Order",     sortable: false, defaultWidth: 140 },
+  { key: "tracking", label: "Tracking",  sortable: false, defaultWidth: 130 },
+  { key: "category", label: "Category",  sortable: true,  defaultWidth: 140 },
+  { key: "condition",label: "Condition", sortable: true,  defaultWidth: 120 },
+  { key: "state",    label: "State",     sortable: true,  defaultWidth: 110 },
+  { key: "received", label: "Received",  sortable: true,  defaultWidth: 100 },
+  { key: "notes",    label: "Notes",     sortable: false, defaultWidth: 160 },
+] as const;
+
+type ColKey = (typeof ALL_COLUMNS)[number]["key"];
+
+const LS_WIDTHS = "units_col_widths";
+const LS_VISIBLE = "units_col_visible";
+
+function loadWidths(): Record<ColKey, number> {
+  try {
+    const v = localStorage.getItem(LS_WIDTHS);
+    if (v) return JSON.parse(v);
+  } catch {}
+  return Object.fromEntries(ALL_COLUMNS.map(c => [c.key, c.defaultWidth])) as Record<ColKey, number>;
+}
+
+function loadVisible(): Record<ColKey, boolean> {
+  try {
+    const v = localStorage.getItem(LS_VISIBLE);
+    if (v) return JSON.parse(v);
+  } catch {}
+  // all visible by default
+  return Object.fromEntries(ALL_COLUMNS.map(c => [c.key, true])) as Record<ColKey, boolean>;
+}
+
 function stateColor(state: string) {
   return STATES.find(s => s.value === state)?.color ?? "text-slate-400";
 }
@@ -75,6 +109,73 @@ export default function UnitsTable({ categories }: { categories: Category[] }) {
   const [bulkLoading, setBulkLoading] = useState(false);
   const [bulkMessage, setBulkMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
+  // Column widths & visibility (loaded from localStorage after mount)
+  const [colWidths, setColWidths] = useState<Record<ColKey, number>>(
+    () => Object.fromEntries(ALL_COLUMNS.map(c => [c.key, c.defaultWidth])) as Record<ColKey, number>
+  );
+  const [colVisible, setColVisible] = useState<Record<ColKey, boolean>>(
+    () => Object.fromEntries(ALL_COLUMNS.map(c => [c.key, true])) as Record<ColKey, boolean>
+  );
+  const [showColPanel, setShowColPanel] = useState(false);
+
+  // Load persisted prefs on mount
+  useEffect(() => {
+    setColWidths(loadWidths());
+    setColVisible(loadVisible());
+  }, []);
+
+  // Drag-resize state
+  const dragCol = useRef<ColKey | null>(null);
+  const dragStartX = useRef(0);
+  const dragStartW = useRef(0);
+
+  function onResizeMouseDown(e: React.MouseEvent, col: ColKey) {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCol.current = col;
+    dragStartX.current = e.clientX;
+    dragStartW.current = colWidths[col];
+
+    function onMove(ev: MouseEvent) {
+      if (!dragCol.current) return;
+      const delta = ev.clientX - dragStartX.current;
+      const newW = Math.max(60, dragStartW.current + delta);
+      setColWidths(prev => ({ ...prev, [dragCol.current!]: newW }));
+    }
+    function onUp() {
+      dragCol.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      // Persist
+      setColWidths(prev => {
+        localStorage.setItem(LS_WIDTHS, JSON.stringify(prev));
+        return prev;
+      });
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
+
+  function toggleColVisible(key: ColKey) {
+    setColVisible(prev => {
+      const next = { ...prev, [key]: !prev[key] };
+      localStorage.setItem(LS_VISIBLE, JSON.stringify(next));
+      return next;
+    });
+  }
+
+  function resetColumns() {
+    const w = Object.fromEntries(ALL_COLUMNS.map(c => [c.key, c.defaultWidth])) as Record<ColKey, number>;
+    const v = Object.fromEntries(ALL_COLUMNS.map(c => [c.key, true])) as Record<ColKey, boolean>;
+    setColWidths(w);
+    setColVisible(v);
+    localStorage.setItem(LS_WIDTHS, JSON.stringify(w));
+    localStorage.setItem(LS_VISIBLE, JSON.stringify(v));
+  }
+
+  const visibleCols = ALL_COLUMNS.filter(c => colVisible[c.key]);
+  const colSpan = 1 + visibleCols.length; // +1 for checkbox
+
   // Barcode scan input ref
   const trackingRef = useRef<HTMLInputElement>(null);
 
@@ -104,13 +205,11 @@ export default function UnitsTable({ categories }: { categories: Category[] }) {
     }
   }, [search, trackingScan, filterStates, filterConditions, filterCategoryId, sortBy, sortDir, offset]);
 
-  // Fetch on filter/sort change (reset to page 0)
   useEffect(() => {
     fetchUnits(true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, trackingScan, filterStates, filterConditions, filterCategoryId, sortBy, sortDir]);
 
-  // Fetch on page change
   useEffect(() => {
     if (offset > 0) fetchUnits(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -155,19 +254,16 @@ export default function UnitsTable({ categories }: { categories: Category[] }) {
 
   async function applyBulkEdit() {
     if (selected.size === 0) return;
-
     const updates: Record<string, any> = {};
     if (bulkState) updates.state = bulkState;
     if (bulkCondition) updates.condition = bulkCondition;
     if (bulkCategoryId !== "__unchanged__") {
       updates.categoryId = bulkCategoryId === "__none__" ? null : bulkCategoryId;
     }
-
     if (Object.keys(updates).length === 0) {
       setBulkMessage({ type: "error", text: "No changes selected." });
       return;
     }
-
     setBulkLoading(true);
     setBulkMessage(null);
     try {
@@ -194,7 +290,6 @@ export default function UnitsTable({ categories }: { categories: Category[] }) {
     }
   }
 
-  // Tracking scan: auto-submit on Enter or after ~300ms pause (barcode scanners send Enter)
   function handleTrackingKey(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter") {
       setTrackingScan((e.target as HTMLInputElement).value.trim());
@@ -206,101 +301,111 @@ export default function UnitsTable({ categories }: { categories: Category[] }) {
     return <span className="text-blue-400 ml-1">{sortDir === "asc" ? "↑" : "↓"}</span>;
   };
 
+  // Map col key -> sort field name
+  const colSortKey: Partial<Record<ColKey, string>> = {
+    title: "title", category: "category", condition: "condition",
+    state: "state", received: "receivedAt",
+  };
+
+  function renderCell(col: ColKey, unit: Unit) {
+    switch (col) {
+      case "title":
+        return (
+          <>
+            <div className="truncate text-slate-300 font-medium" title={unit.title}>{unit.title}</div>
+            <div className="text-xs text-slate-500">Unit #{unit.unitIndex}</div>
+          </>
+        );
+      case "order":
+        return (
+          <a href={`/orders/${unit.orderId}`} className="font-mono text-xs text-blue-400 hover:underline"
+            onClick={e => e.stopPropagation()}>
+            {unit.orderId}
+          </a>
+        );
+      case "tracking":
+        return unit.trackingNumbers.length > 0 ? (
+          <div className="space-y-0.5">
+            {unit.trackingNumbers.slice(0, 2).map((t, i) => (
+              <div key={i} className="font-mono text-xs text-slate-500 truncate" title={t}>…{t.slice(-12)}</div>
+            ))}
+            {unit.trackingNumbers.length > 2 && (
+              <div className="text-xs text-slate-600">+{unit.trackingNumbers.length - 2} more</div>
+            )}
+          </div>
+        ) : <span className="text-xs text-slate-600">—</span>;
+      case "category":
+        return unit.category
+          ? <span className="text-xs text-slate-300">{unit.category.name}</span>
+          : <span className="text-xs text-slate-600 italic">Uncategorized</span>;
+      case "condition":
+        return <span className="text-xs capitalize text-slate-400">{unit.condition}</span>;
+      case "state":
+        return <span className={`text-xs font-medium ${stateColor(unit.state)}`}>{stateLabel(unit.state)}</span>;
+      case "received":
+        return <span className="text-xs text-slate-500 whitespace-nowrap">{new Date(unit.receivedAt).toLocaleDateString()}</span>;
+      case "notes":
+        return unit.notes
+          ? <span className="text-xs text-slate-400 truncate block" title={unit.notes}>{unit.notes}</span>
+          : <span className="text-xs text-slate-700">—</span>;
+    }
+  }
+
   return (
     <div className="space-y-4">
-      {/* Filters Row */}
+      {/* Filters */}
       <div className="rounded-lg border border-slate-800 bg-slate-900 p-4 space-y-3">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {/* Text search */}
           <div>
             <label className="block text-xs text-slate-400 mb-1">Search (title, order, condition, notes)</label>
-            <input
-              type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
+            <input type="text" value={search} onChange={e => setSearch(e.target.value)}
               placeholder="Search..."
-              className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300 placeholder-slate-600"
-            />
+              className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300 placeholder-slate-600" />
           </div>
-
-          {/* Tracking scan */}
           <div>
             <label className="block text-xs text-slate-400 mb-1">Tracking number / barcode scan</label>
             <div className="flex gap-2">
-              <input
-                ref={trackingRef}
-                type="text"
-                defaultValue={trackingScan}
-                onKeyDown={handleTrackingKey}
+              <input ref={trackingRef} type="text" defaultValue={trackingScan} onKeyDown={handleTrackingKey}
                 placeholder="Scan or type tracking..."
-                className="flex-1 rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300 placeholder-slate-600"
-              />
+                className="flex-1 rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300 placeholder-slate-600" />
               {trackingScan && (
-                <button
-                  onClick={() => { setTrackingScan(""); if (trackingRef.current) trackingRef.current.value = ""; }}
-                  className="rounded border border-slate-700 px-2 py-1 text-xs text-slate-400 hover:bg-slate-800"
-                >
-                  Clear
-                </button>
+                <button onClick={() => { setTrackingScan(""); if (trackingRef.current) trackingRef.current.value = ""; }}
+                  className="rounded border border-slate-700 px-2 py-1 text-xs text-slate-400 hover:bg-slate-800">Clear</button>
               )}
             </div>
-            {trackingScan && (
-              <p className="text-xs text-blue-400 mt-1">Filtering: …{trackingScan.slice(-12)}</p>
-            )}
+            {trackingScan && <p className="text-xs text-blue-400 mt-1">Filtering: …{trackingScan.slice(-12)}</p>}
           </div>
-
-          {/* Category filter */}
           <div>
             <label className="block text-xs text-slate-400 mb-1">Category</label>
-            <select
-              value={filterCategoryId}
-              onChange={e => setFilterCategoryId(e.target.value)}
-              className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300"
-            >
+            <select value={filterCategoryId} onChange={e => setFilterCategoryId(e.target.value)}
+              className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300">
               <option value="">All categories</option>
               <option value="none">Uncategorized</option>
-              {categories.map(c => (
-                <option key={c.id} value={c.id}>{c.category_name}</option>
-              ))}
+              {categories.map(c => <option key={c.id} value={c.id}>{c.category_name}</option>)}
             </select>
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {/* State filter */}
           <div>
             <label className="block text-xs text-slate-400 mb-1">Inventory State</label>
             <div className="flex flex-wrap gap-2">
               {STATES.map(s => (
-                <button
-                  key={s.value}
-                  onClick={() => toggleStateFilter(s.value)}
+                <button key={s.value} onClick={() => toggleStateFilter(s.value)}
                   className={`rounded px-2.5 py-1 text-xs font-medium border transition-colors ${
-                    filterStates.includes(s.value)
-                      ? "border-blue-600 bg-blue-900/40 text-blue-300"
-                      : "border-slate-700 text-slate-400 hover:bg-slate-800"
-                  }`}
-                >
+                    filterStates.includes(s.value) ? "border-blue-600 bg-blue-900/40 text-blue-300" : "border-slate-700 text-slate-400 hover:bg-slate-800"}`}>
                   {s.label}
                 </button>
               ))}
             </div>
           </div>
-
-          {/* Condition filter */}
           <div>
             <label className="block text-xs text-slate-400 mb-1">Condition</label>
             <div className="flex flex-wrap gap-1.5">
               {CONDITIONS.map(c => (
-                <button
-                  key={c}
-                  onClick={() => toggleConditionFilter(c)}
+                <button key={c} onClick={() => toggleConditionFilter(c)}
                   className={`rounded px-2 py-0.5 text-xs border transition-colors capitalize ${
-                    filterConditions.includes(c)
-                      ? "border-blue-600 bg-blue-900/40 text-blue-300"
-                      : "border-slate-700 text-slate-400 hover:bg-slate-800"
-                  }`}
-                >
+                    filterConditions.includes(c) ? "border-blue-600 bg-blue-900/40 text-blue-300" : "border-slate-700 text-slate-400 hover:bg-slate-800"}`}>
                   {c}
                 </button>
               ))}
@@ -308,23 +413,44 @@ export default function UnitsTable({ categories }: { categories: Category[] }) {
           </div>
         </div>
 
-        {/* Sort controls */}
         <div className="flex items-center gap-3 pt-1 border-t border-slate-800">
           <span className="text-xs text-slate-500">Sort by:</span>
           {SORT_FIELDS.map(f => (
-            <button
-              key={f.value}
-              onClick={() => toggleSort(f.value)}
-              className={`text-xs px-2 py-1 rounded border ${
-                sortBy === f.value
-                  ? "border-blue-600 bg-blue-900/40 text-blue-300"
-                  : "border-slate-700 text-slate-500 hover:bg-slate-800"
-              }`}
-            >
+            <button key={f.value} onClick={() => toggleSort(f.value)}
+              className={`text-xs px-2 py-1 rounded border ${sortBy === f.value ? "border-blue-600 bg-blue-900/40 text-blue-300" : "border-slate-700 text-slate-500 hover:bg-slate-800"}`}>
               {f.label}<SortIcon field={f.value} />
             </button>
           ))}
-          <span className="ml-auto text-xs text-slate-500">
+
+          {/* Columns button */}
+          <div className="relative ml-auto">
+            <button onClick={() => setShowColPanel(p => !p)}
+              className={`text-xs px-2.5 py-1 rounded border flex items-center gap-1.5 ${showColPanel ? "border-slate-500 bg-slate-800 text-slate-200" : "border-slate-700 text-slate-400 hover:bg-slate-800"}`}>
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7" />
+              </svg>
+              Columns
+            </button>
+            {showColPanel && (
+              <div className="absolute right-0 top-full mt-1 z-50 w-52 rounded-lg border border-slate-700 bg-slate-900 shadow-xl p-3 space-y-1">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium text-slate-300">Show / Hide Columns</span>
+                  <button onClick={resetColumns} className="text-xs text-slate-500 hover:text-slate-300">Reset</button>
+                </div>
+                {ALL_COLUMNS.map(col => (
+                  <label key={col.key} className="flex items-center gap-2 cursor-pointer py-0.5">
+                    <input type="checkbox" checked={colVisible[col.key]} onChange={() => toggleColVisible(col.key)}
+                      className="rounded" />
+                    <span className="text-xs text-slate-300">{col.label}</span>
+                    <span className="ml-auto text-xs text-slate-600">{colWidths[col.key]}px</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <span className="text-xs text-slate-500">
             {loading ? "Loading..." : `${total.toLocaleString()} units`}
           </span>
         </div>
@@ -338,79 +464,52 @@ export default function UnitsTable({ categories }: { categories: Category[] }) {
               {selected.size} unit{selected.size !== 1 ? "s" : ""} selected
             </span>
             <div className="flex gap-2">
-              <button
-                onClick={() => setBulkPanel(p => !p)}
-                className="rounded bg-blue-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-600"
-              >
+              <button onClick={() => setBulkPanel(p => !p)}
+                className="rounded bg-blue-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-600">
                 {bulkPanel ? "Hide Edit" : "Bulk Edit"}
               </button>
-              <button
-                onClick={() => setSelected(new Set())}
-                className="rounded border border-slate-600 px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800"
-              >
+              <button onClick={() => setSelected(new Set())}
+                className="rounded border border-slate-600 px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800">
                 Clear
               </button>
             </div>
           </div>
-
           {bulkPanel && (
             <div className="space-y-3">
               {bulkMessage && (
-                <div className={`rounded p-2 text-xs ${
-                  bulkMessage.type === "success"
-                    ? "bg-green-900/30 border border-green-700 text-green-300"
-                    : "bg-red-900/30 border border-red-700 text-red-300"
-                }`}>
+                <div className={`rounded p-2 text-xs ${bulkMessage.type === "success" ? "bg-green-900/30 border border-green-700 text-green-300" : "bg-red-900/30 border border-red-700 text-red-300"}`}>
                   {bulkMessage.text}
                 </div>
               )}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs text-slate-400 mb-1">Set State</label>
-                  <select
-                    value={bulkState}
-                    onChange={e => setBulkState(e.target.value)}
-                    className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300"
-                  >
+                  <select value={bulkState} onChange={e => setBulkState(e.target.value)}
+                    className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300">
                     <option value="">— no change —</option>
-                    {STATES.map(s => (
-                      <option key={s.value} value={s.value}>{s.label}</option>
-                    ))}
+                    {STATES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="block text-xs text-slate-400 mb-1">Set Condition</label>
-                  <select
-                    value={bulkCondition}
-                    onChange={e => setBulkCondition(e.target.value)}
-                    className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300"
-                  >
+                  <select value={bulkCondition} onChange={e => setBulkCondition(e.target.value)}
+                    className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300">
                     <option value="">— no change —</option>
-                    {CONDITIONS.map(c => (
-                      <option key={c} value={c} className="capitalize">{c}</option>
-                    ))}
+                    {CONDITIONS.map(c => <option key={c} value={c} className="capitalize">{c}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="block text-xs text-slate-400 mb-1">Set Category</label>
-                  <select
-                    value={bulkCategoryId}
-                    onChange={e => setBulkCategoryId(e.target.value)}
-                    className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300"
-                  >
+                  <select value={bulkCategoryId} onChange={e => setBulkCategoryId(e.target.value)}
+                    className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300">
                     <option value="__unchanged__">— no change —</option>
                     <option value="__none__">Remove category</option>
-                    {categories.map(c => (
-                      <option key={c.id} value={c.id}>{c.category_name}</option>
-                    ))}
+                    {categories.map(c => <option key={c.id} value={c.id}>{c.category_name}</option>)}
                   </select>
                 </div>
               </div>
-              <button
-                onClick={applyBulkEdit}
-                disabled={bulkLoading}
-                className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-              >
+              <button onClick={applyBulkEdit} disabled={bulkLoading}
+                className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
                 {bulkLoading ? "Applying..." : `Apply to ${selected.size} unit${selected.size !== 1 ? "s" : ""}`}
               </button>
             </div>
@@ -420,124 +519,71 @@ export default function UnitsTable({ categories }: { categories: Category[] }) {
 
       {/* Table */}
       <div className="rounded-lg border border-slate-800 bg-slate-900 overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="text-sm" style={{ tableLayout: "fixed", minWidth: "100%" }}>
+          <colgroup>
+            <col style={{ width: 36 }} />
+            {visibleCols.map(col => (
+              <col key={col.key} style={{ width: colWidths[col.key] }} />
+            ))}
+          </colgroup>
           <thead className="border-b border-slate-800">
             <tr className="text-left text-xs font-medium text-slate-400">
-              <th className="px-3 py-3 w-8">
-                <input
-                  type="checkbox"
+              <th className="px-3 py-3">
+                <input type="checkbox"
                   checked={units.length > 0 && selected.size === units.length}
-                  onChange={toggleSelectAll}
-                  className="rounded"
-                />
+                  onChange={toggleSelectAll} className="rounded" />
               </th>
-              <th className="px-3 py-3 cursor-pointer hover:text-slate-300" onClick={() => toggleSort("title")}>
-                Title <SortIcon field="title" />
-              </th>
-              <th className="px-3 py-3">Order</th>
-              <th className="px-3 py-3">Tracking</th>
-              <th className="px-3 py-3 cursor-pointer hover:text-slate-300" onClick={() => toggleSort("category")}>
-                Category <SortIcon field="category" />
-              </th>
-              <th className="px-3 py-3 cursor-pointer hover:text-slate-300" onClick={() => toggleSort("condition")}>
-                Condition <SortIcon field="condition" />
-              </th>
-              <th className="px-3 py-3 cursor-pointer hover:text-slate-300" onClick={() => toggleSort("state")}>
-                State <SortIcon field="state" />
-              </th>
-              <th className="px-3 py-3 cursor-pointer hover:text-slate-300" onClick={() => toggleSort("receivedAt")}>
-                Received <SortIcon field="receivedAt" />
-              </th>
-              <th className="px-3 py-3">Notes</th>
+              {visibleCols.map(col => {
+                const sortField = colSortKey[col.key];
+                return (
+                  <th key={col.key} className="px-3 py-3 relative select-none"
+                    style={{ overflow: "hidden" }}>
+                    <div className="flex items-center gap-1 overflow-hidden">
+                      <span
+                        className={sortField ? "cursor-pointer hover:text-slate-300 truncate" : "truncate"}
+                        onClick={sortField ? () => toggleSort(sortField) : undefined}
+                        title={col.label}
+                      >
+                        {col.label}
+                        {sortField && <SortIcon field={sortField} />}
+                      </span>
+                    </div>
+                    {/* Resize handle */}
+                    <div
+                      className="absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-blue-500/30 active:bg-blue-500/50 group"
+                      onMouseDown={e => onResizeMouseDown(e, col.key)}
+                      title="Drag to resize"
+                    >
+                      <div className="absolute right-0.5 top-1/4 h-1/2 w-px bg-slate-600 group-hover:bg-blue-400" />
+                    </div>
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800">
             {loading && units.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-3 py-8 text-center text-slate-500 text-sm">
-                  Loading...
-                </td>
+                <td colSpan={colSpan} className="px-3 py-8 text-center text-slate-500 text-sm">Loading...</td>
               </tr>
             ) : units.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-3 py-8 text-center text-slate-500 text-sm">
-                  No units found.
-                </td>
+                <td colSpan={colSpan} className="px-3 py-8 text-center text-slate-500 text-sm">No units found.</td>
               </tr>
             ) : (
               units.map(unit => (
-                <tr
-                  key={unit.id}
-                  className={`hover:bg-slate-800/50 transition-colors ${selected.has(unit.id) ? "bg-blue-900/20" : ""}`}
-                  onClick={() => toggleSelect(unit.id)}
-                  style={{ cursor: "pointer" }}
-                >
+                <tr key={unit.id}
+                  className={`hover:bg-slate-800/50 transition-colors cursor-pointer ${selected.has(unit.id) ? "bg-blue-900/20" : ""}`}
+                  onClick={() => toggleSelect(unit.id)}>
                   <td className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      checked={selected.has(unit.id)}
-                      onChange={() => toggleSelect(unit.id)}
-                      className="rounded"
-                    />
+                    <input type="checkbox" checked={selected.has(unit.id)}
+                      onChange={() => toggleSelect(unit.id)} className="rounded" />
                   </td>
-                  <td className="px-3 py-2.5 max-w-xs">
-                    <div className="truncate text-slate-300 font-medium" title={unit.title}>
-                      {unit.title}
-                    </div>
-                    <div className="text-xs text-slate-500">Unit #{unit.unitIndex}</div>
-                  </td>
-                  <td className="px-3 py-2.5">
-                    <a
-                      href={`/orders/${unit.orderId}`}
-                      className="font-mono text-xs text-blue-400 hover:underline"
-                      onClick={e => e.stopPropagation()}
-                    >
-                      {unit.orderId}
-                    </a>
-                  </td>
-                  <td className="px-3 py-2.5">
-                    {unit.trackingNumbers.length > 0 ? (
-                      <div className="space-y-0.5">
-                        {unit.trackingNumbers.slice(0, 2).map((t, i) => (
-                          <div key={i} className="font-mono text-xs text-slate-500 truncate max-w-[120px]" title={t}>
-                            …{t.slice(-12)}
-                          </div>
-                        ))}
-                        {unit.trackingNumbers.length > 2 && (
-                          <div className="text-xs text-slate-600">+{unit.trackingNumbers.length - 2} more</div>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-xs text-slate-600">—</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2.5">
-                    {unit.category ? (
-                      <span className="text-xs text-slate-300">{unit.category.name}</span>
-                    ) : (
-                      <span className="text-xs text-slate-600 italic">Uncategorized</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2.5">
-                    <span className="text-xs capitalize text-slate-400">{unit.condition}</span>
-                  </td>
-                  <td className="px-3 py-2.5">
-                    <span className={`text-xs font-medium ${stateColor(unit.state)}`}>
-                      {stateLabel(unit.state)}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2.5 text-xs text-slate-500 whitespace-nowrap">
-                    {new Date(unit.receivedAt).toLocaleDateString()}
-                  </td>
-                  <td className="px-3 py-2.5 max-w-[150px]">
-                    {unit.notes ? (
-                      <span className="text-xs text-slate-400 truncate block" title={unit.notes}>
-                        {unit.notes}
-                      </span>
-                    ) : (
-                      <span className="text-xs text-slate-700">—</span>
-                    )}
-                  </td>
+                  {visibleCols.map(col => (
+                    <td key={col.key} className="px-3 py-2.5 overflow-hidden">
+                      {renderCell(col.key, unit)}
+                    </td>
+                  ))}
                 </tr>
               ))
             )}
@@ -548,24 +594,12 @@ export default function UnitsTable({ categories }: { categories: Category[] }) {
       {/* Pagination */}
       {total > LIMIT && (
         <div className="flex items-center justify-between text-sm text-slate-400">
-          <span>
-            Showing {offset + 1}–{Math.min(offset + LIMIT, total)} of {total.toLocaleString()}
-          </span>
+          <span>Showing {offset + 1}–{Math.min(offset + LIMIT, total)} of {total.toLocaleString()}</span>
           <div className="flex gap-2">
-            <button
-              onClick={() => setOffset(Math.max(0, offset - LIMIT))}
-              disabled={offset === 0}
-              className="rounded border border-slate-700 px-3 py-1.5 text-xs hover:bg-slate-800 disabled:opacity-40"
-            >
-              Previous
-            </button>
-            <button
-              onClick={() => setOffset(offset + LIMIT)}
-              disabled={offset + LIMIT >= total}
-              className="rounded border border-slate-700 px-3 py-1.5 text-xs hover:bg-slate-800 disabled:opacity-40"
-            >
-              Next
-            </button>
+            <button onClick={() => setOffset(Math.max(0, offset - LIMIT))} disabled={offset === 0}
+              className="rounded border border-slate-700 px-3 py-1.5 text-xs hover:bg-slate-800 disabled:opacity-40">Previous</button>
+            <button onClick={() => setOffset(offset + LIMIT)} disabled={offset + LIMIT >= total}
+              className="rounded border border-slate-700 px-3 py-1.5 text-xs hover:bg-slate-800 disabled:opacity-40">Next</button>
           </div>
         </div>
       )}
