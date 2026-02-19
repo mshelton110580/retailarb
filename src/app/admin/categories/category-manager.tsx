@@ -41,6 +41,52 @@ export default function CategoryManager({
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [deletingMerge, setDeletingMerge] = useState<string | null>(null);
+  const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+  const [categoryUnits, setCategoryUnits] = useState<Record<string, {
+    id: string; orderId: string; unitIndex: number; title: string;
+    condition: string; state: string; receivedAt: string;
+  }[]>>({});
+  const [loadingUnits, setLoadingUnits] = useState<string | null>(null);
+
+  async function toggleCategory(categoryId: string) {
+    if (expandedCategory === categoryId) {
+      setExpandedCategory(null);
+      return;
+    }
+    setExpandedCategory(categoryId);
+    if (categoryUnits[categoryId]) return; // already loaded
+
+    setLoadingUnits(categoryId);
+    try {
+      const res = await fetch(`/api/categories/units?categoryId=${categoryId}`);
+      const data = await res.json();
+      setCategoryUnits(prev => ({ ...prev, [categoryId]: data }));
+    } catch {
+      setCategoryUnits(prev => ({ ...prev, [categoryId]: [] }));
+    } finally {
+      setLoadingUnits(null);
+    }
+  }
+
+  function formatState(state: string) {
+    switch (state) {
+      case "on_hand": return "On Hand";
+      case "to_be_returned": return "To Return";
+      case "parts_repair": return "Parts/Repair";
+      case "returned": return "Returned";
+      default: return state;
+    }
+  }
+
+  function stateColor(state: string) {
+    switch (state) {
+      case "on_hand": return "text-green-400";
+      case "to_be_returned": return "text-yellow-400";
+      case "parts_repair": return "text-red-400";
+      case "returned": return "text-slate-500";
+      default: return "text-slate-400";
+    }
+  }
 
   const filteredCategories = allCategories.filter(c =>
     c.category_name.toLowerCase().includes(searchTerm.toLowerCase())
@@ -342,20 +388,67 @@ export default function CategoryManager({
           />
         </div>
 
-        <div className="space-y-1 max-h-96 overflow-y-auto">
+        <div className="space-y-1 max-h-[600px] overflow-y-auto">
           {filteredCategories.map(cat => (
-            <div
-              key={cat.id}
-              className="flex items-center justify-between rounded px-3 py-2 hover:bg-slate-800"
-            >
-              <div>
-                <span className="text-sm text-slate-300">{cat.category_name}</span>
-                <span className="ml-2 text-xs text-slate-500">
-                  ({cat.unitCount} {cat.unitCount === 1 ? "unit" : "units"})
-                </span>
+            <div key={cat.id}>
+              <div
+                className="flex items-center justify-between rounded px-3 py-2 hover:bg-slate-800 cursor-pointer"
+                onClick={() => toggleCategory(cat.id)}
+              >
+                <div className="flex items-center gap-2">
+                  <svg
+                    className={`w-3 h-3 text-slate-500 transition-transform flex-shrink-0 ${expandedCategory === cat.id ? "rotate-90" : ""}`}
+                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                  <span className="text-sm text-slate-300">{cat.category_name}</span>
+                  <span className="text-xs text-slate-500">
+                    ({cat.unitCount} {cat.unitCount === 1 ? "unit" : "units"})
+                  </span>
+                </div>
+                {cat.gtin && (
+                  <span className="text-xs text-slate-600">GTIN: {cat.gtin}</span>
+                )}
               </div>
-              {cat.gtin && (
-                <span className="text-xs text-slate-600">GTIN: {cat.gtin}</span>
+
+              {expandedCategory === cat.id && (
+                <div className="ml-6 mb-2 rounded border border-slate-700 bg-slate-950">
+                  {loadingUnits === cat.id ? (
+                    <p className="px-3 py-3 text-xs text-slate-500">Loading...</p>
+                  ) : (categoryUnits[cat.id] ?? []).length === 0 ? (
+                    <p className="px-3 py-3 text-xs text-slate-500">No units found.</p>
+                  ) : (
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-700 text-left text-slate-500">
+                          <th className="px-3 py-2">Title</th>
+                          <th className="px-3 py-2">Order</th>
+                          <th className="px-3 py-2">Condition</th>
+                          <th className="px-3 py-2">State</th>
+                          <th className="px-3 py-2">Received</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800">
+                        {(categoryUnits[cat.id] ?? []).map(unit => (
+                          <tr key={unit.id} className="hover:bg-slate-900">
+                            <td className="px-3 py-2 text-slate-300 max-w-xs truncate" title={unit.title}>
+                              {unit.title}
+                            </td>
+                            <td className="px-3 py-2 font-mono text-slate-400">{unit.orderId}</td>
+                            <td className="px-3 py-2 text-slate-400 capitalize">{unit.condition}</td>
+                            <td className={`px-3 py-2 font-medium ${stateColor(unit.state)}`}>
+                              {formatState(unit.state)}
+                            </td>
+                            <td className="px-3 py-2 text-slate-500">
+                              {new Date(unit.receivedAt).toLocaleDateString()}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
               )}
             </div>
           ))}
