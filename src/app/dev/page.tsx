@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { requireRole } from "@/lib/rbac";
 import PageHeader from "@/components/page-header";
 import EbayExportUpload from "./ebay-export-upload";
+import UploadTmp from "./upload-tmp";
 
 /**
  * /dev — Hidden developer tools page.
@@ -20,6 +21,14 @@ export default async function DevPage() {
         This page is not linked from the main navigation. It is intended for admin-only maintenance tasks
         and data backfill operations. Changes made here directly affect the production database.
       </div>
+
+      {/* File upload to /tmp for inspection */}
+      <section className="space-y-2">
+        <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+          File Inspection
+        </h2>
+        <UploadTmp />
+      </section>
 
       {/* eBay Export Backfill */}
       <section className="space-y-2">
