@@ -73,41 +73,47 @@ export async function POST(req: Request) {
 
     const orderItems = shipment.order.order_items ?? [];
 
-    // Calculate expected units from order items qty
-    const expectedUnits = orderItems.reduce((sum, item) => sum + item.qty, 0);
+    // Total qty purchased (e.g. qty=2 means 2 items/lots ordered)
+    const orderQty = orderItems.reduce((sum, item) => sum + item.qty, 0);
 
-    // Ensure expected_units is set on the shipment
-    if (shipment.expected_units === 0 && expectedUnits > 0) {
+    // Set expected_units = orderQty on first scan if not already set
+    if (shipment.expected_units === 0 && orderQty > 0) {
       await prisma.shipments.update({
         where: { id: shipment.id },
-        data: { expected_units: expectedUnits }
+        data: { expected_units: orderQty }
       });
-      shipment.expected_units = expectedUnits;
+      shipment.expected_units = orderQty;
     }
 
     // Count how many units have already been scanned for this shipment
-    const existingUnits = await prisma.received_units.count({
+    const currentScannedCount = await prisma.received_units.count({
       where: { order_id: shipment.order_id }
     });
 
-    const currentScannedCount = existingUnits;
     const newUnitIndex = currentScannedCount + 1;
 
-    // Determine which order item this unit belongs to
-    // Walk through items in order, assigning units to items based on qty
-    let targetItem = orderItems[0]; // default to first item
+    // Lot detection: once scanned > orderQty we know each "qty unit" contains
+    // multiple physical items, i.e. it's a lot. The lot size is inferred as
+    // scanned_units / orderQty once scanning is complete.
+    // We flag is_lot as soon as scans exceed orderQty.
+    const isLot = (currentScannedCount + 1) > orderQty || shipment.is_lot;
+
+    // Determine which order item this unit belongs to.
+    // For lots (scanned > orderQty), wrap the index back around so units
+    // cycle through the order items repeatedly.
+    const wrappedIndex = isLot
+      ? ((currentScannedCount % orderQty) + 1)
+      : newUnitIndex;
+
+    let targetItem = orderItems[0];
     let runningCount = 0;
     for (const item of orderItems) {
       runningCount += item.qty;
-      if (newUnitIndex <= runningCount) {
+      if (wrappedIndex <= runningCount) {
         targetItem = item;
         break;
       }
     }
-
-    // Determine if this is a lot situation (scanning beyond expected quantity)
-    // A lot occurs when the new scan would exceed the listed expected_units
-    const isLot = (currentScannedCount + 1) > shipment.expected_units;
 
     try {
       // Ensure target exists (listings FK requires it)
@@ -213,11 +219,18 @@ export async function POST(req: Request) {
 
       const newScannedCount = currentScannedCount + 1;
 
-      // Determine scan_status
+      // Infer lot_size once we have more scans than orderQty
+      // lot_size = scanned / orderQty (integer division, only update when evenly divisible)
+      let lotSize: number | null = shipment.lot_size ?? null;
+      if (isLot && orderQty > 0 && newScannedCount % orderQty === 0) {
+        lotSize = newScannedCount / orderQty;
+      }
+
+      // scan_status: lots always stay check_quantity until reconciliation
       let scanStatus: string;
       if (isLot) {
         scanStatus = "check_quantity";
-      } else if (newScannedCount >= shipment.expected_units) {
+      } else if (newScannedCount >= orderQty) {
         scanStatus = "complete";
       } else {
         scanStatus = "partial";
@@ -229,20 +242,22 @@ export async function POST(req: Request) {
         data: {
           scanned_units: newScannedCount,
           scan_status: scanStatus,
-          is_lot: isLot || shipment.is_lot,
+          is_lot: isLot,
+          lot_size: lotSize,
           checked_in_at: shipment.checked_in_at ?? new Date(),
           checked_in_by: shipment.checked_in_by ?? auth.session!.user!.id
         }
       });
 
-      const remaining = isLot ? null : Math.max(0, shipment.expected_units - newScannedCount);
+      const remaining = isLot ? null : Math.max(0, orderQty - newScannedCount);
 
       results.push({
         orderId: shipment.order_id,
         unitIndex: newUnitIndex,
         unitId: unit.id,
-        expectedUnits: isLot ? `Lot (listed qty: ${shipment.expected_units})` : shipment.expected_units,
+        expectedUnits: orderQty,
         scannedSoFar: newScannedCount,
+        lotSize,
         remaining,
         scanStatus,
         isLot,
@@ -280,7 +295,10 @@ export async function POST(req: Request) {
   let message = "";
   if (firstResult) {
     if (firstResult.isLot) {
-      message = `Lot detected — Unit ${firstResult.unitIndex} scanned (listed qty: ${firstResult.expectedUnits}). Status: Check Quantity`;
+      const lotDesc = firstResult.lotSize
+        ? `${firstResult.scannedSoFar} scanned (${firstResult.lotSize} per lot × qty ${firstResult.expectedUnits})`
+        : `${firstResult.scannedSoFar} scanned (qty: ${firstResult.expectedUnits})`;
+      message = `Lot — ${lotDesc}. Needs reconciliation.`;
     } else if (firstResult.scanStatus === "complete") {
       message = `Unit ${firstResult.unitIndex} of ${firstResult.expectedUnits} — All units checked in!`;
     } else if (firstResult.scanStatus === "partial") {

@@ -161,6 +161,9 @@ model shipments {
   scanned_units    Int      @default(0)
   scan_status      String   @default("pending")
   is_lot           Boolean  @default(false)
+  lot_size         Int?     // confirmed units per lot (scanned_units / order qty)
+  lot_manifest     Json?    // [{desc, qty}] for mixed lots parsed from title
+  reconciliation_status String @default("pending") // pending | reviewed | overridden
   order            orders   @relation(fields: [order_id], references: [order_id])
   tracking_numbers tracking_numbers[]
   checked_in_user  users?   @relation("shipment_checked_in_by", fields: [checked_in_by], references: [id])
@@ -205,15 +208,27 @@ model received_units {
   scanner            users @relation(fields: [scanned_by_user_id], references: [id])
   category           item_categories? @relation(fields: [category_id], references: [id])
   images             unit_images[]
+  upload_sessions    upload_sessions[]
   lot_units          lot_units[]
 }
 
 model unit_images {
-  id               String @id @default(cuid())
+  id                String @id @default(cuid())
+  received_unit_id  String
+  upload_session_id String?
+  image_path        String
+  created_at        DateTime @default(now())
+  unit              received_units  @relation(fields: [received_unit_id], references: [id])
+  upload_session    upload_sessions? @relation(fields: [upload_session_id], references: [id])
+}
+
+model upload_sessions {
+  id               String   @id @default(cuid())
   received_unit_id String
-  image_path       String
   created_at       DateTime @default(now())
+  expires_at       DateTime
   unit             received_units @relation(fields: [received_unit_id], references: [id])
+  images           unit_images[]
 }
 
 model lots {

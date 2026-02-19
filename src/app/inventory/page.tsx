@@ -5,6 +5,7 @@ import FilterLink from "@/components/filter-link";
 import { prisma } from "@/lib/db";
 import Link from "next/link";
 import SyncAllButton from "@/components/sync-all-button";
+import CheckQuantityPanel from "@/components/check-quantity-panel";
 
 type BucketKey =
   | "total_orders"
@@ -672,6 +673,26 @@ export default async function InventoryPage({
           <h2 className="mb-3 text-lg font-semibold">
             {cardConfig.find((c) => c.key === activeFilter)?.label ?? activeFilter} ({filteredItems.length})
           </h2>
+
+          {/* Lot reconciliation — replaces generic drilldown for check_quantity */}
+          {activeFilter === "check_quantity" ? (
+            <CheckQuantityPanel
+              shipments={filteredItems.map((s) => ({
+                id: s.id,
+                order_id: s.order_id,
+                scanned_units: s.scanned_units,
+                expected_units: s.expected_units,
+                is_lot: s.is_lot,
+                lot_size: (s as any).lot_size ?? null,
+                reconciliation_status: (s as any).reconciliation_status ?? "pending",
+                items: (s.order?.order_items ?? []).map((i: any) => ({
+                  title: i.title,
+                  qty: i.qty,
+                  itemId: i.item_id,
+                })),
+              }))}
+            />
+          ) : (
           <div className="space-y-2 text-sm text-slate-300">
             {filteredItems.length === 0 ? (
               <p>No items in this category.</p>
@@ -833,6 +854,7 @@ export default async function InventoryPage({
               })
             )}
           </div>
+          )}
         </section>
       )}
     </div>

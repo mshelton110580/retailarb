@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import ImageUploadPanel from "@/components/image-upload-panel";
 
 type ScanResultItem = {
   orderId: string;
@@ -48,6 +49,13 @@ export default function ReceivingForm() {
   const trackingRef = useRef<HTMLInputElement>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(false);
+  // Image upload panel state — triggered when a non-good unit is scanned
+  const [imageUploadUnit, setImageUploadUnit] = useState<{
+    unitId: string;
+    unitIndex: number;
+    title: string;
+  } | null>(null);
+
   const [pendingCategorySelection, setPendingCategorySelection] = useState<{
     unitId: string;
     unitIndex: number;
@@ -112,7 +120,7 @@ export default function ReceivingForm() {
         } else if (data.results?.[0]) {
           const r = data.results[0];
           if (r.isLot) {
-            setStatus(`📦 Lot detected — Unit ${r.unitIndex} scanned (listed qty: 1). Mark as "Check Quantity"`);
+            setStatus(`📦 Lot — Unit ${r.unitIndex} scanned (${r.scannedSoFar} total, qty: ${r.item?.qty ?? "?"}). Needs reconciliation.`);
             setStatusType("lot");
           } else if (r.scanStatus === "complete") {
             setStatus(`✓ Unit ${r.unitIndex} of ${r.expectedUnits} — All units checked in!`);
@@ -120,6 +128,17 @@ export default function ReceivingForm() {
           } else if (r.scanStatus === "partial") {
             setStatus(`📋 Unit ${r.unitIndex} of ${r.expectedUnits} checked in — ${r.remaining} remaining`);
             setStatusType("warning");
+          }
+
+          // Trigger image upload for non-good conditions
+          const goodConditions = new Set(["good", "new", "like_new", "acceptable", "excellent"]);
+          const condition = r.condition ?? payload.condition_status;
+          if (!goodConditions.has(condition?.toLowerCase() ?? "") && r.unitId) {
+            setImageUploadUnit({
+              unitId: r.unitId,
+              unitIndex: r.unitIndex,
+              title: r.item?.title ?? "Unknown",
+            });
           }
         } else {
           setStatus(data.message || "Scan processed.");
@@ -424,6 +443,16 @@ export default function ReceivingForm() {
             </div>
           ))}
         </div>
+      )}
+
+      {/* Image upload panel — shown immediately after non-good scan */}
+      {imageUploadUnit && (
+        <ImageUploadPanel
+          receivedUnitId={imageUploadUnit.unitId}
+          unitTitle={imageUploadUnit.title}
+          unitIndex={imageUploadUnit.unitIndex}
+          onClose={() => setImageUploadUnit(null)}
+        />
       )}
 
       {/* Category selection modal (blocking overlay) */}
