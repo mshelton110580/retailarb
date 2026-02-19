@@ -164,6 +164,7 @@ export default async function OnHandPage() {
   // to divide the price correctly. Also track good vs not-good units for smart refund distribution
   const orderItemUnitCounts = new Map<string, number>();
   const orderItemBadUnits = new Map<string, Set<string>>();  // Map of order_item_id -> set of bad unit IDs
+  const orderItemPartsUnits = new Map<string, Set<string>>();  // Map of order_item_id -> set of parts/repair unit IDs
   const goodConditionSet = new Set(["good", "new", "like_new", "acceptable", "excellent"]);
   const isBadCondition = (c: string) => !goodConditionSet.has(c?.toLowerCase() ?? "");
 
@@ -178,6 +179,14 @@ export default async function OnHandPage() {
           orderItemBadUnits.set(unit.order_item_id, new Set());
         }
         orderItemBadUnits.get(unit.order_item_id)!.add(unit.id);
+      }
+
+      // Track parts/repair units separately — they have $0 value
+      if (unit.inventory_state === "parts_repair") {
+        if (!orderItemPartsUnits.has(unit.order_item_id)) {
+          orderItemPartsUnits.set(unit.order_item_id, new Set());
+        }
+        orderItemPartsUnits.get(unit.order_item_id)!.add(unit.id);
       }
     }
   }
@@ -214,46 +223,58 @@ export default async function OnHandPage() {
       const refundAmount = refundKey ? (refundMap.get(refundKey) || 0) : 0;
       const unitsScanned = orderItemUnitCounts.get(unit.order_item.id) || 1;
       const badUnitsSet = orderItemBadUnits.get(unit.order_item.id);
+      const partsUnitsSet = orderItemPartsUnits.get(unit.order_item.id);
       const badUnitsCount = badUnitsSet ? badUnitsSet.size : 0;
+      const partsUnitsCount = partsUnitsSet ? partsUnitsSet.size : 0;
       const isThisUnitBad = badUnitsSet ? badUnitsSet.has(unit.id) : false;
+      const isThisUnitParts = partsUnitsSet ? partsUnitsSet.has(unit.id) : false;
 
-      // Smart refund distribution for lots with partial refunds
-      if (refundAmount > 0 && refundAmount < totalCost && unitsScanned > 1) {
-        // Partial refund on a lot
-        const perUnitCost = totalCost / unitsScanned;
+      // Parts/repair units have $0 value — they are write-offs, not sellable inventory
+      if (isThisUnitParts) {
+        itemCost = 0;
+      } else {
+        // Exclude parts/repair units from cost distribution — they're already written off
+        // Only distribute cost across the non-parts units
+        const valuableUnits = unitsScanned - partsUnitsCount;
 
-        if (badUnitsCount === 0) {
-          // All units are good - distribute refund equally
-          itemCost = (totalCost - refundAmount) / unitsScanned;
-        } else {
-          // Mixed good/bad units
-          const badUnitsTotalCost = perUnitCost * badUnitsCount;
-          const goodUnitsCount = unitsScanned - badUnitsCount;
+        // Smart refund distribution for lots with partial refunds
+        if (refundAmount > 0 && refundAmount < totalCost && valuableUnits > 1) {
+          // Partial refund on a lot — distribute among valuable (non-parts) units only
+          const perUnitCost = totalCost / valuableUnits;
+          const nonPartsBadCount = badUnitsCount - partsUnitsCount > 0 ? badUnitsCount - partsUnitsCount : 0;
 
-          if (refundAmount <= badUnitsTotalCost) {
-            // Refund is less than or equal to bad units' cost - apply to bad units only
-            if (isThisUnitBad) {
-              const refundPerBadUnit = refundAmount / badUnitsCount;
-              itemCost = Math.max(0, perUnitCost - refundPerBadUnit);
-            } else {
-              itemCost = perUnitCost; // Good units keep full cost
-            }
+          if (nonPartsBadCount === 0) {
+            // All valuable units are good - distribute refund equally
+            itemCost = (totalCost - refundAmount) / valuableUnits;
           } else {
-            // Refund exceeds bad units' cost - zero out bad units and apply remainder to good units
-            if (isThisUnitBad) {
-              itemCost = 0; // Bad units are fully refunded
+            // Mixed good/bad units (among valuable units)
+            const badUnitsTotalCost = perUnitCost * nonPartsBadCount;
+            const goodUnitsCount = valuableUnits - nonPartsBadCount;
+
+            if (refundAmount <= badUnitsTotalCost) {
+              // Refund covers only bad units
+              if (isThisUnitBad) {
+                const refundPerBadUnit = refundAmount / nonPartsBadCount;
+                itemCost = Math.max(0, perUnitCost - refundPerBadUnit);
+              } else {
+                itemCost = perUnitCost; // Good units keep full cost
+              }
             } else {
-              // Remaining refund after zeroing out bad units
-              const remainingRefund = refundAmount - badUnitsTotalCost;
-              const refundPerGoodUnit = remainingRefund / goodUnitsCount;
-              itemCost = Math.max(0, perUnitCost - refundPerGoodUnit);
+              // Refund exceeds bad units' cost
+              if (isThisUnitBad) {
+                itemCost = 0; // Bad units are fully refunded
+              } else {
+                const remainingRefund = refundAmount - badUnitsTotalCost;
+                const refundPerGoodUnit = remainingRefund / goodUnitsCount;
+                itemCost = Math.max(0, perUnitCost - refundPerGoodUnit);
+              }
             }
           }
+        } else {
+          // Full refund, no refund, or single valuable unit
+          const costAfterRefund = Math.max(0, totalCost - refundAmount);
+          itemCost = costAfterRefund / Math.max(1, valuableUnits);
         }
-      } else {
-        // Full refund, no refund, or single unit - use simple distribution
-        const costAfterRefund = Math.max(0, totalCost - refundAmount);
-        itemCost = costAfterRefund / unitsScanned;
       }
     }
 
