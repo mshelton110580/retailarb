@@ -160,6 +160,37 @@ export default async function OnHandPage() {
     }
   }
 
+  // Pre-compute per-order total item prices (sum of transaction_price * qty for all items)
+  // Used to allocate shipping proportionally across items in multi-item orders
+  const orderItemTotals = new Map<string, number>();  // order_item.id -> transaction_price * qty
+  const orderItemPriceSum = new Map<string, number>(); // order_id -> sum of all items' transaction_price * qty
+
+  for (const unit of units) {
+    if (unit.order_item && unit.order?.order_id) {
+      const itemSubtotal = Number(unit.order_item.transaction_price) * unit.order_item.qty;
+      orderItemTotals.set(unit.order_item.id, itemSubtotal);
+
+      // Sum all order items' subtotals per order (for shipping allocation ratio)
+      if (!orderItemPriceSum.has(unit.order.order_id)) {
+        // We'll accumulate below — but we need a per-order sum across distinct items
+        // Use a Set to avoid counting same order_item twice
+      }
+    }
+  }
+
+  // Build per-order subtotal sum using distinct order_items per order
+  const seenOrderItems = new Set<string>();
+  for (const unit of units) {
+    if (unit.order_item && unit.order?.order_id) {
+      if (!seenOrderItems.has(unit.order_item.id)) {
+        seenOrderItems.add(unit.order_item.id);
+        const itemSubtotal = Number(unit.order_item.transaction_price) * unit.order_item.qty;
+        const existing = orderItemPriceSum.get(unit.order.order_id) || 0;
+        orderItemPriceSum.set(unit.order.order_id, existing + itemSubtotal);
+      }
+    }
+  }
+
   // For lots and multi-qty items, we need to count how many units were scanned
   // to divide the price correctly. Also track good vs not-good units for smart refund distribution
   const orderItemUnitCounts = new Map<string, number>();
@@ -206,12 +237,23 @@ export default async function OnHandPage() {
       if (refundKey && originalCostMap.has(refundKey)) {
         totalCost = originalCostMap.get(refundKey)!;
       } else if (unit.order?.totals && typeof unit.order.totals === 'object' && 'total' in unit.order.totals) {
-        // Use order.totals.total from eBay (always accurate, includes shipping)
-        totalCost = Number((unit.order.totals as any).total);
+        const orderTotal = Number((unit.order.totals as any).total);
+        const orderId = unit.order.order_id;
+        const itemSubtotalSum = orderItemPriceSum.get(orderId) || 0;
+
+        if (itemSubtotalSum > 0 && unit.order_item) {
+          // Multi-item order: allocate shipping proportionally by item subtotal ratio
+          // shipping = orderTotal - sum(all item transaction_prices * qty)
+          const totalShipping = Math.max(0, orderTotal - itemSubtotalSum);
+          const itemSubtotal = Number(unit.order_item.transaction_price) * unit.order_item.qty;
+          const shippingRatio = itemSubtotalSum > 0 ? itemSubtotal / itemSubtotalSum : 1;
+          const allocatedShipping = totalShipping * shippingRatio;
+          totalCost = itemSubtotal + allocatedShipping;
+        } else {
+          // Single-item order or no price data: use order total directly
+          totalCost = orderTotal;
+        }
       }
-      // Note: We don't use transaction_price + shipping_cost as a fallback because:
-      // - shipping_cost is often missing or inaccurate
-      // - order.totals.total should always be available from eBay sync
 
       const refundAmount = refundKey ? (refundMap.get(refundKey) || 0) : 0;
       const unitsScanned = orderItemUnitCounts.get(unit.order_item.id) || 1;
