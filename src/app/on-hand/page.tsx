@@ -164,7 +164,8 @@ export default async function OnHandPage() {
   // to divide the price correctly. Also track good vs not-good units for smart refund distribution
   const orderItemUnitCounts = new Map<string, number>();
   const orderItemBadUnits = new Map<string, Set<string>>();  // Map of order_item_id -> set of bad unit IDs
-  const badConditions = ["damaged", "wrong_item", "missing_parts", "defective"];
+  const goodConditionSet = new Set(["good", "new", "like_new", "acceptable", "excellent"]);
+  const isBadCondition = (c: string) => !goodConditionSet.has(c?.toLowerCase() ?? "");
 
   for (const unit of units) {
     if (unit.order_item_id) {
@@ -172,7 +173,7 @@ export default async function OnHandPage() {
       orderItemUnitCounts.set(unit.order_item_id, count + 1);
 
       // Track bad units for smart refund distribution
-      if (badConditions.includes(unit.condition_status)) {
+      if (isBadCondition(unit.condition_status)) {
         if (!orderItemBadUnits.has(unit.order_item_id)) {
           orderItemBadUnits.set(unit.order_item_id, new Set());
         }

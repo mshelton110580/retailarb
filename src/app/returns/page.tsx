@@ -6,7 +6,6 @@ import { prisma } from "@/lib/db";
 import Link from "next/link";
 import ReturnActions from "./return-actions";
 import FilterLink from "@/components/filter-link";
-import { JsonValue } from "@prisma/client/runtime/library";
 
 type FilterType =
   | "all"
@@ -20,17 +19,6 @@ type FilterType =
 const CLOSED_STATES = ["CLOSED"];
 
 /**
- * Get the order total from the order's totals JSON.
- */
-function getOrderTotal(totals: JsonValue | undefined | null): number | null {
-  if (!totals) return null;
-  const t = totals as { total?: string };
-  if (t.total == null) return null;
-  const val = Number(t.total);
-  return isNaN(val) ? null : val;
-}
-
-/**
  * Determine the refund classification for a return.
  *
  * For non-escalated closed returns, uses actual_refund vs estimated_refund:
@@ -38,12 +26,10 @@ function getOrderTotal(totals: JsonValue | undefined | null): number | null {
  *   - 0 < actual_refund < estimated_refund → Partial Refund
  *   - actual_refund is null/0 → No Refund
  *
- * For escalated returns:
- *   - If actual_refund data exists, use it (same as above)
- *   - If no actual_refund, fall back to order_total:
- *     - order_total = 0 → Full Refund
- *     - order_total > 0 → No Refund (returned too late, no refund issued)
- *     - No order data → Escalated (can't determine, older than 90-day window)
+ * For escalated returns with no actual_refund, use order totals.total (remaining balance):
+ *   - totals.total == 0 → Full Refund (we paid nothing net)
+ *   - totals.total > 0 → Partial Refund (we still paid some amount)
+ *   - totals not available → Escalated (can't determine)
  *
  * Special statuses:
  *   - LESS_THAN_A_FULL_REFUND_ISSUED → Partial Refund
@@ -54,7 +40,7 @@ function getReturnRefundType(ret: {
   ebay_status: string | null;
   ebay_state: string | null;
   escalated: boolean;
-  orderTotals: JsonValue | undefined | null;
+  orderRemainingBalance: number | null;
 }): "full" | "partial" | "none" | "escalated" | "open" {
   const actual = ret.actual_refund !== null ? Number(ret.actual_refund) : null;
   const estimated = ret.estimated_refund !== null ? Number(ret.estimated_refund) : null;
@@ -79,8 +65,15 @@ function getReturnRefundType(ret: {
     return "full";
   }
 
-  // No actual_refund data — escalated returns without actual_refund data are indeterminate
+  // No actual_refund — for escalated returns use order totals.total (remaining balance after refunds)
+  // totals.total == 0 means we got everything back (full refund)
+  // totals.total > 0 means we still paid some amount (partial refund)
   if (isEsc) {
+    const remaining = ret.orderRemainingBalance;
+    if (remaining !== null) {
+      return remaining === 0 ? "full" : "partial";
+    }
+    // No order data — indeterminate
     return "escalated";
   }
 
@@ -111,13 +104,14 @@ export default async function ReturnsPage({
   });
 
   // Enrich each return with its refund type
-  const enrichedReturns = returns.map((ret) => ({
-    ...ret,
-    refundType: getReturnRefundType({
+  const enrichedReturns = returns.map((ret) => {
+    const totals = ret.order?.totals as { total?: string } | null | undefined;
+    const orderRemainingBalance = totals?.total != null ? Number(totals.total) : null;
+    return {
       ...ret,
-      orderTotals: ret.order?.totals ?? null,
-    }),
-  }));
+      refundType: getReturnRefundType({ ...ret, orderRemainingBalance }),
+    };
+  });
 
   // Filter groups
   const openReturns = enrichedReturns.filter((r) => r.refundType === "open");
@@ -295,9 +289,12 @@ export default async function ReturnsPage({
                         )}
                         {/* Refund type badge */}
                         {ret.refundType === "full" && (() => {
-                          // Only show dollar amount if actual_refund is present.
-                          // estimated_refund is eBay's projected max, not the amount paid out.
-                          const refundAmt = ret.actual_refund ? Number(ret.actual_refund) : null;
+                          // Use actual_refund if available; for escalated returns fall back to estimated_refund
+                          const refundAmt = ret.actual_refund
+                            ? Number(ret.actual_refund)
+                            : ret.estimated_refund
+                              ? Number(ret.estimated_refund)
+                              : null;
                           return (
                             <span className="rounded bg-green-900 px-2 py-0.5 text-xs text-green-300">
                               Full Refund{refundAmt !== null ? `: $${refundAmt.toFixed(2)}` : ""}

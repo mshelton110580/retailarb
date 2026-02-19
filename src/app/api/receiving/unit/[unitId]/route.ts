@@ -47,7 +47,7 @@ export async function DELETE(
   });
 
   if (shipment) {
-    const isLot = shipment.expected_units === 1 && remainingUnits >= 1;
+    const isLot = remainingUnits > shipment.expected_units;
     let scanStatus: string;
 
     if (remainingUnits === 0) {

@@ -21,6 +21,7 @@ type BucketKey =
   | "check_quantity"
   | "ebay_returns"
   | "ebay_inr"
+  | "contact_seller"
   | "return_filed_awaiting_response"
   | "return_print_label"
   | "return_label_printed"
@@ -50,6 +51,7 @@ const cardConfig: Array<{
   { key: "never_shipped", label: "Never Shipped", color: "text-rose-400", border: "border-rose-600", description: "No tracking info uploaded (excludes cancelled)", section: "action" },
   { key: "overdue_not_received", label: "Overdue — Not Received", color: "text-amber-400", border: "border-amber-600", description: "Has tracking, past estimated delivery, no delivery confirmation", section: "action" },
   { key: "needs_return", label: "Needs Return", color: "text-red-400", border: "border-red-600", description: "Checked in with bad condition", section: "action" },
+  { key: "contact_seller", label: "Contact Seller", color: "text-sky-400", border: "border-sky-600", description: "Keeping item but condition notes were recorded — contact seller about the issue (excludes orders with returns filed)", section: "action" },
   { key: "missing_units", label: "Missing Units", color: "text-orange-400", border: "border-orange-600", description: "Scanned fewer units than expected quantity", section: "action" },
   { key: "check_quantity", label: "Check Quantity (Lots)", color: "text-fuchsia-400", border: "border-fuchsia-600", description: "More units scanned than listed qty — verify lot count", section: "action" },
   // eBay Cases
@@ -92,9 +94,9 @@ export default async function InventoryPage({
     }
   });
 
-  // Fetch received units with condition
+  // Fetch received units with condition and notes
   const receivedUnits = await prisma.received_units.findMany({
-    select: { order_id: true, item_id: true, condition_status: true }
+    select: { order_id: true, item_id: true, condition_status: true, inventory_state: true, notes: true, received_at: true }
   });
 
   // Get all order IDs from shipments for return/INR lookups
@@ -262,12 +264,41 @@ export default async function InventoryPage({
   ]);
 
   const receivedOrderIds = new Set(receivedUnits.map((u) => u.order_id));
-  const goodConditions = new Set(["good", "new", "like_new", "like new", "acceptable", "excellent", "GOOD", "NEW", "LIKE_NEW", "ACCEPTABLE", "EXCELLENT"]);
+  const goodConditions = new Set(["good", "new", "like_new", "like new", "acceptable", "excellent"]);
+
+  // Needs return: has at least one unit with inventory_state === 'to_be_returned'
+  // (bad condition + no return filed yet — set by sync/import logic)
   const needsReturnOrderIds = new Set(
     receivedUnits
-      .filter((u) => u.condition_status && !goodConditions.has(u.condition_status))
+      .filter((u) => u.inventory_state === "to_be_returned")
       .map((u) => u.order_id)
   );
+  // Orders with any bad condition unit (for contact_seller exclusion)
+  const badConditionOrderIds = new Set(
+    receivedUnits
+      .filter((u) => {
+        const c = u.condition_status?.toLowerCase() ?? "";
+        return c && !goodConditions.has(c);
+      })
+      .map((u) => u.order_id)
+  );
+  // Contact Seller: condition is good (keeping the item) but there are condition notes to report
+  const contactSellerOrderIds = new Set(
+    receivedUnits
+      .filter((u) => {
+        const c = u.condition_status?.toLowerCase() ?? "";
+        return goodConditions.has(c) && u.notes?.trim();
+      })
+      .map((u) => u.order_id)
+  );
+
+  // Build map from order_id -> received units (for detail display)
+  const unitsByOrderId = new Map<string, typeof receivedUnits>();
+  for (const u of receivedUnits) {
+    if (!u.order_id) continue;
+    if (!unitsByOrderId.has(u.order_id)) unitsByOrderId.set(u.order_id, []);
+    unitsByOrderId.get(u.order_id)!.push(u);
+  }
 
   // Create sets of order IDs with filed returns or INR cases
   // For returns: only include open returns (not closed/refunded)
@@ -315,6 +346,7 @@ export default async function InventoryPage({
     never_shipped: [],
     overdue_not_received: [],
     needs_return: [],
+    contact_seller: [],
     return_filed_awaiting_response: [],
     return_print_label: [],
     return_label_printed: [],
@@ -405,9 +437,18 @@ export default async function InventoryPage({
       buckets.delivered_not_checked_in.push(shipment);
     }
 
-    // Needs return: checked in with bad condition, but no return filed yet
+    // Needs return: has units with inventory_state=to_be_returned (bad condition, no return filed yet)
+    // The to_be_returned state already excludes orders with returns filed — but also exclude
+    // if a return was filed since the last sync (open return in orderIdsWithReturns)
     if (needsReturnOrderIds.has(orderId) && !orderIdsWithReturns.has(orderId)) {
       buckets.needs_return.push(shipment);
+    }
+
+    // Contact seller: good condition but has condition notes — keeping the item, seller should be notified
+    // Exclude orders with any return filed (open or closed) — handled via eBay returns process
+    const hasAnyReturn = returns.some((r) => r.order_id === orderId);
+    if (contactSellerOrderIds.has(orderId) && !badConditionOrderIds.has(orderId) && !hasAnyReturn) {
+      buckets.contact_seller.push(shipment);
     }
 
     // Missing units
@@ -635,132 +676,161 @@ export default async function InventoryPage({
             {filteredItems.length === 0 ? (
               <p>No items in this category.</p>
             ) : (
-              filteredItems.map((shipment) => (
-                <div key={shipment.id} className="rounded border border-slate-800 p-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Link className="font-medium text-blue-400" href={`/orders/${shipment.order_id}`}>
-                        Order {shipment.order_id}
-                      </Link>
-                      {orderToReturnId.has(shipment.order_id) && (
-                        <a
-                          className="text-xs text-red-400 hover:text-red-300 hover:underline"
-                          href={`https://www.ebay.com/rt/ReturnDetails?returnId=${orderToReturnId.get(shipment.order_id)}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          title="View return on eBay"
-                        >
-                          [View Return ↗]
-                        </a>
-                      )}
-                    </div>
-                    <div className="flex gap-2">
-                      <span className={`rounded px-1.5 py-0.5 text-xs ${
-                        shipment.order?.order_status === 'Cancelled' ? 'bg-slate-700 text-slate-300' :
-                        shipment.delivered_at ? 'bg-green-900 text-green-300' :
-                        (() => {
-                          // Check if overdue
-                          const hasTracking = (shipment.tracking_numbers?.length ?? 0) > 0;
-                          if (hasTracking && !shipment.delivered_at) {
-                            let expectedBy: Date | null = null;
-                            if (shipment.estimated_max) {
-                              expectedBy = new Date(shipment.estimated_max);
-                            } else if (shipment.order?.purchase_date) {
-                              expectedBy = new Date(shipment.order.purchase_date);
-                              expectedBy.setDate(expectedBy.getDate() + DEFAULT_TRANSIT_DAYS);
-                            }
-                            if (expectedBy && now > expectedBy) {
-                              return 'bg-amber-900 text-amber-300'; // Overdue
-                            }
-                          }
-                          return hasTracking ? 'bg-blue-900 text-blue-300' : 'bg-rose-900 text-rose-300';
-                        })()
-                      }`}>
-                        {shipment.order?.order_status === 'Cancelled' ? 'Cancelled' :
-                         shipment.delivered_at ? 'Delivered' :
-                         (() => {
-                           const hasTracking = (shipment.tracking_numbers?.length ?? 0) > 0;
-                           if (hasTracking && !shipment.delivered_at) {
-                             let expectedBy: Date | null = null;
-                             if (shipment.estimated_max) {
-                               expectedBy = new Date(shipment.estimated_max);
-                             } else if (shipment.order?.purchase_date) {
-                               expectedBy = new Date(shipment.order.purchase_date);
-                               expectedBy.setDate(expectedBy.getDate() + DEFAULT_TRANSIT_DAYS);
-                             }
-                             if (expectedBy && now > expectedBy) {
-                               return 'Overdue';
-                             }
-                             return 'In Transit';
-                           }
-                           return 'Never Shipped';
-                         })()}
-                      </span>
-                      <span className={`rounded px-1.5 py-0.5 text-xs ${shipment.checked_in_at ? 'bg-emerald-900 text-emerald-300' : 'bg-yellow-900 text-yellow-300'}`}>
-                        {shipment.checked_in_at ? `Checked in: ${shipment.checked_in_at.toISOString().slice(0, 10)}` : 'Not checked in'}
-                      </span>
-                    </div>
-                  </div>
-                  {shipment.order?.order_items?.map((item) => (
-                    <div key={item.id} className="mt-1 flex items-center gap-2 text-xs text-slate-400">
-                      <a
-                        href={`https://www.ebay.com/itm/${item.item_id}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-blue-400 hover:text-blue-300 hover:underline truncate max-w-[400px]"
-                        title={item.title ?? "View on eBay"}
-                      >
-                        {item.title ?? `Item ${item.item_id}`}
-                      </a>
-                      <span>(x{item.qty})</span>
-                      <a
-                        href={`https://www.ebay.com/itm/${item.item_id}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-slate-500 hover:text-blue-400"
-                        title="Open item on eBay"
-                      >
-                        ↗
-                      </a>
-                    </div>
-                  ))}
-                  {/* Scan progress */}
-                  {shipment.scanned_units > 0 && (
-                    <div className="mt-2">
+              filteredItems.map((shipment) => {
+                const orderUnits = unitsByOrderId.get(shipment.order_id) ?? [];
+                return (
+                  <div key={shipment.id} className="rounded border border-slate-800 p-3">
+                    {/* Order header */}
+                    <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <div className="h-1.5 flex-1 rounded-full bg-slate-800 overflow-hidden">
-                          <div
-                            className={`h-full rounded-full ${
-                              shipment.is_lot ? 'bg-fuchsia-500' :
-                              shipment.scanned_units >= shipment.expected_units ? 'bg-green-500' : 'bg-yellow-500'
-                            }`}
-                            style={{ width: `${Math.min(100, shipment.expected_units > 0 ? (shipment.scanned_units / shipment.expected_units) * 100 : 100)}%` }}
-                          />
-                        </div>
-                        <span className="text-xs text-slate-400 whitespace-nowrap">
-                          {shipment.is_lot
-                            ? `Lot: ${shipment.scanned_units} scanned (listed: ${shipment.expected_units})`
-                            : `${shipment.scanned_units}/${shipment.expected_units} units scanned`}
+                        <Link className="font-medium text-blue-400" href={`/orders/${shipment.order_id}`}>
+                          Order {shipment.order_id}
+                        </Link>
+                        {orderToReturnId.has(shipment.order_id) && (
+                          <a
+                            className="text-xs text-red-400 hover:text-red-300 hover:underline"
+                            href={`https://www.ebay.com/rt/ReturnDetails?returnId=${orderToReturnId.get(shipment.order_id)}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            title="View return on eBay"
+                          >
+                            [View Return ↗]
+                          </a>
+                        )}
+                      </div>
+                      <div className="flex gap-2">
+                        <span className={`rounded px-1.5 py-0.5 text-xs ${
+                          shipment.order?.order_status === 'Cancelled' ? 'bg-slate-700 text-slate-300' :
+                          shipment.delivered_at ? 'bg-green-900 text-green-300' :
+                          (() => {
+                            const hasTracking = (shipment.tracking_numbers?.length ?? 0) > 0;
+                            if (hasTracking && !shipment.delivered_at) {
+                              let expectedBy: Date | null = null;
+                              if (shipment.estimated_max) {
+                                expectedBy = new Date(shipment.estimated_max);
+                              } else if (shipment.order?.purchase_date) {
+                                expectedBy = new Date(shipment.order.purchase_date);
+                                expectedBy.setDate(expectedBy.getDate() + DEFAULT_TRANSIT_DAYS);
+                              }
+                              if (expectedBy && now > expectedBy) {
+                                return 'bg-amber-900 text-amber-300';
+                              }
+                            }
+                            return hasTracking ? 'bg-blue-900 text-blue-300' : 'bg-rose-900 text-rose-300';
+                          })()
+                        }`}>
+                          {shipment.order?.order_status === 'Cancelled' ? 'Cancelled' :
+                           shipment.delivered_at ? 'Delivered' :
+                           (() => {
+                             const hasTracking = (shipment.tracking_numbers?.length ?? 0) > 0;
+                             if (hasTracking && !shipment.delivered_at) {
+                               let expectedBy: Date | null = null;
+                               if (shipment.estimated_max) {
+                                 expectedBy = new Date(shipment.estimated_max);
+                               } else if (shipment.order?.purchase_date) {
+                                 expectedBy = new Date(shipment.order.purchase_date);
+                                 expectedBy.setDate(expectedBy.getDate() + DEFAULT_TRANSIT_DAYS);
+                               }
+                               if (expectedBy && now > expectedBy) return 'Overdue';
+                               return 'In Transit';
+                             }
+                             return 'Never Shipped';
+                           })()}
+                        </span>
+                        <span className={`rounded px-1.5 py-0.5 text-xs ${shipment.checked_in_at ? 'bg-emerald-900 text-emerald-300' : 'bg-yellow-900 text-yellow-300'}`}>
+                          {shipment.checked_in_at ? `Checked in: ${shipment.checked_in_at.toISOString().slice(0, 10)}` : 'Not checked in'}
                         </span>
                       </div>
                     </div>
-                  )}
-                  <div className="mt-1 flex gap-3 text-xs text-slate-500">
-                    {shipment.tracking_numbers?.map((tn) => (
-                      <span key={tn.id}>{tn.carrier}: {tn.tracking_number}</span>
+
+                    {/* Order items (titles) */}
+                    {shipment.order?.order_items?.map((item) => (
+                      <div key={item.id} className="mt-1 flex items-center gap-2 text-xs text-slate-400">
+                        <a
+                          href={`https://www.ebay.com/itm/${item.item_id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-blue-400 hover:text-blue-300 hover:underline truncate max-w-[400px]"
+                          title={item.title ?? "View on eBay"}
+                        >
+                          {item.title ?? `Item ${item.item_id}`}
+                        </a>
+                        <span>(x{item.qty})</span>
+                        <a
+                          href={`https://www.ebay.com/itm/${item.item_id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-slate-500 hover:text-blue-400"
+                          title="Open item on eBay"
+                        >↗</a>
+                      </div>
                     ))}
-                    {shipment.delivered_at && (
-                      <span>Delivered: {shipment.delivered_at.toISOString().slice(0, 10)}</span>
+
+                    {/* Received units — condition / notes / state */}
+                    {orderUnits.length > 0 && (
+                      <div className="mt-2 space-y-1 border-t border-slate-800 pt-2">
+                        {orderUnits.map((unit, idx) => {
+                          const condColor =
+                            unit.inventory_state === 'on_hand' ? 'text-emerald-400' :
+                            unit.inventory_state === 'to_be_returned' ? 'text-red-400' :
+                            unit.inventory_state === 'parts_repair' ? 'text-orange-400' :
+                            unit.inventory_state === 'returned' ? 'text-slate-400' :
+                            'text-slate-300';
+                          return (
+                            <div key={idx} className="flex items-center gap-2 text-xs">
+                              <span className="text-slate-500">Unit {idx + 1}:</span>
+                              <span className={`font-medium ${condColor}`}>{unit.condition_status}</span>
+                              {unit.notes && (
+                                <span className="text-slate-400 italic">— {unit.notes}</span>
+                              )}
+                              <span className="ml-auto text-slate-600">
+                                {unit.received_at ? new Date(unit.received_at).toISOString().slice(0, 10) : ''}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
                     )}
-                    {shipment.estimated_max && !shipment.delivered_at && (
-                      <span>Est. delivery: {shipment.estimated_max.toISOString().slice(0, 10)}</span>
+
+                    {/* Scan progress */}
+                    {shipment.scanned_units > 0 && (
+                      <div className="mt-2">
+                        <div className="flex items-center gap-2">
+                          <div className="h-1.5 flex-1 rounded-full bg-slate-800 overflow-hidden">
+                            <div
+                              className={`h-full rounded-full ${
+                                shipment.is_lot ? 'bg-fuchsia-500' :
+                                shipment.scanned_units >= shipment.expected_units ? 'bg-green-500' : 'bg-yellow-500'
+                              }`}
+                              style={{ width: `${Math.min(100, shipment.expected_units > 0 ? (shipment.scanned_units / shipment.expected_units) * 100 : 100)}%` }}
+                            />
+                          </div>
+                          <span className="text-xs text-slate-400 whitespace-nowrap">
+                            {shipment.is_lot
+                              ? `Lot: ${shipment.scanned_units} scanned (listed: ${shipment.expected_units})`
+                              : `${shipment.scanned_units}/${shipment.expected_units} units scanned`}
+                          </span>
+                        </div>
+                      </div>
                     )}
-                    {shipment.order?.purchase_date && (
-                      <span>Purchased: {shipment.order.purchase_date.toISOString().slice(0, 10)}</span>
-                    )}
+
+                    <div className="mt-1 flex gap-3 text-xs text-slate-500">
+                      {shipment.tracking_numbers?.map((tn) => (
+                        <span key={tn.id}>{tn.carrier}: {tn.tracking_number}</span>
+                      ))}
+                      {shipment.delivered_at && (
+                        <span>Delivered: {shipment.delivered_at.toISOString().slice(0, 10)}</span>
+                      )}
+                      {shipment.estimated_max && !shipment.delivered_at && (
+                        <span>Est. delivery: {shipment.estimated_max.toISOString().slice(0, 10)}</span>
+                      )}
+                      {shipment.order?.purchase_date && (
+                        <span>Purchased: {shipment.order.purchase_date.toISOString().slice(0, 10)}</span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </section>

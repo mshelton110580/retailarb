@@ -181,6 +181,7 @@ model receiving_scans {
   scanned_at         DateTime @default(now())
   scanned_by_user_id String
   tracking_last8     String
+  tracking_full      String?
   resolution_state   ResolutionState
   notes              String?
   scanner            users @relation("scanned_by", fields: [scanned_by_user_id], references: [id])

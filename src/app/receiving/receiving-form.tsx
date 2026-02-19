@@ -332,10 +332,16 @@ export default function ReceivingForm() {
             <option value="new">New / Sealed</option>
             <option value="like_new">Like New</option>
             <option value="acceptable">Acceptable</option>
+            <option value="pressure mark">Pressure Mark</option>
             <option value="damaged">Damaged</option>
             <option value="wrong_item">Wrong Item</option>
             <option value="missing_parts">Missing Parts</option>
             <option value="defective">Defective</option>
+            <option value="dim power/ glitchy">Dim Power / Glitchy</option>
+            <option value="no power">No Power</option>
+            <option value="cracked screen">Cracked Screen</option>
+            <option value="water damage">Water Damage</option>
+            <option value="parts only">Parts Only</option>
           </select>
           <input
             className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm"

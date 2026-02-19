@@ -39,6 +39,7 @@ export interface ImportRow {
   tracking: string;         // full tracking number
   quantity: number;         // number of units to create
   condition_status: string; // good / pressure mark / etc.
+  condition_notes?: string; // extra detail when condition started with "good ..."
   inventory_id?: string;    // optional Inventory ID (stored in notes)
 }
 
@@ -72,6 +73,9 @@ export async function POST(req: Request) {
   let totalSkipped = 0;
   let totalErrors = 0;
 
+  // Track order IDs processed in this batch so repeated tracking = lot (never skip within same import)
+  const processedOrderIds = new Set<string>();
+
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     const rowNum = i + 1;
@@ -92,8 +96,11 @@ export async function POST(req: Request) {
     const trackingDigits = trackingInput.replace(/\D/g, "");
     const qty = Math.max(1, Math.floor(Number(row.quantity) || 1));
     const conditionStatus = row.condition_status?.trim() || "good";
+    const conditionNotes = row.condition_notes?.trim() || null;
     const scannedAt = parseTimestamp(row.timestamp) ?? new Date();
-    const inventoryId = row.inventory_id?.trim() || null;
+    const inventoryId = row.inventory_id?.trim() || null; // retained for potential future use but not stored in notes
+    // Only store condition_notes in the notes field; inventory_id is not needed there
+    const unitNotes = conditionNotes || null;
 
     // Find matching shipment via tracking number:
     // 1. Exact match
@@ -149,12 +156,41 @@ export async function POST(req: Request) {
         where: { order_id: shipment.order_id }
       });
 
-      // Skip if already fully checked in with same or more units
-      if (existingCount >= qty && existingCount >= shipment.expected_units && shipment.checked_in_at) {
-        results.push({ row: rowNum, tracking: trackingInput, status: "skipped", message: `Already checked in (${existingCount} units exist)` });
-        totalSkipped++;
+      // Skip only if this order was already fully checked in by a PREVIOUS import/scan run,
+      // AND it has not appeared in the current batch (which would mean it's a lot).
+      // processedOrderIds tracks what we've already touched this run — if it's in there,
+      // the same tracking appeared again in the sheet → lot, always create more units.
+      const seenThisRun = processedOrderIds.has(shipment.order_id);
+      const checkedInPreviously = !seenThisRun && shipment.checked_in_at != null && existingCount >= shipment.expected_units;
+      const isExactRepeat = checkedInPreviously;
+
+      if (isExactRepeat) {
+        // Mark as seen so subsequent rows with the same tracking are treated as a lot
+        processedOrderIds.add(shipment.order_id);
+        // Same tracking, same qty — check if we should update condition/notes
+        const isNonDefaultCondition = conditionStatus && conditionStatus.toLowerCase() !== "good";
+        if (isNonDefaultCondition || conditionNotes) {
+          // Update condition and/or notes on existing units that still have default "good" condition
+          const newInventoryState = isNonDefaultCondition ? computeInventoryState(conditionStatus) : undefined;
+          await prisma.received_units.updateMany({
+            where: { order_id: shipment.order_id, condition_status: "good" },
+            data: {
+              ...(isNonDefaultCondition ? { condition_status: conditionStatus, inventory_state: newInventoryState } : {}),
+              ...(conditionNotes ? { notes: unitNotes } : {})
+            }
+          });
+          const msg = isNonDefaultCondition
+            ? `Updated condition to "${conditionStatus}" on existing unit(s)`
+            : `Updated notes on existing unit(s)`;
+          results.push({ row: rowNum, tracking: trackingInput, status: "imported", message: msg, unitsCreated: 0 });
+          totalImported++;
+        } else {
+          results.push({ row: rowNum, tracking: trackingInput, status: "skipped", message: `Already checked in (${existingCount} units exist)` });
+          totalSkipped++;
+        }
         continue;
       }
+      // If same tracking appears again with additional units, fall through to create them (lot scenario)
 
       try {
         // Create received_units for each unit in this row's quantity
@@ -234,15 +270,24 @@ export async function POST(req: Request) {
 
           let inventoryState = computeInventoryState(conditionStatus);
           if (existingReturn) {
+            const goodConditions = new Set(["good", "new", "like_new", "acceptable", "excellent"]);
+            const isBadCondition = !goodConditions.has(conditionStatus?.toLowerCase() ?? "");
             const isClosed =
               existingReturn.ebay_state === "CLOSED" || existingReturn.ebay_status === "CLOSED" ||
               existingReturn.ebay_state === "REFUND_ISSUED" || existingReturn.ebay_state === "RETURN_CLOSED" ||
               existingReturn.ebay_status === "REFUND_ISSUED" || existingReturn.ebay_status === "LESS_THAN_A_FULL_REFUND_ISSUED";
-            if (isClosed) {
-              inventoryState = (existingReturn.return_delivered_date || existingReturn.return_shipped_date) ? "returned" : "parts_repair";
-            } else if ((existingReturn.refund_issued_date || existingReturn.actual_refund) && !existingReturn.return_shipped_date) {
-              inventoryState = "parts_repair";
+
+            if (existingReturn.return_shipped_date || existingReturn.return_delivered_date) {
+              // Item physically shipped or delivered back to seller
+              inventoryState = "returned";
+            } else if (isClosed) {
+              // Closed return, no return tracking — we kept the item
+              if (existingReturn.refund_issued_date || existingReturn.actual_refund) {
+                inventoryState = isBadCondition ? "parts_repair" : "on_hand";
+              }
+              // Closed with no refund and no shipping — leave as condition-based state
             } else {
+              // Open return, not yet shipped — need to send back
               inventoryState = "to_be_returned";
             }
           }
@@ -258,7 +303,7 @@ export async function POST(req: Request) {
               category_id: categoryResult.categoryId,
               scanned_by_user_id: auth.session!.user!.id,
               received_at: scannedAt,
-              notes: inventoryId ?? null
+              notes: unitNotes
             }
           });
 
@@ -267,7 +312,8 @@ export async function POST(req: Request) {
 
         // Update shipment check-in state
         const newScannedCount = existingCount + unitsCreated;
-        const isLot = shipment.expected_units === 1 && newScannedCount > 1;
+        // A lot is any shipment where the final scanned count exceeds the listed expected_units
+        const isLot = newScannedCount > shipment.expected_units;
         const scanStatus = isLot ? "check_quantity" : newScannedCount >= shipment.expected_units ? "complete" : "partial";
 
         await prisma.shipments.update({
@@ -281,6 +327,7 @@ export async function POST(req: Request) {
           }
         });
 
+        processedOrderIds.add(shipment.order_id);
         totalImported++;
         results.push({ row: rowNum, tracking: trackingInput, status: "imported", message: `Created ${unitsCreated} unit(s)`, unitsCreated });
 

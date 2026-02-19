@@ -48,6 +48,7 @@ export async function POST(req: Request) {
   const scan = await prisma.receiving_scans.create({
     data: {
       tracking_last8,
+      tracking_full: trackingInput,
       scanned_by_user_id: auth.session.user.id,
       resolution_state: resolutionState,
       notes: body.data.notes ?? null
@@ -104,8 +105,9 @@ export async function POST(req: Request) {
       }
     }
 
-    // Determine if this is a lot situation (scanning beyond expected qty for qty=1 items)
-    const isLot = shipment.expected_units === 1 && currentScannedCount >= 1;
+    // Determine if this is a lot situation (scanning beyond expected quantity)
+    // A lot occurs when the new scan would exceed the listed expected_units
+    const isLot = (currentScannedCount + 1) > shipment.expected_units;
 
     try {
       // Ensure target exists (listings FK requires it)
@@ -169,35 +171,27 @@ export async function POST(req: Request) {
 
       // Override state if there's a return
       if (existingReturn) {
-        const CLOSED_STATES = ["CLOSED"];
+        const goodConditions = new Set(["good", "new", "like_new", "acceptable", "excellent"]);
+        const isBadCondition = !goodConditions.has(body.data.condition_status?.toLowerCase() ?? "");
         const isClosed =
-          (existingReturn.ebay_state && CLOSED_STATES.includes(existingReturn.ebay_state)) ||
-          (existingReturn.ebay_status && CLOSED_STATES.includes(existingReturn.ebay_status)) ||
+          existingReturn.ebay_state === "CLOSED" ||
+          existingReturn.ebay_status === "CLOSED" ||
           existingReturn.ebay_state === "REFUND_ISSUED" ||
           existingReturn.ebay_state === "RETURN_CLOSED" ||
           existingReturn.ebay_status === "REFUND_ISSUED" ||
           existingReturn.ebay_status === "LESS_THAN_A_FULL_REFUND_ISSUED";
 
-        if (isClosed) {
-          // Return is closed - check if it was returned or just refunded
-          if (existingReturn.return_delivered_date || existingReturn.return_shipped_date) {
-            inventoryState = "returned";
-          } else if (existingReturn.refund_issued_date || existingReturn.actual_refund) {
-            inventoryState = "parts_repair";
-          } else {
-            inventoryState = "returned";
+        if (existingReturn.return_shipped_date || existingReturn.return_delivered_date) {
+          // Item physically shipped or delivered back to seller
+          inventoryState = "returned";
+        } else if (isClosed) {
+          // Closed return, no return tracking — we kept the item
+          if (existingReturn.refund_issued_date || existingReturn.actual_refund) {
+            inventoryState = isBadCondition ? "parts_repair" : "on_hand";
           }
-        }
-        // Refund issued without return being shipped - parts/keep
-        else if ((existingReturn.refund_issued_date || existingReturn.actual_refund) && !existingReturn.return_shipped_date && !existingReturn.return_delivered_date) {
-          inventoryState = "parts_repair";
-        }
-        // Return shipped but not delivered yet
-        else if (existingReturn.return_shipped_date) {
-          inventoryState = "to_be_returned";
-        }
-        // Return filed but not shipped yet
-        else {
+          // Closed with no refund and no shipping — leave as condition-based state
+        } else {
+          // Open return, not yet shipped — need to send back
           inventoryState = "to_be_returned";
         }
       }

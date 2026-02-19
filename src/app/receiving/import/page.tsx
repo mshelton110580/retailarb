@@ -9,7 +9,26 @@ interface ImportRow {
   tracking: string;
   quantity: number;
   condition_status: string;
+  condition_notes?: string; // extra detail when condition starts with "good ..."
   inventory_id?: string;
+}
+
+/**
+ * If the raw condition starts with "good" followed by more text, split it:
+ *   "good no cover" → { condition: "good", notes: "no cover" }
+ *   "good"          → { condition: "good", notes: "" }
+ *   "dim power"     → { condition: "dim power", notes: "" }
+ */
+function parseCondition(raw: string): { condition: string; notes: string } {
+  const s = raw.trim();
+  if (!s) return { condition: "good", notes: "" };
+  const lower = s.toLowerCase();
+  if (lower === "good") return { condition: "good", notes: "" };
+  if (lower.startsWith("good ") || lower.startsWith("good-") || lower.startsWith("good,")) {
+    const notes = s.slice(4).replace(/^[\s\-,]+/, "").trim();
+    return { condition: "good", notes };
+  }
+  return { condition: s, notes: "" };
 }
 
 interface ImportResult {
@@ -107,11 +126,15 @@ function csvToRows(text: string): { rows: ImportRow[]; errors: string[] } {
     const tracking = (cols[colIndex["tracking"]] ?? "").replace(/\0/g, "").replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").trim();
     if (!tracking) continue;
 
+    const rawCondition = colIndex["condition_status"] !== undefined ? (cols[colIndex["condition_status"]]?.trim() ?? "") : "";
+    const { condition, notes: conditionNotes } = parseCondition(rawCondition);
+
     rows.push({
       timestamp: colIndex["timestamp"] !== undefined ? (cols[colIndex["timestamp"]]?.trim() ?? "") : "",
       tracking,
       quantity: colIndex["quantity"] !== undefined ? (parseInt(cols[colIndex["quantity"]] ?? "1", 10) || 1) : 1,
-      condition_status: colIndex["condition_status"] !== undefined ? (cols[colIndex["condition_status"]]?.trim() || "good") : "good",
+      condition_status: condition,
+      condition_notes: conditionNotes || undefined,
       inventory_id: colIndex["inventory_id"] !== undefined ? (cols[colIndex["inventory_id"]]?.trim() || undefined) : undefined,
     });
   }
@@ -129,7 +152,6 @@ export default function ImportCSVPage() {
   const [fileName, setFileName] = useState<string>("");
   const [sheetUrl, setSheetUrl] = useState<string>("");
   const [fetchingSheet, setFetchingSheet] = useState(false);
-
   function handleFile(file: File) {
     setFileName(file.name);
     setParseError("");
@@ -362,7 +384,10 @@ export default function ImportCSVPage() {
                     <td className="py-1 pr-4 text-slate-500">{i + 1}</td>
                     <td className="py-1 pr-4 font-mono">{row.tracking}</td>
                     <td className="py-1 pr-4">{row.quantity}</td>
-                    <td className="py-1 pr-4">{row.condition_status}</td>
+                    <td className="py-1 pr-4">
+                      {row.condition_status}
+                      {row.condition_notes && <span className="ml-1 text-slate-500 italic">({row.condition_notes})</span>}
+                    </td>
                     <td className="py-1 pr-4 text-slate-400">{row.timestamp || "—"}</td>
                     <td className="py-1 text-slate-400">{row.inventory_id || "—"}</td>
                   </tr>

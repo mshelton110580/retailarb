@@ -490,16 +490,11 @@ export function computeInventoryState(
     return "to_be_returned";
   }
 
-  // Based on initial condition
-  const badConditions = [
-    "damaged",
-    "wrong_item",
-    "missing_parts",
-    "defective"
-  ];
-
-  if (badConditions.includes(conditionStatus)) {
-    return "to_be_returned";
+  // Anything that isn't a known-good condition goes to parts/repair
+  // (to_be_returned only applies when there is an actual return filed)
+  const goodConditions = new Set(["good", "new", "like_new", "acceptable", "excellent"]);
+  if (!goodConditions.has(conditionStatus?.toLowerCase() ?? "")) {
+    return "parts_repair";
   }
 
   return "on_hand";

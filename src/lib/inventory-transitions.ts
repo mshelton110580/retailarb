@@ -76,44 +76,27 @@ export async function updateInventoryStatesFromReturns() {
     for (const unit of units) {
       let newState: string | null = null;
 
-      // Check if unit is in bad condition
-      const badConditions = ["damaged", "wrong_item", "missing_parts", "defective"];
-      const isBadCondition = badConditions.includes(unit.condition_status);
+      // Check if unit is in bad condition (anything that isn't a known-good condition)
+      const goodConditions = new Set(["good", "new", "like_new", "acceptable", "excellent"]);
+      const isBadCondition = !goodConditions.has(unit.condition_status?.toLowerCase() ?? "");
 
-      // PRIORITY 1: Check if return is closed
-      if (isReturnClosed(ret)) {
-        // Return is closed - determine if it was returned or just refunded
-
-        // If the item was physically returned (has return tracking)
-        if (ret.return_delivered_date || ret.return_shipped_date) {
-          newState = "returned";
-        }
-        // If refunded without return (no return tracking)
-        else if (ret.refund_issued_date || ret.actual_refund || ret.refund_amount || ret.estimated_refund) {
-          // Only bad condition units go to parts_repair, good units stay on_hand
+      // PRIORITY 1: Item physically shipped or delivered back to seller
+      if (ret.return_shipped_date || ret.return_delivered_date) {
+        newState = "returned";
+      }
+      // PRIORITY 2: Return is closed with no return tracking
+      else if (isReturnClosed(ret)) {
+        // Refunded but item was never shipped back — we kept it
+        if (ret.refund_issued_date || ret.actual_refund || ret.refund_amount || ret.estimated_refund) {
+          // Bad condition → parts_repair, good condition → stays on_hand (no change)
           if (isBadCondition) {
             newState = "parts_repair";
           }
-          // Don't change state for good condition units - they stay on_hand
         }
-        // Closed but no clear indication - assume returned
-        else {
-          newState = "returned";
-        }
+        // Closed with no refund and no return tracking — leave state as-is (on_hand or parts_repair)
       }
-      // PRIORITY 2: Refund issued without return being shipped - parts/keep
-      else if ((ret.refund_issued_date || ret.actual_refund || ret.refund_amount || ret.estimated_refund) && !ret.return_shipped_date && !ret.return_delivered_date) {
-        // Only bad condition units go to parts_repair, good units stay on_hand
-        if (isBadCondition) {
-          newState = "parts_repair";
-        }
-      }
-      // PRIORITY 3: Return is open but shipped
-      else if (ret.return_shipped_date) {
-        newState = "to_be_returned";
-      }
-      // PRIORITY 4: Return is open and waiting
-      else if (ret.ebay_state === "RETURN_OPEN" || ret.ebay_status === "WAITING_FOR_SHIPPING_LABEL") {
+      // PRIORITY 3: Open return, not yet shipped — we need to send it back
+      else {
         newState = "to_be_returned";
       }
 

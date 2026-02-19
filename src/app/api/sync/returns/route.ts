@@ -278,17 +278,17 @@ async function upsertReturn(ret: EbayReturnSummary, token: string) {
   // Extract return reason from creationInfo
   const returnReason = ret.creationInfo?.reason ?? null;
 
-  // Fetch tracking information and full details
-  let trackingInfo = null;
-  let detailInfo = null;
+  // Fetch full return details (contains shipment tracking in detail.returnShipmentInfo)
+  let detailInfo: any = null;
   try {
-    [trackingInfo, detailInfo] = await Promise.all([
-      getReturnTracking(token, returnId),
-      getReturnDetail(token, returnId),
-    ]);
+    detailInfo = await getReturnDetail(token, returnId);
   } catch (err: any) {
-    console.log(`[Sync Returns] Could not fetch tracking/details for ${returnId}:`, err.message);
+    console.log(`[Sync Returns] Could not fetch details for ${returnId}:`, err.message);
   }
+
+  // The API returns { summary: {...}, detail: { returnShipmentInfo: { shipmentTracking: {...}, allShipmentTrackings: [...] } } }
+  const shipmentTracking = detailInfo?.detail?.returnShipmentInfo?.shipmentTracking ?? null;
+  const allTrackings: any[] = detailInfo?.detail?.returnShipmentInfo?.allShipmentTrackings ?? [];
 
   const data: any = {
     order_id: resolvedOrderId,
@@ -309,22 +309,37 @@ async function upsertReturn(ret: EbayReturnSummary, token: string) {
     last_synced_at: new Date(),
   };
 
-  // Add tracking info if available
-  if (trackingInfo) {
-    data.return_carrier = trackingInfo.trackingCarrierUsed ?? null;
-    data.return_tracking_number = trackingInfo.trackingNumber ?? null;
-    data.return_tracking_status = trackingInfo.trackingStatus ?? null;
-    data.return_shipped_date = trackingInfo.shipmentDate?.value ? new Date(trackingInfo.shipmentDate.value) : null;
-    data.return_delivered_date = trackingInfo.deliveredDate?.value ? new Date(trackingInfo.deliveredDate.value) : null;
-  }
-
-  // Add label info if available
-  if (detailInfo?.returnShipment) {
-    data.label_created_date = detailInfo.returnShipment.labelGeneratedDate?.value
-      ? new Date(detailInfo.returnShipment.labelGeneratedDate.value)
+  // Extract tracking info from detail.returnShipmentInfo.shipmentTracking
+  if (shipmentTracking) {
+    data.return_carrier = shipmentTracking.carrierUsed ?? shipmentTracking.carrierName ?? null;
+    data.return_tracking_number = shipmentTracking.trackingNumber ?? null;
+    data.return_tracking_status = shipmentTracking.deliveryStatus ?? null;
+    data.label_created_date = shipmentTracking.labelDate?.value
+      ? new Date(shipmentTracking.labelDate.value)
       : null;
-    data.label_url = detailInfo.returnShipment.labelDownloadURL ?? null;
-    data.label_created_by = detailInfo.returnShipment.labelCreatedBy ?? null;
+
+    // Use responseHistory events to get precise shipped and delivered dates
+    const history: any[] = detailInfo?.detail?.responseHistory ?? [];
+
+    // Shipped: NOTIFIED_SHIPPED or BUYER_MARK_RETURN_SHIPPED transition
+    const shippedEvent = history.find((e: any) =>
+      e.activity === "NOTIFIED_SHIPPED" || e.activity === "BUYER_MARK_RETURN_SHIPPED"
+    );
+    if (shippedEvent?.creationDate?.value) {
+      data.return_shipped_date = new Date(shippedEvent.creationDate.value);
+    }
+
+    // Delivered: NOTIFIED_DELIVERED or SELLER_MARK_AS_RECEIVED or EBAY_MARK_AS_RECEIVED
+    const deliveredEvent = history.find((e: any) =>
+      e.activity === "NOTIFIED_DELIVERED" ||
+      e.activity === "SELLER_MARK_AS_RECEIVED" ||
+      e.activity === "EBAY_MARK_AS_RECEIVED"
+    );
+    if (deliveredEvent?.creationDate?.value) {
+      data.return_delivered_date = new Date(deliveredEvent.creationDate.value);
+    }
+
+    console.log(`[Sync Returns] Return ${returnId}: tracking=${data.return_tracking_number} carrier=${data.return_carrier} status=${data.return_tracking_status} shipped=${data.return_shipped_date?.toISOString().slice(0,10) ?? "null"} delivered=${data.return_delivered_date?.toISOString().slice(0,10) ?? "null"}`);
   }
 
   // Check if refund was issued
