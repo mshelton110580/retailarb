@@ -1,6 +1,7 @@
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import CategoryManager from "./category-manager";
 
 export default async function CategoriesAdminPage() {
@@ -62,11 +63,16 @@ export default async function CategoriesAdminPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Category Management</h1>
-        <p className="text-sm text-slate-400 mt-1">
-          Merge duplicate categories and manage category mappings
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Category Management</h1>
+          <p className="text-sm text-slate-400 mt-1">
+            Merge duplicate categories and manage category mappings
+          </p>
+        </div>
+        <Link href="/admin/users" className="rounded border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800">
+          Users
+        </Link>
       </div>
 
       <CategoryManager

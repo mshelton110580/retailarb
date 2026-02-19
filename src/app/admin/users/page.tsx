@@ -1,5 +1,6 @@
 import PageHeader from "@/components/page-header";
 import { prisma } from "@/lib/db";
+import Link from "next/link";
 import CreateUserForm from "./user-form";
 
 type UserSummary = {
@@ -17,7 +18,11 @@ export default async function AdminUsersPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="User Management" />
+      <PageHeader title="User Management">
+        <Link href="/admin/categories" className="rounded border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800">
+          Categories
+        </Link>
+      </PageHeader>
       <CreateUserForm />
       <section className="rounded-lg border border-slate-800 bg-slate-900 p-4">
         <h2 className="text-lg font-semibold">Users</h2>
