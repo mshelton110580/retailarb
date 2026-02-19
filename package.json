@@ -10,7 +10,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "seed": "ts-node --transpile-only prisma/seed.ts",
-    "worker": "ts-node --transpile-only src/worker/index.ts"
+    "worker": "ts-node --project tsconfig.worker.json src/worker/index.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.18.0",
