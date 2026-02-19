@@ -30,6 +30,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
                     <Link href="/on-hand">On Hand</Link>
                     <Link href="/ebay-accounts">eBay Accounts</Link>
                     <Link href="/receiving">Receiving</Link>
+                    <Link href="/units">Units</Link>
                     <Link href="/returns">Returns</Link>
                     <Link href="/inr">INR</Link>
                     <Link href="/inbound">Inbound</Link>
