@@ -42,12 +42,20 @@ export async function GET(
 
   const goodConditions = new Set(["good", "new", "like_new", "acceptable", "excellent"]);
 
-  // Detect if mixed lot: multiple distinct categories among units
-  const categoryIds = new Set(units.map((u) => u.category_id ?? "none"));
-  const isMixedLot = categoryIds.size > 1;
-
   const orderQty = shipment.order.order_items.reduce((s, i) => s + i.qty, 0);
-  const lotSize = shipment.lot_size ?? (orderQty > 0 ? Math.round(shipment.scanned_units / orderQty) : null);
+  // lot_size: use stored value, or infer via ceil(scanned/qty)
+  const lotSize = shipment.lot_size ??
+    (shipment.is_lot && orderQty > 0 ? Math.ceil(shipment.scanned_units / orderQty) : null);
+
+  // Missing units: if scanned doesn't fill all lots evenly
+  const expectedTotal = lotSize && orderQty ? lotSize * orderQty : null;
+  const missingUnits = expectedTotal ? expectedTotal - shipment.scanned_units : 0;
+
+  // Mixed lot detection: multiple distinct non-null categories among scanned units
+  // OR lot_manifest (from title parsing) indicates multiple item types
+  const nonNullCategoryIds = new Set(units.map((u) => u.category_id).filter(Boolean));
+  const manifestMixed = Array.isArray(shipment.lot_manifest) && (shipment.lot_manifest as any[]).length > 1;
+  const isMixedLot = nonNullCategoryIds.size > 1 || manifestMixed;
 
   return NextResponse.json({
     shipment: {
@@ -58,6 +66,8 @@ export async function GET(
       expectedUnits: shipment.expected_units,
       isLot: shipment.is_lot,
       lotSize,
+      expectedTotal,
+      missingUnits,
       isMixedLot,
       reconciliationStatus: shipment.reconciliation_status,
       scanStatus: shipment.scan_status,

@@ -23,6 +23,8 @@ type ShipmentInfo = {
   orderQty: number;
   scannedUnits: number;
   expectedUnits: number;
+  expectedTotal: number | null;
+  missingUnits: number;
   isLot: boolean;
   lotSize: number | null;
   isMixedLot: boolean;
@@ -169,8 +171,14 @@ export default function LotReconciliation({ shipmentId, onDone }: { shipmentId: 
             </div>
             <p className="text-xs text-slate-400 mt-1">
               qty: {shipment.orderQty} · scanned: {shipment.scannedUnits}
-              {shipment.lotSize && ` · ${shipment.lotSize} per lot`}
+              {shipment.lotSize ? ` · ${shipment.lotSize} per lot` : ""}
+              {shipment.expectedTotal ? ` · expected: ${shipment.expectedTotal}` : ""}
             </p>
+            {shipment.missingUnits > 0 && (
+              <p className="text-xs text-amber-400 mt-0.5">
+                ⚠ {shipment.missingUnits} unit{shipment.missingUnits !== 1 ? "s" : ""} appear{shipment.missingUnits === 1 ? "s" : ""} to be missing — scan more or confirm shortage in reconciliation
+              </p>
+            )}
           </div>
         </div>
 

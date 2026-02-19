@@ -91,29 +91,47 @@ export async function POST(req: Request) {
     });
 
     const newUnitIndex = currentScannedCount + 1;
+    const newScannedCount = currentScannedCount + 1;
 
-    // Lot detection: once scanned > orderQty we know each "qty unit" contains
-    // multiple physical items, i.e. it's a lot. The lot size is inferred as
-    // scanned_units / orderQty once scanning is complete.
-    // We flag is_lot as soon as scans exceed orderQty.
-    const isLot = (currentScannedCount + 1) > orderQty || shipment.is_lot;
+    // Lot detection: scans STRICTLY greater than orderQty means each purchased
+    // unit contains multiple physical items. The triggering scan (qty+1) is the
+    // moment we retroactively reclassify the shipment as a lot.
+    const justBecameLot = !shipment.is_lot && newScannedCount > orderQty;
+    const isLot = shipment.is_lot || newScannedCount > orderQty;
 
-    // Determine which order item this unit belongs to.
-    // For lots (scanned > orderQty), wrap the index back around so units
-    // cycle through the order items repeatedly.
-    const wrappedIndex = isLot
-      ? ((currentScannedCount % orderQty) + 1)
-      : newUnitIndex;
+    // lot_size = ceil(scanned / qty) — always reflects current best estimate.
+    // e.g. qty=2, scanned=11 → ceil(11/2)=6, with 1 missing unit implied.
+    const lotSize = isLot && orderQty > 0
+      ? Math.ceil(newScannedCount / orderQty)
+      : (shipment.lot_size ?? null);
 
-    let targetItem = orderItems[0];
-    let runningCount = 0;
-    for (const item of orderItems) {
-      runningCount += item.qty;
-      if (wrappedIndex <= runningCount) {
-        targetItem = item;
-        break;
+    // For lots all units belong to the first (and only meaningful) order item.
+    // For normal multi-qty orders walk items linearly.
+    const targetItem = (() => {
+      if (isLot) return orderItems[0];
+      let running = 0;
+      for (const item of orderItems) {
+        running += item.qty;
+        if (newUnitIndex <= running) return item;
       }
+      return orderItems[0];
+    })();
+
+    // If this scan just triggered lot reclassification, fix all prior units:
+    // point their order_item_id to the first order item (same as all lot units).
+    if (justBecameLot && orderItems[0]) {
+      await prisma.received_units.updateMany({
+        where: { order_id: shipment.order_id },
+        data: { order_item_id: orderItems[0].id }
+      });
     }
+
+    // Reopen reconciliation if this tracking number is being rescanned after
+    // already being marked reviewed/overridden.
+    const reopenReconciliation =
+      shipment.is_lot &&
+      (shipment.reconciliation_status === "reviewed" ||
+        shipment.reconciliation_status === "overridden");
 
     try {
       // Ensure target exists (listings FK requires it)
@@ -217,26 +235,14 @@ export async function POST(req: Request) {
         }
       });
 
-      const newScannedCount = currentScannedCount + 1;
-
-      // Infer lot_size once we have more scans than orderQty
-      // lot_size = scanned / orderQty (integer division, only update when evenly divisible)
-      let lotSize: number | null = shipment.lot_size ?? null;
-      if (isLot && orderQty > 0 && newScannedCount % orderQty === 0) {
-        lotSize = newScannedCount / orderQty;
-      }
-
       // scan_status: lots always stay check_quantity until reconciliation
-      let scanStatus: string;
-      if (isLot) {
-        scanStatus = "check_quantity";
-      } else if (newScannedCount >= orderQty) {
-        scanStatus = "complete";
-      } else {
-        scanStatus = "partial";
-      }
+      const scanStatus = isLot
+        ? "check_quantity"
+        : newScannedCount >= orderQty
+          ? "complete"
+          : "partial";
 
-      // Update shipment with scan progress
+      // Update shipment with scan progress; reopen reconciliation if rescanned
       await prisma.shipments.update({
         where: { id: shipment.id },
         data: {
@@ -245,7 +251,8 @@ export async function POST(req: Request) {
           is_lot: isLot,
           lot_size: lotSize,
           checked_in_at: shipment.checked_in_at ?? new Date(),
-          checked_in_by: shipment.checked_in_by ?? auth.session!.user!.id
+          checked_in_by: shipment.checked_in_by ?? auth.session!.user!.id,
+          ...(reopenReconciliation ? { reconciliation_status: "pending" } : {})
         }
       });
 
