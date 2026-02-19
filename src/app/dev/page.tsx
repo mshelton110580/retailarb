@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import PageHeader from "@/components/page-header";
 import EbayExportUpload from "./ebay-export-upload";
 import UploadTmp from "./upload-tmp";
+import ScrapeOrderTotals from "./scrape-order-totals";
 
 /**
  * /dev — Hidden developer tools page.
@@ -28,6 +29,14 @@ export default async function DevPage() {
           File Inspection
         </h2>
         <UploadTmp />
+      </section>
+
+      {/* Scrape original order totals from eBay order pages */}
+      <section className="space-y-2">
+        <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+          Order Total Backfill
+        </h2>
+        <ScrapeOrderTotals />
       </section>
 
       {/* eBay Export Backfill */}

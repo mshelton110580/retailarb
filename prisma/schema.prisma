@@ -45,6 +45,13 @@ enum ReturnScrapeState {
   FAILED
 }
 
+enum OrderScrapeState {
+  PENDING
+  DONE
+  NEEDS_LOGIN
+  FAILED
+}
+
 model users {
   id            String     @id @default(cuid())
   email         String     @unique
@@ -117,7 +124,10 @@ model orders {
   purchase_date   DateTime
   order_status    String
   totals          Json
-  original_total  Decimal? @db.Decimal(12, 2)  // Captured on first sync, never overwritten — used with totals.total to derive refund amount
+  original_total      Decimal? @db.Decimal(12, 2)  // Captured on first sync, never overwritten — used with totals.total to derive refund amount
+  scrape_state        OrderScrapeState?             // Tracks order page scrape for original_total backfill
+  scrape_attempts     Int      @default(0)
+  last_scraped_at     DateTime?
   ship_to_city   String?
   ship_to_state  String?
   ship_to_postal String?

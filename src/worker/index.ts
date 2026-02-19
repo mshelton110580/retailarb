@@ -371,6 +371,163 @@ const alertsWorker = new Worker(
   { connection: connection as any }
 );
 
+/**
+ * order_scrape_job
+ *
+ * Visits the eBay order detail page for a single order using the buyer's saved
+ * Playwright session. Extracts:
+ *   - "Order total"  — the original pre-refund total (shown at top of payment summary)
+ *   - "Refund" line(s) — summed to get total refunds
+ *
+ * original_total = order_total (eBay always shows the original; current total + refund = original)
+ *
+ * Only writes original_total if it is currently NULL.
+ */
+const orderScrapeWorker = new Worker(
+  "order_scrape_job",
+  async (job) => {
+    const { orderId } = job.data as { orderId: string };
+
+    const order = await prisma.orders.findUnique({
+      where: { order_id: orderId },
+      include: { ebay_account: true }
+    });
+
+    if (!order) return;
+
+    // Skip if already set
+    if (order.original_total != null) {
+      await prisma.orders.update({
+        where: { order_id: orderId },
+        data: { scrape_state: "DONE" }
+      });
+      return;
+    }
+
+    if (!order.ebay_account?.playwright_state) {
+      await prisma.orders.update({
+        where: { order_id: orderId },
+        data: {
+          scrape_state: "NEEDS_LOGIN",
+          scrape_attempts: { increment: 1 },
+          last_scraped_at: new Date()
+        }
+      });
+      return;
+    }
+
+    const browser = await chromium.launch({ headless: process.env.PLAYWRIGHT_HEADLESS !== "false" });
+    try {
+      const context = await browser.newContext({
+        storageState: JSON.parse(order.ebay_account.playwright_state)
+      });
+      const page = await context.newPage();
+
+      const url = `https://order.ebay.com/ord/show?orderId=${orderId}`;
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await page.waitForTimeout(2500);
+
+      // Check if we were redirected to login
+      const currentUrl = page.url();
+      if (currentUrl.includes("signin") || currentUrl.includes("login")) {
+        await browser.close();
+        await prisma.orders.update({
+          where: { order_id: orderId },
+          data: {
+            scrape_state: "NEEDS_LOGIN",
+            scrape_attempts: { increment: 1 },
+            last_scraped_at: new Date()
+          }
+        });
+        return;
+      }
+
+      // Extract all text from the payment summary section.
+      // eBay's order page shows:
+      //   Order total           $XX.XX    ← original pre-refund total
+      //   Subtotal              $XX.XX
+      //   Shipping              $XX.XX
+      //   Refund                -$XX.XX   ← may appear 0 or more times
+      //   Amount paid           $XX.XX    ← current post-refund total
+      //
+      // Strategy: get the full page text and use regex to find these values.
+      const bodyText = await page.evaluate(() => document.body.innerText);
+
+      // Parse a dollar amount like "$1,234.56" or "-$1,234.56"
+      function parseDollar(s: string): number | null {
+        const m = s.replace(/,/g, "").match(/-?\$?([\d.]+)/);
+        return m ? parseFloat(m[1]) : null;
+      }
+
+      // Find "Order total" line — the authoritative pre-refund total.
+      // Pattern: "Order total" followed (within ~100 chars) by a dollar amount.
+      let originalTotal: number | null = null;
+
+      const orderTotalMatch = bodyText.match(/Order total[\s\S]{0,80}?\$\s*([\d,]+\.\d{2})/i);
+      if (orderTotalMatch) {
+        originalTotal = parseFloat(orderTotalMatch[1].replace(/,/g, ""));
+      }
+
+      // Fallback: sum current total (totals->total) + all refund lines shown on page
+      if (originalTotal == null) {
+        const currentTotal = order.totals && typeof order.totals === "object" && "total" in order.totals
+          ? parseFloat(String((order.totals as any).total))
+          : null;
+
+        if (currentTotal != null) {
+          // Find all "Refund" lines with amounts
+          let totalRefunds = 0;
+          const refundMatches = bodyText.matchAll(/Refund[\s\S]{0,60}?\$\s*([\d,]+\.\d{2})/gi);
+          for (const m of refundMatches) {
+            totalRefunds += parseFloat(m[1].replace(/,/g, ""));
+          }
+          if (totalRefunds > 0) {
+            originalTotal = currentTotal + totalRefunds;
+          } else {
+            // No refunds found — current total IS the original total
+            originalTotal = currentTotal;
+          }
+        }
+      }
+
+      await browser.close();
+
+      if (originalTotal != null && originalTotal > 0) {
+        await prisma.orders.update({
+          where: { order_id: orderId },
+          data: {
+            original_total: originalTotal,
+            scrape_state: "DONE",
+            scrape_attempts: { increment: 1 },
+            last_scraped_at: new Date()
+          }
+        });
+      } else {
+        await prisma.orders.update({
+          where: { order_id: orderId },
+          data: {
+            scrape_state: "FAILED",
+            scrape_attempts: { increment: 1 },
+            last_scraped_at: new Date()
+          }
+        });
+      }
+    } catch (err) {
+      await browser.close().catch(() => {});
+      await prisma.orders.update({
+        where: { order_id: orderId },
+        data: {
+          scrape_state: "FAILED",
+          scrape_attempts: { increment: 1 },
+          last_scraped_at: new Date()
+        }
+      });
+      throw err;
+    }
+  },
+  { connection: connection as any, concurrency: 1 }
+);
+
 async function scheduleRepeatableJobs() {
   const syncQueue = new Queue("sync_orders_job", { connection: connection as any });
   const alertsQueue = new Queue("alerts_job", { connection: connection as any });
