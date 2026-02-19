@@ -37,7 +37,10 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
         console.log(`[Order Sync] Window returned ${result.orders.length} orders`);
 
         for (const order of result.orders) {
-          // Upsert the order
+          // Upsert the order.
+          // original_total is captured on CREATE only — frozen at first-sync value.
+          // totals.total is updated every sync and reflects the current (post-refund) amount.
+          // refund_received = original_total - totals.total (when original_total is available).
           await prisma.orders.upsert({
             where: { order_id: String(order.orderId) },
             update: {
@@ -46,6 +49,7 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
               ship_to_city: order.shippingAddress?.city ?? null,
               ship_to_state: order.shippingAddress?.state ?? null,
               ship_to_postal: order.shippingAddress?.postalCode ?? null,
+              // original_total intentionally omitted — must never be overwritten
             },
             create: {
               order_id: String(order.orderId),
@@ -53,6 +57,7 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
               purchase_date: new Date(order.createdTime),
               order_status: order.orderStatus,
               totals: { total: order.total },
+              original_total: Number(order.total),  // Frozen at first sync
               ship_to_city: order.shippingAddress?.city ?? null,
               ship_to_state: order.shippingAddress?.state ?? null,
               ship_to_postal: order.shippingAddress?.postalCode ?? null,

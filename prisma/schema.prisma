@@ -112,11 +112,12 @@ model listings {
 }
 
 model orders {
-  order_id       String   @id
+  order_id        String   @id
   ebay_account_id String
-  purchase_date  DateTime
-  order_status   String
-  totals         Json
+  purchase_date   DateTime
+  order_status    String
+  totals          Json
+  original_total  Decimal? @db.Decimal(12, 2)  // Captured on first sync, never overwritten — used with totals.total to derive refund amount
   ship_to_city   String?
   ship_to_state  String?
   ship_to_postal String?

@@ -58,7 +58,8 @@ export default async function OnHandPage() {
       order: {
         select: {
           order_id: true,
-          totals: true  // Current order total from eBay (includes shipping, after refunds)
+          totals: true,           // Current order total from eBay (includes shipping, after refunds)
+          original_total: true    // Frozen at first sync — used to calculate refund amount
         }
       }
     }
@@ -102,10 +103,24 @@ export default async function OnHandPage() {
     }
   });
 
-  // Build maps for refunded amounts, original costs, and return info by order_id + item_id
-  // Note: Some returns have ebay_item_id instead of item_id, so we need both
+  // Build a map of order_id -> original_total from the units' order relation.
+  // original_total is captured at first sync and never overwritten — it is the pre-refund order total.
+  // For older orders without original_total, we fall back to estimated_refund per-item (legacy path).
+  const orderOriginalTotalMap = new Map<string, number>(); // order_id -> original_total
+  for (const unit of units) {
+    if (unit.order?.order_id && unit.order.original_total != null) {
+      if (!orderOriginalTotalMap.has(unit.order.order_id)) {
+        orderOriginalTotalMap.set(unit.order.order_id, Number(unit.order.original_total));
+      }
+    }
+  }
+
+  // Build maps for refunded amounts, original costs, and return info by order_id + item_id.
+  // Note: Some returns have ebay_item_id instead of item_id, so we need both.
   const refundMap = new Map<string, number>();
-  const originalCostMap = new Map<string, number>();  // estimated_refund = original total paid
+  // originalCostMap is the legacy fallback for orders without original_total on the order record.
+  // Key: "orderId-itemId", value: estimated_refund (per-item original cost proxy from Returns API).
+  const originalCostMap = new Map<string, number>();
   const returnInfoMap = new Map<string, {
     refundAmount: number;
     wasReturned: boolean;  // true if return was delivered
@@ -121,33 +136,35 @@ export default async function OnHandPage() {
 
     const key = `${ret.order_id}-${itemId}`;
 
-    // Calculate actual refund amount
-    // Always use: estimated_refund - current_order_total
-    // This is the most accurate and reliable method
+    // Legacy fallback: track estimated_refund as original cost for orders without original_total
+    if (ret.estimated_refund && !orderOriginalTotalMap.has(ret.order_id)) {
+      originalCostMap.set(key, Number(ret.estimated_refund));
+    }
+
+    // Refund amount for this item:
+    // Prefer original_total on the order (works for all refund types incl. INR/courtesy)
+    // Fall back to estimated_refund - current_total for legacy orders
     let refundAmount = 0;
-    const estimatedRefund = ret.estimated_refund ? Number(ret.estimated_refund) : 0;
 
-    if (ret.estimated_refund && ret.order) {
-      // Use order.totals.total (current order total from eBay)
+    if (ret.order) {
       let currentOrderTotal = 0;
-
       if (ret.order.totals && typeof ret.order.totals === 'object' && 'total' in ret.order.totals) {
         currentOrderTotal = Number((ret.order.totals as any).total);
       }
 
-      // Calculate refund as difference between original and current total
-      if (estimatedRefund >= currentOrderTotal) {
-        refundAmount = estimatedRefund - currentOrderTotal;
+      // If the order has original_total, that's the canonical pre-refund amount.
+      // The refund shown in the return record's estimated_refund is per-item, so we
+      // skip computing order-level refund here — it will be computed per-unit in the
+      // cost section below using original_total - totals.total.
+      // We still populate refundMap for the *legacy* path using estimated_refund.
+      if (!orderOriginalTotalMap.has(ret.order_id)) {
+        const estimatedRefund = ret.estimated_refund ? Number(ret.estimated_refund) : 0;
+        if (estimatedRefund > 0 && estimatedRefund >= currentOrderTotal) {
+          refundAmount = estimatedRefund - currentOrderTotal;
+        }
       }
     }
 
-    // Track ORIGINAL order total (estimated_refund = what was originally paid before refund)
-    // This is used for calculating per-unit costs based on original value
-    if (ret.estimated_refund) {
-      originalCostMap.set(key, Number(ret.estimated_refund));
-    }
-
-    // If we have a refund, track it
     if (refundAmount > 0) {
       const existing = refundMap.get(key) || 0;
       refundMap.set(key, existing + refundAmount);
@@ -229,33 +246,66 @@ export default async function OnHandPage() {
     let itemCost = 0;
     if (unit.order_item) {
       let totalCost = 0;
-      const refundKey = unit.order?.order_id && unit.order_item.item_id
-        ? `${unit.order.order_id}-${unit.order_item.item_id}`
+      const orderId = unit.order?.order_id;
+      const refundKey = orderId && unit.order_item.item_id
+        ? `${orderId}-${unit.order_item.item_id}`
         : null;
 
-      // First, try to get the original cost from estimated_refund (most accurate for refunded orders)
-      if (refundKey && originalCostMap.has(refundKey)) {
+      // Determine the original (pre-refund) order total.
+      // Priority 1: original_total on the order record (set at first sync, never overwritten).
+      //             Works for all refund types (returns, INR, eBay-courtesy).
+      // Priority 2: Legacy fallback — estimated_refund per-item from Returns API.
+      //             Only covers orders that went through eBay's return flow AND lack original_total.
+      const orderOriginalTotal = orderId ? orderOriginalTotalMap.get(orderId) : undefined;
+      const itemSubtotalSum = orderId ? (orderItemPriceSum.get(orderId) || 0) : 0;
+
+      if (orderOriginalTotal != null) {
+        // Use original_total as the order's cost basis. Allocate to this item proportionally.
+        if (itemSubtotalSum > 0 && unit.order_item) {
+          const itemSubtotal = Number(unit.order_item.transaction_price) * unit.order_item.qty;
+          const shippingRatio = itemSubtotal / itemSubtotalSum;
+          const totalShipping = Math.max(0, orderOriginalTotal - itemSubtotalSum);
+          totalCost = itemSubtotal + totalShipping * shippingRatio;
+        } else {
+          totalCost = orderOriginalTotal;
+        }
+      } else if (refundKey && originalCostMap.has(refundKey)) {
+        // Legacy: estimated_refund acts as per-item original cost (includes shipping for that item)
         totalCost = originalCostMap.get(refundKey)!;
       } else if (unit.order?.totals && typeof unit.order.totals === 'object' && 'total' in unit.order.totals) {
+        // No original_total and no return record — use current totals.total as best available cost.
+        // (This is the post-refund total, so cost may be understated if a refund exists without a return record.)
         const orderTotal = Number((unit.order.totals as any).total);
-        const orderId = unit.order.order_id;
-        const itemSubtotalSum = orderItemPriceSum.get(orderId) || 0;
 
         if (itemSubtotalSum > 0 && unit.order_item) {
-          // Multi-item order: allocate shipping proportionally by item subtotal ratio
-          // shipping = orderTotal - sum(all item transaction_prices * qty)
           const totalShipping = Math.max(0, orderTotal - itemSubtotalSum);
           const itemSubtotal = Number(unit.order_item.transaction_price) * unit.order_item.qty;
-          const shippingRatio = itemSubtotalSum > 0 ? itemSubtotal / itemSubtotalSum : 1;
+          const shippingRatio = itemSubtotal / itemSubtotalSum;
           const allocatedShipping = totalShipping * shippingRatio;
           totalCost = itemSubtotal + allocatedShipping;
         } else {
-          // Single-item order or no price data: use order total directly
           totalCost = orderTotal;
         }
       }
 
-      const refundAmount = refundKey ? (refundMap.get(refundKey) || 0) : 0;
+      // Refund amount for this item:
+      // If original_total is available, compute order-level refund = original_total - current_total,
+      // then allocate to this item proportionally (same ratio as cost allocation).
+      let refundAmount = 0;
+      if (orderOriginalTotal != null && unit.order?.totals &&
+          typeof unit.order.totals === 'object' && 'total' in unit.order.totals) {
+        const currentOrderTotal = Number((unit.order.totals as any).total);
+        const orderRefund = Math.max(0, orderOriginalTotal - currentOrderTotal);
+        if (orderRefund > 0 && itemSubtotalSum > 0 && unit.order_item) {
+          const itemSubtotal = Number(unit.order_item.transaction_price) * unit.order_item.qty;
+          refundAmount = orderRefund * (itemSubtotal / itemSubtotalSum);
+        } else if (orderRefund > 0) {
+          refundAmount = orderRefund;
+        }
+      } else {
+        // Legacy path: use refundMap built from estimated_refund
+        refundAmount = refundKey ? (refundMap.get(refundKey) || 0) : 0;
+      }
       const unitsScanned = orderItemUnitCounts.get(unit.order_item.id) || 1;
       const badUnitsSet = orderItemBadUnits.get(unit.order_item.id);
       const badUnitsCount = badUnitsSet ? badUnitsSet.size : 0;
