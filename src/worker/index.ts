@@ -375,11 +375,13 @@ const alertsWorker = new Worker(
  * order_scrape_job
  *
  * Visits the eBay order detail page for a single order using the buyer's saved
- * Playwright session. Extracts:
- *   - "Order total"  — the original pre-refund total (shown at top of payment summary)
- *   - "Refund" line(s) — summed to get total refunds
+ * Playwright session. Extracts original_total as:
  *
- * original_total = order_total (eBay always shows the original; current total + refund = original)
+ *   original_total = current_total (totals->total) + sum of all refunds shown on page
+ *
+ * eBay's order page shows the POST-refund total as "Total: $X.XX" along with
+ * one or more "You got a refund! A total of $X.XX was sent" banners.
+ * There is no pre-refund total displayed — we reconstruct it from current + refunds.
  *
  * Only writes original_total if it is currently NULL.
  */
@@ -442,52 +444,38 @@ const orderScrapeWorker = new Worker(
         return;
       }
 
-      // Extract all text from the payment summary section.
-      // eBay's order page shows:
-      //   Order total           $XX.XX    ← original pre-refund total
-      //   Subtotal              $XX.XX
-      //   Shipping              $XX.XX
-      //   Refund                -$XX.XX   ← may appear 0 or more times
-      //   Amount paid           $XX.XX    ← current post-refund total
-      //
-      // Strategy: get the full page text and use regex to find these values.
       const bodyText = await page.evaluate(() => document.body.innerText);
 
-      // Parse a dollar amount like "$1,234.56" or "-$1,234.56"
-      function parseDollar(s: string): number | null {
-        const m = s.replace(/,/g, "").match(/-?\$?([\d.]+)/);
-        return m ? parseFloat(m[1]) : null;
-      }
+      // eBay order page layout (confirmed):
+      //   "You got a refund! A total of $1,400.30 was sent on Jan 29, 2026."  ← 0 or more
+      //   "Total  $1,337.03 (43 items)"  ← current post-refund total
+      //
+      // original_total = Total + sum(all refund banners)
 
-      // Find "Order total" line — the authoritative pre-refund total.
-      // Pattern: "Order total" followed (within ~100 chars) by a dollar amount.
+      // Get current total from DB (totals->total) — this is reliable since it's kept in sync
+      const currentTotal = order.totals && typeof order.totals === "object" && "total" in order.totals
+        ? parseFloat(String((order.totals as any).total))
+        : null;
+
       let originalTotal: number | null = null;
 
-      const orderTotalMatch = bodyText.match(/Order total[\s\S]{0,80}?\$\s*([\d,]+\.\d{2})/i);
-      if (orderTotalMatch) {
-        originalTotal = parseFloat(orderTotalMatch[1].replace(/,/g, ""));
-      }
+      if (currentTotal != null) {
+        // Sum all refund amounts from "A total of $X.XX was sent" banners
+        let totalRefunds = 0;
+        const refundPattern = /A total of \$\s*([\d,]+\.\d{2})\s*was sent/gi;
+        for (const m of bodyText.matchAll(refundPattern)) {
+          totalRefunds += parseFloat(m[1].replace(/,/g, ""));
+        }
 
-      // Fallback: sum current total (totals->total) + all refund lines shown on page
-      if (originalTotal == null) {
-        const currentTotal = order.totals && typeof order.totals === "object" && "total" in order.totals
-          ? parseFloat(String((order.totals as any).total))
-          : null;
-
-        if (currentTotal != null) {
-          // Find all "Refund" lines with amounts
-          let totalRefunds = 0;
-          const refundMatches = bodyText.matchAll(/Refund[\s\S]{0,60}?\$\s*([\d,]+\.\d{2})/gi);
-          for (const m of refundMatches) {
+        // Fallback: also try "Refund  $X.XX" line in payment summary if banner pattern found nothing
+        if (totalRefunds === 0) {
+          const refundLinePattern = /\bRefund\b[\s\S]{0,40}?\$([\d,]+\.\d{2})/gi;
+          for (const m of bodyText.matchAll(refundLinePattern)) {
             totalRefunds += parseFloat(m[1].replace(/,/g, ""));
           }
-          if (totalRefunds > 0) {
-            originalTotal = currentTotal + totalRefunds;
-          } else {
-            // No refunds found — current total IS the original total
-            originalTotal = currentTotal;
-          }
         }
+
+        originalTotal = parseFloat((currentTotal + totalRefunds).toFixed(2));
       }
 
       await browser.close();
