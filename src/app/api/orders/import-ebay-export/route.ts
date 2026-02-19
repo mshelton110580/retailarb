@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
+import AdmZip from "adm-zip";
 
 /**
  * POST /api/orders/import-ebay-export
@@ -122,14 +123,32 @@ export async function POST(req: Request) {
         .filter((r: ExportRow) => !isNaN(r.orderTotal) && r.orderTotal >= 0);
 
     } else if (contentType.includes("multipart/form-data")) {
-      // File upload
+      // File upload — accepts .csv or .zip
       const formData = await req.formData();
       const file = formData.get("file");
       if (!file || typeof file === "string") {
         return NextResponse.json({ error: "No file uploaded (field name: 'file')" }, { status: 400 });
       }
-      const text = await (file as File).text();
-      exportRows = parseCsv(text);
+      const uploadedFile = file as File;
+      const isZip = uploadedFile.name.toLowerCase().endsWith(".zip") ||
+                    uploadedFile.type === "application/zip" ||
+                    uploadedFile.type === "application/x-zip-compressed";
+
+      if (isZip) {
+        // Extract first .csv file found inside the ZIP
+        const arrayBuf = await uploadedFile.arrayBuffer();
+        const zip = new AdmZip(Buffer.from(arrayBuf));
+        const entries = zip.getEntries().filter(e => e.entryName.toLowerCase().endsWith(".csv"));
+        if (entries.length === 0) {
+          return NextResponse.json({ error: "No .csv file found inside the ZIP archive." }, { status: 400 });
+        }
+        // Use first CSV entry (eBay exports typically have one CSV)
+        const csvText = entries[0].getData().toString("utf8");
+        exportRows = parseCsv(csvText);
+      } else {
+        const text = await uploadedFile.text();
+        exportRows = parseCsv(text);
+      }
 
     } else {
       // Raw CSV body
