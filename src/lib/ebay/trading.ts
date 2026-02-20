@@ -165,12 +165,18 @@ function parseOrdersFromResponse(ordersRaw: any): GetOrdersResult["orders"] {
       ? orderShippingCostSum.toFixed(2)
       : (extractValue(svcSelectedRaw?.ShippingServiceCost) ?? "0");
 
-    // Debug: log shipping fields for orders where total > subtotal but we compute 0 shipping
+    // Debug: always log full shipping structure for known problem orders
+    const DEBUG_ORDERS = new Set(["07-13964-75769","16-13938-24417","02-14164-85361","20-14044-67699","19-14190-45967"]);
     const totalVal = parseFloat(extractValue(order?.Total) ?? "0");
     const subtotalVal = parseFloat(extractValue(order?.Subtotal) ?? "0");
     const txActualShippingSum = transactions.reduce(
       (sum, tx) => sum + (tx.actualShippingCost ? parseFloat(tx.actualShippingCost) : 0), 0
     );
+    if (DEBUG_ORDERS.has(String(order?.OrderID))) {
+      console.warn(`[Trading DEBUG] Order ${order?.OrderID}: total=${totalVal} subtotal=${subtotalVal} txActual=${txActualShippingSum} orderShippingSum=${orderShippingCostSum}`);
+      console.warn(`[Trading DEBUG] ShippingServiceSelected RAW:`, JSON.stringify(svcSelectedRaw));
+      console.warn(`[Trading DEBUG] Transactions shipping:`, JSON.stringify(transactions.map(t => ({ itemId: t.itemId, actualShippingCost: t.actualShippingCost, shippingServiceCost: t.shippingServiceCost }))));
+    }
     if (totalVal > subtotalVal && txActualShippingSum === 0 && orderShippingCostSum === 0) {
       console.warn(`[Trading] Order ${order?.OrderID} has gap (total=${totalVal} subtotal=${subtotalVal}) but no shipping found. ShippingServiceSelected:`, JSON.stringify(svcSelectedRaw)?.slice(0, 500));
     }
