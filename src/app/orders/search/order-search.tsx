@@ -294,6 +294,8 @@ const STORAGE_KEY = "arbdesk_search_filters";
 
 type DatePreset = "30" | "60" | "90" | "all";
 
+type CaseFilter = "needsReturn" | "hasReturn" | "hasInr" | "needsInr";
+
 type SavedFilters = {
   groupBy: GroupBy;
   visibleCols: ColKey[];
@@ -304,6 +306,7 @@ type SavedFilters = {
   filterOrderStatus: string[];
   filterCheckedIn: string;
   filterAccountId: string;
+  filterCase: CaseFilter[];
   datePreset: DatePreset;
   dateFrom: string;
   dateTo: string;
@@ -333,6 +336,23 @@ function datePresetFrom(preset: DatePreset): string {
   const d = new Date();
   d.setDate(d.getDate() - parseInt(preset));
   return d.toISOString().slice(0, 10);
+}
+
+// ── Case filter predicate ─────────────────────────────────────────────────────
+
+function matchesCaseFilter(order: Order, filters: CaseFilter[]): boolean {
+  if (filters.length === 0) return true;
+  return filters.every(f => {
+    switch (f) {
+      case "needsReturn": return order.needsReturn && !order.returnCase;
+      case "hasReturn":   return order.returnCase != null;
+      case "hasInr":      return order.inrCase != null;
+      case "needsInr": {
+        const s = order.shipment?.derivedStatus;
+        return (s === "not_received" || s === "not_delivered") && !order.inrCase;
+      }
+    }
+  });
 }
 
 // ── Fetch params builder ──────────────────────────────────────────────────────
@@ -384,6 +404,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   const [filterOrderStatus, setFilterOrderStatus] = useState<string[]>(saved.filterOrderStatus ?? []);
   const [filterCheckedIn, setFilterCheckedIn] = useState(saved.filterCheckedIn ?? "");
   const [filterAccountId, setFilterAccountId] = useState(saved.filterAccountId ?? "");
+  const [filterCase, setFilterCase] = useState<CaseFilter[]>(saved.filterCase ?? []);
   const [dateFrom, setDateFrom] = useState(saved.datePreset === "all" || (saved.datePreset == null && !saved.dateFrom) ? "" : (saved.dateFrom ?? ""));
   const [dateTo, setDateTo] = useState(saved.dateTo ?? "");
 
@@ -489,12 +510,12 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
       const toSave: SavedFilters = {
         groupBy, visibleCols: Array.from(visibleCols) as ColKey[],
         sortBy, sortDir,
-        search, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId,
+        search, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, filterCase,
         datePreset, dateFrom, dateTo,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
     } catch { /* ignore */ }
-  }, [groupBy, visibleCols, sortBy, sortDir, search, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, datePreset, dateFrom, dateTo]);
+  }, [groupBy, visibleCols, sortBy, sortDir, search, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, filterCase, datePreset, dateFrom, dateTo]);
 
   // ── Debounced refetch on filter change ────────────────────────────────────
 
@@ -533,28 +554,34 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   const colDef = useMemo(() => ALL_COLS.find(c => c.key === sortBy), [sortBy]);
 
   const sortedItemRows = useMemo<ItemRow[]>(() => {
-    if (!colDef?.sortValue) return itemRows;
+    const filtered = filterCase.length > 0
+      ? itemRows.filter(row => matchesCaseFilter(row.order, filterCase))
+      : itemRows;
+    if (!colDef?.sortValue) return filtered;
     const dir = sortDir === "asc" ? 1 : -1;
-    return [...itemRows].sort((a, b) => {
+    return [...filtered].sort((a, b) => {
       const av = colDef.sortValue!(a.order, a) ?? "";
       const bv = colDef.sortValue!(b.order, b) ?? "";
       if (av < bv) return -dir;
       if (av > bv) return dir;
       return 0;
     });
-  }, [itemRows, colDef, sortDir]);
+  }, [itemRows, colDef, sortDir, filterCase]);
 
   const sortedOrders = useMemo<Order[]>(() => {
-    if (!colDef?.sortValue) return orders;
+    const filtered = filterCase.length > 0
+      ? orders.filter(o => matchesCaseFilter(o, filterCase))
+      : orders;
+    if (!colDef?.sortValue) return filtered;
     const dir = sortDir === "asc" ? 1 : -1;
-    return [...orders].sort((a, b) => {
+    return [...filtered].sort((a, b) => {
       const av = colDef.sortValue!(a) ?? "";
       const bv = colDef.sortValue!(b) ?? "";
       if (av < bv) return -dir;
       if (av > bv) return dir;
       return 0;
     });
-  }, [orders, colDef, sortDir]);
+  }, [orders, colDef, sortDir, filterCase]);
 
   // Reset list when sorted rows change
   useEffect(() => {
@@ -584,6 +611,9 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   }
   function toggleOrderStatus(val: string) {
     setFilterOrderStatus(prev => prev.includes(val) ? prev.filter(s => s !== val) : [...prev, val]);
+  }
+  function toggleCaseFilter(val: CaseFilter) {
+    setFilterCase(prev => prev.includes(val) ? prev.filter(s => s !== val) : [...prev, val]);
   }
   function toggleExpand(key: string) {
     setExpanded(prev => {
@@ -1167,7 +1197,27 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
           </div>
         </div>
 
-        {/* Row 5: Group by + columns + clear */}
+        {/* Row 5: Returns & INR chips */}
+        <div>
+          <p className="mb-1.5 text-xs text-slate-500">Returns &amp; INR</p>
+          <div className="flex flex-wrap gap-1.5">
+            {([
+              { value: "needsReturn" as CaseFilter, label: "Needs Return",  activeClass: "bg-orange-950 border border-orange-800 text-orange-300" },
+              { value: "hasReturn"   as CaseFilter, label: "Has Return",    activeClass: "bg-orange-900 text-orange-200" },
+              { value: "hasInr"      as CaseFilter, label: "Has INR",       activeClass: "bg-yellow-900 text-yellow-200" },
+              { value: "needsInr"    as CaseFilter, label: "Needs INR",     activeClass: "bg-yellow-950 border border-yellow-800 text-yellow-300" },
+            ]).map(chip => (
+              <button key={chip.value} onClick={() => toggleCaseFilter(chip.value)}
+                className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                  filterCase.includes(chip.value) ? chip.activeClass : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                }`}>
+                {chip.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Row 6: Group by + columns + clear */}
         <div className="flex items-center justify-between gap-3 flex-wrap border-t border-slate-800 pt-3">
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-500">Group by:</span>
@@ -1185,7 +1235,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
             <button
               onClick={() => {
                 setSearch(""); setTrackingScan(""); setFilterShipStatus([]); setFilterOrderStatus([]);
-                setFilterCheckedIn(""); setFilterAccountId(""); setDateFrom(""); setDateTo("");
+                setFilterCheckedIn(""); setFilterAccountId(""); setFilterCase([]); setDateFrom(""); setDateTo("");
                 setDatePreset("90");
                 setSortBy("date"); setSortDir("desc");
                 if (trackingRef.current) trackingRef.current.value = "";
@@ -1205,7 +1255,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
             ? `${sortedItemRows.length} item${sortedItemRows.length !== 1 ? "s" : ""} across ${loadedCount} order${loadedCount !== 1 ? "s" : ""}`
             : `${loadedCount} order${loadedCount !== 1 ? "s" : ""}`}
           {total > 0 && loadedCount < total ? ` (${loadedCount} of ${total} loaded…)` : ""}
-          {(search || trackingScan || filterShipStatus.length || filterOrderStatus.length || filterCheckedIn || filterAccountId || effectiveDateFrom || dateTo) && !loadingFirst ? " (filtered)" : ""}
+          {(search || trackingScan || filterShipStatus.length || filterOrderStatus.length || filterCheckedIn || filterAccountId || filterCase.length || effectiveDateFrom || dateTo) && !loadingFirst ? " (filtered)" : ""}
         </span>
         {loadingMore && (
           <span className="text-xs text-blue-500 animate-pulse">Loading more…</span>
