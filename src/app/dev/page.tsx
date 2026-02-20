@@ -4,6 +4,7 @@ import PageHeader from "@/components/page-header";
 import EbayExportUpload from "./ebay-export-upload";
 import UploadTmp from "./upload-tmp";
 import BackfillOriginalTotals from "./backfill-original-totals";
+import ClearReturnsInr from "./clear-returns-inr";
 
 /**
  * /dev — Hidden developer tools page.
@@ -37,6 +38,14 @@ export default async function DevPage() {
           Order Total Backfill
         </h2>
         <BackfillOriginalTotals />
+      </section>
+
+      {/* Clear and reimport returns / INR */}
+      <section className="space-y-2">
+        <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+          Returns &amp; INR Cases
+        </h2>
+        <ClearReturnsInr />
       </section>
 
       {/* eBay Export Backfill */}

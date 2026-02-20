@@ -309,6 +309,9 @@ async function upsertReturn(ret: EbayReturnSummary, token: string) {
     last_synced_at: new Date(),
   };
 
+  // Extract all response history events once (used for tracking and refund dates)
+  const history: any[] = detailInfo?.detail?.responseHistory ?? [];
+
   // Extract tracking info from detail.returnShipmentInfo.shipmentTracking
   if (shipmentTracking) {
     data.return_carrier = shipmentTracking.carrierUsed ?? shipmentTracking.carrierName ?? null;
@@ -317,9 +320,6 @@ async function upsertReturn(ret: EbayReturnSummary, token: string) {
     data.label_created_date = shipmentTracking.labelDate?.value
       ? new Date(shipmentTracking.labelDate.value)
       : null;
-
-    // Use responseHistory events to get precise shipped and delivered dates
-    const history: any[] = detailInfo?.detail?.responseHistory ?? [];
 
     // Shipped: NOTIFIED_SHIPPED or BUYER_MARK_RETURN_SHIPPED transition
     const shippedEvent = history.find((e: any) =>
@@ -342,12 +342,23 @@ async function upsertReturn(ret: EbayReturnSummary, token: string) {
     console.log(`[Sync Returns] Return ${returnId}: tracking=${data.return_tracking_number} carrier=${data.return_carrier} status=${data.return_tracking_status} shipped=${data.return_shipped_date?.toISOString().slice(0,10) ?? "null"} delivered=${data.return_delivered_date?.toISOString().slice(0,10) ?? "null"}`);
   }
 
-  // Check if refund was issued
-  if (actualRefund && actualRefund > 0) {
-    // Set refund issued date based on state/status
-    if (ret.state === "REFUND_ISSUED" || ret.state === "RETURN_CLOSED") {
-      data.refund_issued_date = new Date();
-    }
+  // Extract refund issued date from response history
+  const refundEvent = history.find((e: any) =>
+    e.activity === "REFUND_ISSUED" ||
+    e.activity === "REFUND_CLOSED" ||
+    e.activity === "LESS_THAN_A_FULL_REFUND_ISSUED"
+  );
+  if (refundEvent?.creationDate?.value) {
+    data.refund_issued_date = new Date(refundEvent.creationDate.value);
+  } else if (actualRefund && actualRefund > 0 && (
+    ret.state === "REFUND_ISSUED" ||
+    ret.state === "RETURN_CLOSED" ||
+    ret.status === "REFUND_ISSUED" ||
+    ret.status === "LESS_THAN_A_FULL_REFUND_ISSUED" ||
+    ret.state === "CLOSED"
+  )) {
+    // No specific event date available — leave null rather than guess
+    data.refund_issued_date = null;
   }
 
   // Check if status indicates escalation
