@@ -153,6 +153,28 @@ function parseOrdersFromResponse(ordersRaw: any): GetOrdersResult["orders"] {
       }
     }
 
+    // ShippingServiceSelected can be an array for multi-item orders (one per transaction)
+    // OR a single object for single-item orders. Sum all ShippingServiceCost values.
+    const svcSelectedRaw = order?.ShippingServiceSelected;
+    const svcSelectedArr = safeArray(svcSelectedRaw);
+    const orderShippingCostSum = svcSelectedArr.reduce((sum: number, svc: any) => {
+      const v = extractValue(svc?.ShippingServiceCost);
+      return sum + (v ? parseFloat(v) : 0);
+    }, 0);
+    const orderShippingCostStr = orderShippingCostSum > 0
+      ? orderShippingCostSum.toFixed(2)
+      : (extractValue(svcSelectedRaw?.ShippingServiceCost) ?? "0");
+
+    // Debug: log shipping fields for orders where total > subtotal but we compute 0 shipping
+    const totalVal = parseFloat(extractValue(order?.Total) ?? "0");
+    const subtotalVal = parseFloat(extractValue(order?.Subtotal) ?? "0");
+    const txActualShippingSum = transactions.reduce(
+      (sum, tx) => sum + (tx.actualShippingCost ? parseFloat(tx.actualShippingCost) : 0), 0
+    );
+    if (totalVal > subtotalVal && txActualShippingSum === 0 && orderShippingCostSum === 0) {
+      console.warn(`[Trading] Order ${order?.OrderID} has gap (total=${totalVal} subtotal=${subtotalVal}) but no shipping found. ShippingServiceSelected:`, JSON.stringify(svcSelectedRaw)?.slice(0, 500));
+    }
+
     return {
       orderId: order?.OrderID ?? "",
       createdTime: order?.CreatedTime ?? "",
@@ -160,7 +182,7 @@ function parseOrdersFromResponse(ordersRaw: any): GetOrdersResult["orders"] {
       total: extractValue(order?.Total) ?? "0",
       subtotal: extractValue(order?.Subtotal) ?? "0",
       adjustmentAmount: extractValue(order?.AdjustmentAmount) ?? "0",
-      shippingCost: extractValue(order?.ShippingServiceSelected?.ShippingServiceCost) ?? "0",
+      shippingCost: orderShippingCostStr,
       shippingAddress: {
         city: order?.ShippingAddress?.CityName,
         state: order?.ShippingAddress?.StateOrProvince,

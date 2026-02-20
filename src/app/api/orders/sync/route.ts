@@ -39,26 +39,58 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
         for (const order of result.orders) {
           // Upsert the order.
           // subtotal = eBay Subtotal (items only) — immutable, never changes after purchase.
-          // shipping_cost: prefer sum of ActualShippingCost across transactions (set at checkout,
-          //   reliable for both single and multi-item orders). Fall back to order-level
-          //   ShippingServiceCost if no transaction-level values are present.
+          // shipping_cost priority:
+          //   1. Sum of Transaction.ActualShippingCost (set at checkout, most reliable when present)
+          //   2. Sum of Transaction.ShippingServiceCost (transaction-level negotiated cost)
+          //   3. Order-level ShippingServiceSelected.ShippingServiceCost (summed across all svc entries)
+          //      — this handles multi-item orders where eBay stores per-transaction shipping at order level
           // original_total = subtotal + shipping_cost — set on CREATE only, never overwritten.
           // totals.total is always updated to the current (possibly post-refund) value.
           const subtotalNum = parseFloat(order.subtotal);
-          const txShippingSum = order.transactions.reduce(
+
+          // 1. Try ActualShippingCost sum across transactions
+          const txActualShippingSum = order.transactions.reduce(
             (sum, tx) => sum + (tx.actualShippingCost ? parseFloat(tx.actualShippingCost) : 0), 0
           );
-          const shippingNum = txShippingSum > 0
-            ? parseFloat(txShippingSum.toFixed(2))
-            : parseFloat(order.shippingCost);
+          // 2. Try ShippingServiceCost sum across transactions (transaction-level)
+          const txServiceShippingSum = order.transactions.reduce(
+            (sum, tx) => sum + (tx.shippingServiceCost ? parseFloat(tx.shippingServiceCost) : 0), 0
+          );
+          // 3. Order-level ShippingServiceCost (already summed across svc entries in trading.ts)
+          const orderLevelShipping = parseFloat(order.shippingCost);
+
+          const shippingNum = txActualShippingSum > 0
+            ? parseFloat(txActualShippingSum.toFixed(2))
+            : txServiceShippingSum > 0
+              ? parseFloat(txServiceShippingSum.toFixed(2))
+              : orderLevelShipping;
+
+          if (shippingNum === 0) {
+            console.warn(`[Order Sync] Order ${order.orderId}: shipping_cost=0. subtotal=${order.subtotal} total=${order.total} txActual=${txActualShippingSum} txService=${txServiceShippingSum} orderLevel=${orderLevelShipping}`);
+          }
           const originalTotal = parseFloat((subtotalNum + shippingNum).toFixed(2));
+
+          // Check if we need to backfill shipping_cost / original_total for an existing record
+          // that was previously stored with shipping_cost=0 (incomplete data from earlier sync)
+          const existingOrder = await prisma.orders.findUnique({
+            where: { order_id: String(order.orderId) },
+            select: { shipping_cost: true, original_total: true, subtotal: true }
+          });
+          const needsShippingBackfill = existingOrder &&
+            shippingNum > 0 &&
+            (existingOrder.shipping_cost === null || Number(existingOrder.shipping_cost) === 0);
 
           await prisma.orders.upsert({
             where: { order_id: String(order.orderId) },
             update: {
               order_status: order.orderStatus,
               totals: { total: order.total },
-              // Do NOT update original_total, subtotal, or shipping_cost — all immutable
+              // Backfill shipping_cost and original_total if they were missing/zero on first sync
+              ...(needsShippingBackfill ? {
+                shipping_cost: shippingNum,
+                original_total: originalTotal,
+                subtotal: subtotalNum,
+              } : {}),
               ship_to_city: order.shippingAddress?.city ?? null,
               ship_to_state: order.shippingAddress?.state ?? null,
               ship_to_postal: order.shippingAddress?.postalCode ?? null,
