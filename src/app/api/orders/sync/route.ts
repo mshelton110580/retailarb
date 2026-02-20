@@ -41,15 +41,24 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
           // original_total is captured on CREATE only — frozen at first-sync value.
           // totals.total is updated every sync and reflects the current (post-refund) amount.
           // refund_received = original_total - totals.total (when original_total is available).
+          // original_total = pre-refund subtotal from Trading API.
+          // subtotal is the sum of item prices + shipping before any adjustments.
+          // adjustmentAmount is negative when a refund was issued.
+          const subtotalNum = parseFloat(order.subtotal);
+          const adjustmentNum = parseFloat(order.adjustmentAmount);
+          const originalTotal = subtotalNum > 0
+            ? subtotalNum
+            : parseFloat((parseFloat(order.total) - adjustmentNum).toFixed(2));
+
           await prisma.orders.upsert({
             where: { order_id: String(order.orderId) },
             update: {
               order_status: order.orderStatus,
               totals: { total: order.total },
+              original_total: originalTotal,
               ship_to_city: order.shippingAddress?.city ?? null,
               ship_to_state: order.shippingAddress?.state ?? null,
               ship_to_postal: order.shippingAddress?.postalCode ?? null,
-              // original_total intentionally omitted — must never be overwritten
             },
             create: {
               order_id: String(order.orderId),
@@ -57,7 +66,7 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
               purchase_date: new Date(order.createdTime),
               order_status: order.orderStatus,
               totals: { total: order.total },
-              original_total: Number(order.total),  // Frozen at first sync
+              original_total: originalTotal,
               ship_to_city: order.shippingAddress?.city ?? null,
               ship_to_state: order.shippingAddress?.state ?? null,
               ship_to_postal: order.shippingAddress?.postalCode ?? null,
@@ -98,34 +107,27 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
               });
             }
 
-            // Upsert order item - use order_id + item_id as a lookup
-            const existingItem = await prisma.order_items.findFirst({
-              where: { order_id: String(order.orderId), item_id: itemId }
+            // Upsert order item using the deterministic composite key: orderId-itemId
+            await prisma.order_items.upsert({
+              where: { id: `${String(order.orderId)}-${itemId}` },
+              update: {
+                title: String(tx.title),
+                qty: Number(tx.quantity),
+                transaction_price: Number(tx.transactionPrice),
+                shipping_cost: tx.shippingServiceCost ? Number(tx.shippingServiceCost) : null,
+                purchase_date: new Date(order.createdTime)
+              },
+              create: {
+                id: `${String(order.orderId)}-${itemId}`,
+                order_id: String(order.orderId),
+                item_id: itemId,
+                title: String(tx.title),
+                qty: Number(tx.quantity),
+                transaction_price: Number(tx.transactionPrice),
+                shipping_cost: tx.shippingServiceCost ? Number(tx.shippingServiceCost) : null,
+                purchase_date: new Date(order.createdTime)
+              }
             });
-            if (existingItem) {
-              await prisma.order_items.update({
-                where: { id: existingItem.id },
-                data: {
-                  title: String(tx.title),
-                  qty: Number(tx.quantity),
-                  transaction_price: Number(tx.transactionPrice),
-                  shipping_cost: tx.shippingServiceCost ? Number(tx.shippingServiceCost) : null,
-                  purchase_date: new Date(order.createdTime)
-                }
-              });
-            } else {
-              await prisma.order_items.create({
-                data: {
-                  order_id: String(order.orderId),
-                  item_id: itemId,
-                  title: tx.title,
-                  qty: tx.quantity,
-                  transaction_price: Number(tx.transactionPrice),
-                  shipping_cost: tx.shippingServiceCost ? Number(tx.shippingServiceCost) : null,
-                  purchase_date: new Date(order.createdTime)
-                }
-              });
-            }
           }
 
           // Derive shipping status
@@ -143,7 +145,7 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
           });
 
           // Calculate expected units from order transactions
-          const totalExpectedUnits = order.transactions.reduce((sum: number, txn: any) => sum + (parseInt(String(txn.qty)) || 1), 0);
+          const totalExpectedUnits = order.transactions.reduce((sum, txn) => sum + (txn.quantity || 1), 0);
 
           // Upsert shipment - use order_id to find existing
           const existingShipment = await prisma.shipments.findFirst({

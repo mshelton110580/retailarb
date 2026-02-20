@@ -1,185 +1,19 @@
 import { Queue, Worker } from "bullmq";
 import IORedis from "ioredis";
 import { prisma } from "../lib/db";
-import { getOrders } from "../lib/ebay/trading";
 import { getItemByLegacyId } from "../lib/ebay/browse";
 import { getValidAccessToken } from "../lib/ebay/token";
-import { deriveShippingStatus } from "../lib/shipping";
 import { saveFile } from "../lib/storage";
 import { chromium } from "playwright";
 import { placeProxyBid } from "../lib/ebay/offer";
+import { syncOrders } from "../app/api/orders/sync/route";
 
 const connection = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", { maxRetriesPerRequest: null });
 
 const syncOrdersWorker = new Worker(
   "sync_orders_job",
   async (job) => {
-    const accountId = job.data.ebayAccountId;
-    const accountIds = accountId
-      ? [accountId]
-      : (await prisma.ebay_accounts.findMany({ select: { id: true } })).map((acc) => acc.id);
-
-    const now = new Date();
-    const since = new Date(now);
-    since.setDate(now.getDate() - 30);
-    for (const id of accountIds) {
-      const { token } = await getValidAccessToken(id);
-      const result = await getOrders(token, since.toISOString(), now.toISOString());
-      for (const order of result.orders) {
-        // subtotal = pre-refund total (items + shipping before any adjustment)
-        // adjustmentAmount is negative when a refund was issued
-        const subtotalNum = parseFloat(order.subtotal);
-        const adjustmentNum = parseFloat(order.adjustmentAmount);
-        // original_total is subtotal when positive, fallback to total - adjustment
-        const originalTotal = subtotalNum > 0
-          ? subtotalNum
-          : parseFloat((parseFloat(order.total) - adjustmentNum).toFixed(2));
-
-        await prisma.orders.upsert({
-          where: { order_id: order.orderId },
-          update: {
-            order_status: order.orderStatus,
-            totals: { total: order.total },
-            original_total: originalTotal,
-            ship_to_city: order.shippingAddress?.city,
-            ship_to_state: order.shippingAddress?.state,
-            ship_to_postal: order.shippingAddress?.postalCode,
-            updated_at: new Date()
-          },
-          create: {
-            order_id: order.orderId,
-            ebay_account_id: id,
-            purchase_date: new Date(order.createdTime),
-            order_status: order.orderStatus,
-            totals: { total: order.total },
-            original_total: originalTotal,
-            ship_to_city: order.shippingAddress?.city,
-            ship_to_state: order.shippingAddress?.state,
-            ship_to_postal: order.shippingAddress?.postalCode,
-            order_url: `https://order.ebay.com/ord/show?orderId=${order.orderId}`,
-            updated_at: new Date()
-          }
-        });
-
-        for (const transaction of order.transactions) {
-          const existingTarget = await prisma.targets.findUnique({
-            where: { item_id: transaction.itemId }
-          });
-          if (existingTarget) {
-            await prisma.targets.update({
-              where: { item_id: transaction.itemId },
-              data: {
-                status: "PURCHASED",
-                status_history: [
-                  ...(existingTarget.status_history as any[]),
-                  { status: "PURCHASED", at: new Date().toISOString() }
-                ]
-              }
-            });
-          } else {
-            await prisma.targets.create({
-              data: {
-                item_id: transaction.itemId,
-                type: "BIN",
-                max_snipe_bid: null,
-                best_offer_amount: null,
-                lead_seconds: 5,
-                created_by: order.orderId,
-                status: "PURCHASED",
-                status_history: [{ status: "PURCHASED", at: new Date().toISOString() }]
-              }
-            });
-          }
-          await prisma.order_items.upsert({
-            where: { id: `${order.orderId}-${transaction.itemId}` },
-            update: {
-              title: transaction.title,
-              qty: transaction.quantity,
-              transaction_price: Number(transaction.transactionPrice),
-              shipping_cost: transaction.shippingServiceCost
-                ? Number(transaction.shippingServiceCost)
-                : null,
-              purchase_date: new Date(order.createdTime)
-            },
-            create: {
-              id: `${order.orderId}-${transaction.itemId}`,
-              order_id: order.orderId,
-              item_id: transaction.itemId,
-              title: transaction.title,
-              qty: transaction.quantity,
-              transaction_price: Number(transaction.transactionPrice),
-              shipping_cost: transaction.shippingServiceCost
-                ? Number(transaction.shippingServiceCost)
-                : null,
-              purchase_date: new Date(order.createdTime)
-            }
-          });
-        }
-
-        const derivedStatus = deriveShippingStatus({
-          actualDelivery: order.delivery.actualDelivery,
-          cancelStatus: null,
-          scheduledMax: order.delivery.scheduledMax ?? null,
-          estimatedMax: order.delivery.estimatedMax ?? null,
-          hasTracking: order.shipments.length > 0,
-          hasScheduledWindow: Boolean(order.delivery.scheduledMin || order.delivery.scheduledMax),
-          hasEstimatedWindow: Boolean(order.delivery.estimatedMin || order.delivery.estimatedMax)
-        });
-
-        const shipment = await prisma.shipments.upsert({
-          where: { id: `${order.orderId}-shipment` },
-          update: {
-            derived_status: derivedStatus,
-            estimated_min: order.delivery.estimatedMin ? new Date(order.delivery.estimatedMin) : null,
-            estimated_max: order.delivery.estimatedMax ? new Date(order.delivery.estimatedMax) : null,
-            scheduled_min: order.delivery.scheduledMin ? new Date(order.delivery.scheduledMin) : null,
-            scheduled_max: order.delivery.scheduledMax ? new Date(order.delivery.scheduledMax) : null,
-            delivered_at: order.delivery.actualDelivery
-              ? new Date(order.delivery.actualDelivery)
-              : null,
-            last_refreshed_at: new Date()
-          },
-          create: {
-            id: `${order.orderId}-shipment`,
-            order_id: order.orderId,
-            derived_status: derivedStatus,
-            estimated_min: order.delivery.estimatedMin ? new Date(order.delivery.estimatedMin) : null,
-            estimated_max: order.delivery.estimatedMax ? new Date(order.delivery.estimatedMax) : null,
-            scheduled_min: order.delivery.scheduledMin ? new Date(order.delivery.scheduledMin) : null,
-            scheduled_max: order.delivery.scheduledMax ? new Date(order.delivery.scheduledMax) : null,
-            delivered_at: order.delivery.actualDelivery
-              ? new Date(order.delivery.actualDelivery)
-              : null,
-            last_refreshed_at: new Date()
-          }
-        });
-
-        for (const tracking of order.shipments) {
-          if (!tracking.trackingNumber) continue;
-          await prisma.tracking_numbers.upsert({
-            where: { id: `${shipment.id}-${tracking.trackingNumber}` },
-            update: {
-              carrier: tracking.carrier,
-              tracking_number: tracking.trackingNumber,
-              status_text: tracking.statusText,
-              last_seen_at: new Date()
-            },
-            create: {
-              id: `${shipment.id}-${tracking.trackingNumber}`,
-              shipment_id: shipment.id,
-              carrier: tracking.carrier,
-              tracking_number: tracking.trackingNumber,
-              status_text: tracking.statusText,
-              last_seen_at: new Date()
-            }
-          });
-        }
-      }
-      await prisma.ebay_accounts.update({
-        where: { id },
-        data: { last_sync_at: new Date() }
-      });
-    }
+    await syncOrders(job.data.ebayAccountId);
   },
   { connection: connection as any }
 );

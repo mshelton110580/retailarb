@@ -177,25 +177,9 @@ export default async function OnHandPage() {
     }
   }
 
-  // Pre-compute per-order total item prices (sum of transaction_price * qty for all items)
-  // Used to allocate shipping proportionally across items in multi-item orders
-  const orderItemTotals = new Map<string, number>();  // order_item.id -> transaction_price * qty
-  const orderItemPriceSum = new Map<string, number>(); // order_id -> sum of all items' transaction_price * qty
-
-  for (const unit of units) {
-    if (unit.order_item && unit.order?.order_id) {
-      const itemSubtotal = Number(unit.order_item.transaction_price) * unit.order_item.qty;
-      orderItemTotals.set(unit.order_item.id, itemSubtotal);
-
-      // Sum all order items' subtotals per order (for shipping allocation ratio)
-      if (!orderItemPriceSum.has(unit.order.order_id)) {
-        // We'll accumulate below — but we need a per-order sum across distinct items
-        // Use a Set to avoid counting same order_item twice
-      }
-    }
-  }
-
   // Build per-order subtotal sum using distinct order_items per order
+  // Used to allocate shipping proportionally across items in multi-item orders
+  const orderItemPriceSum = new Map<string, number>(); // order_id -> sum of all items' transaction_price * qty
   const seenOrderItems = new Set<string>();
   for (const unit of units) {
     if (unit.order_item && unit.order?.order_id) {
