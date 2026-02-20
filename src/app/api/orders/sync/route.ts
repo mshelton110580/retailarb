@@ -38,20 +38,19 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
 
         for (const order of result.orders) {
           // Upsert the order.
-          // original_total = pre-refund total = Total - AdjustmentAmount
-          //   Total          = current post-refund amount (decreases as refunds are issued)
-          //   AdjustmentAmount = negative when a refund was issued (e.g. -95.00)
-          //   Subtotal       = item prices ONLY (no shipping) — do NOT use for original_total
-          // Example: Total=$195, AdjustmentAmount=-95 → original_total = 195 - (-95) = $290
-          const adjustmentNum = parseFloat(order.adjustmentAmount);
-          const originalTotal = parseFloat((parseFloat(order.total) - adjustmentNum).toFixed(2));
+          // original_total = full order amount at purchase time (items + shipping).
+          //   Total = eBay's current order total; it decreases when refunds are issued.
+          //   We store Total as original_total on CREATE only and never overwrite it,
+          //   so it always reflects what was originally paid regardless of later refunds.
+          // totals.total is always updated to the current (possibly post-refund) value.
+          const originalTotal = parseFloat(parseFloat(order.total).toFixed(2));
 
           await prisma.orders.upsert({
             where: { order_id: String(order.orderId) },
             update: {
               order_status: order.orderStatus,
               totals: { total: order.total },
-              original_total: originalTotal,
+              // Do NOT update original_total — it is set once on creation and kept immutable
               ship_to_city: order.shippingAddress?.city ?? null,
               ship_to_state: order.shippingAddress?.state ?? null,
               ship_to_postal: order.shippingAddress?.postalCode ?? null,
