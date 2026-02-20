@@ -3,7 +3,6 @@ import { requireRole } from "@/lib/rbac";
 import PageHeader from "@/components/page-header";
 import EbayExportUpload from "./ebay-export-upload";
 import UploadTmp from "./upload-tmp";
-import BackfillOriginalTotals from "./backfill-original-totals";
 import ClearReturnsInr from "./clear-returns-inr";
 
 /**
@@ -30,14 +29,6 @@ export default async function DevPage() {
           File Inspection
         </h2>
         <UploadTmp />
-      </section>
-
-      {/* Backfill original_total from Trading API */}
-      <section className="space-y-2">
-        <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-500">
-          Order Total Backfill
-        </h2>
-        <BackfillOriginalTotals />
       </section>
 
       {/* Clear and reimport returns / INR */}
