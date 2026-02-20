@@ -85,6 +85,7 @@ export default async function OrdersPage({
                   // Order-level shipping cost (stored immutably on first sync from ShippingServiceCost)
                   // May be 0 for some multi-item orders where eBay doesn't report it at order level.
                   const orderShipping = order.shipping_cost ? Number(order.shipping_cost) : 0;
+                  const orderTax = order.tax_amount ? Number(order.tax_amount) : 0;
                   const totalItemSubtotal = order.order_items.reduce(
                     (sum, i) => sum + Number(i.transaction_price) * i.qty, 0
                   );
@@ -110,11 +111,13 @@ export default async function OrdersPage({
                             // Allocate shipping proportionally by item subtotal share
                             const proportion = totalItemSubtotal > 0 ? itemSubtotal / totalItemSubtotal : 1 / order.order_items.length;
                             const shipping = parseFloat((orderShipping * proportion).toFixed(2));
-                            const lineTotal = itemSubtotal + shipping;
+                            const tax = parseFloat((orderTax * proportion).toFixed(2));
+                            const lineTotal = itemSubtotal + shipping + tax;
                             const parts: string[] = [];
                             if (item.qty > 1) parts.push(`$${unitPrice.toFixed(2)} × ${item.qty}`);
                             else parts.push(`$${unitPrice.toFixed(2)}`);
                             if (shipping > 0) parts.push(`+$${shipping.toFixed(2)} ship`);
+                            if (tax > 0) parts.push(`+$${tax.toFixed(2)} tax`);
                             return `${parts.join(" ")} = $${lineTotal.toFixed(2)}`;
                           })()}
                         </span>

@@ -126,7 +126,8 @@ model orders {
   totals          Json
   original_total      Decimal? @db.Decimal(12, 2)  // Captured on first sync, never overwritten — subtotal + shipping_cost
   subtotal            Decimal? @db.Decimal(12, 2)  // eBay Subtotal (items only), immutable
-  shipping_cost       Decimal? @db.Decimal(12, 2)  // eBay ShippingServiceCost at order level, immutable (may be 0 for multi-item orders)
+  shipping_cost       Decimal? @db.Decimal(12, 2)  // eBay ShippingServiceCost at order level, immutable (may be 0 for free shipping)
+  tax_amount          Decimal? @db.Decimal(12, 2)  // eBay-collected sales tax (Transaction.Taxes.TotalTaxAmount summed), updated each sync
   scrape_state        OrderScrapeState?             // Tracks order page scrape for original_total backfill
   scrape_attempts     Int      @default(0)
   last_scraped_at     DateTime?

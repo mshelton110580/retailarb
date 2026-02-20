@@ -65,9 +65,7 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
               ? parseFloat(txServiceShippingSum.toFixed(2))
               : orderLevelShipping;
 
-          if (shippingNum === 0) {
-            console.warn(`[Order Sync] Order ${order.orderId}: shipping_cost=0. subtotal=${order.subtotal} total=${order.total} txActual=${txActualShippingSum} txService=${txServiceShippingSum} orderLevel=${orderLevelShipping}`);
-          }
+          const taxNum = parseFloat(parseFloat(order.taxAmount).toFixed(2));
           const originalTotal = parseFloat((subtotalNum + shippingNum).toFixed(2));
 
           await prisma.orders.upsert({
@@ -76,6 +74,8 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
               order_status: order.orderStatus,
               totals: { total: order.total },
               // subtotal, shipping_cost, original_total are immutable — set on CREATE only
+              // tax_amount is updated each sync as eBay may adjust it
+              tax_amount: taxNum,
               ship_to_city: order.shippingAddress?.city ?? null,
               ship_to_state: order.shippingAddress?.state ?? null,
               ship_to_postal: order.shippingAddress?.postalCode ?? null,
@@ -89,6 +89,7 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
               subtotal: subtotalNum,
               shipping_cost: shippingNum,
               original_total: originalTotal,
+              tax_amount: taxNum,
               ship_to_city: order.shippingAddress?.city ?? null,
               ship_to_state: order.shippingAddress?.state ?? null,
               ship_to_postal: order.shippingAddress?.postalCode ?? null,

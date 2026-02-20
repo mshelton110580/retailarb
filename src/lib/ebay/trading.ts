@@ -25,6 +25,7 @@ export type GetOrdersResult = {
       state?: string;
       postalCode?: string;
     };
+    taxAmount: string;
     transactions: Array<{
       itemId: string;
       title: string;
@@ -32,6 +33,7 @@ export type GetOrdersResult = {
       transactionPrice: string;
       shippingServiceCost?: string;
       actualShippingCost?: string;
+      taxAmount?: string;
     }>;
     shipments: Array<{
       carrier?: string;
@@ -94,6 +96,7 @@ function parseOrdersFromResponse(ordersRaw: any): GetOrdersResult["orders"] {
         transactionPrice: extractValue(transaction?.TransactionPrice) ?? "0",
         shippingServiceCost: extractValue(transaction?.ShippingServiceSelected?.ShippingServiceCost),
         actualShippingCost: extractValue(transaction?.ActualShippingCost),
+        taxAmount: extractValue(transaction?.Taxes?.TotalTaxAmount),
       };
     });
 
@@ -165,17 +168,11 @@ function parseOrdersFromResponse(ordersRaw: any): GetOrdersResult["orders"] {
       ? orderShippingCostSum.toFixed(2)
       : (extractValue(svcSelectedRaw?.ShippingServiceCost) ?? "0");
 
-    // Temporary: log tax-related fields for one known taxed order
-    if (String(order?.OrderID) === "16-13938-24417") {
-      const taxKeys = ["Tax", "Taxes", "SalesTax", "TaxAmount", "TotalTax", "ExternalTransaction", "AdjustmentAmount", "Total", "Subtotal", "BuyerCheckoutMessage"];
-      const taxData: Record<string, any> = {};
-      for (const k of taxKeys) { if (order?.[k] !== undefined) taxData[k] = order[k]; }
-      console.warn("[Tax DEBUG] 16-13938-24417 tax fields:", JSON.stringify(taxData));
-      // Also log transaction-level tax
-      for (const tx of safeArray(order?.TransactionArray?.Transaction)) {
-        console.warn("[Tax DEBUG] Transaction:", JSON.stringify({ id: tx?.TransactionID, tax: tx?.Taxes, salestax: tx?.SalesTax, total: tx?.TransactionPrice, actualTax: tx?.ActualTaxAmount }));
-      }
-    }
+    // Sum tax across all transactions (Transaction.Taxes.TotalTaxAmount)
+    const orderTaxSum = transactions.reduce(
+      (sum, tx) => sum + (tx.taxAmount ? parseFloat(tx.taxAmount) : 0), 0
+    );
+    const orderTaxStr = orderTaxSum > 0 ? orderTaxSum.toFixed(2) : "0";
 
     return {
       orderId: order?.OrderID ?? "",
@@ -185,6 +182,7 @@ function parseOrdersFromResponse(ordersRaw: any): GetOrdersResult["orders"] {
       subtotal: extractValue(order?.Subtotal) ?? "0",
       adjustmentAmount: extractValue(order?.AdjustmentAmount) ?? "0",
       shippingCost: orderShippingCostStr,
+      taxAmount: orderTaxStr,
       shippingAddress: {
         city: order?.ShippingAddress?.CityName,
         state: order?.ShippingAddress?.StateOrProvince,
