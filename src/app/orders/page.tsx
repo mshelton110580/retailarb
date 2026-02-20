@@ -81,7 +81,23 @@ export default async function OrdersPage({
                   </a>
                 </div>
                 {/* Item list with eBay links */}
-                {order.order_items?.length > 0 && (
+                {order.order_items?.length > 0 && (() => {
+                  // Derive total shipping for this order:
+                  // original_total includes shipping; subtract all item subtotals to get shipping remainder
+                  const origTotal = order.original_total ? Number(order.original_total) : null;
+                  const itemsSubtotal = order.order_items.reduce(
+                    (sum, i) => sum + Number(i.transaction_price) * i.qty, 0
+                  );
+                  // Total shipping across all items (may already be stored per-item, or derived from order total)
+                  const perItemShippingSum = order.order_items.reduce(
+                    (sum, i) => sum + (i.shipping_cost ? Number(i.shipping_cost) : 0), 0
+                  );
+                  const orderShipping = perItemShippingSum > 0
+                    ? perItemShippingSum
+                    : origTotal != null ? parseFloat((origTotal - itemsSubtotal).toFixed(2)) : 0;
+                  const totalItemSubtotal = itemsSubtotal; // used for proportional allocation
+
+                  return (
                   <div className="mt-2 space-y-1">
                     {order.order_items.map((item, idx) => (
                       <div key={idx} className="flex items-center gap-2 text-xs">
@@ -98,9 +114,11 @@ export default async function OrdersPage({
                         <span className="text-slate-500">
                           {(() => {
                             const unitPrice = Number(item.transaction_price);
-                            const shipping = item.shipping_cost ? Number(item.shipping_cost) : 0;
-                            const subtotal = unitPrice * item.qty;
-                            const lineTotal = subtotal + shipping;
+                            const itemSubtotal = unitPrice * item.qty;
+                            // Allocate shipping proportionally by item subtotal share
+                            const proportion = totalItemSubtotal > 0 ? itemSubtotal / totalItemSubtotal : 1 / order.order_items.length;
+                            const shipping = parseFloat((orderShipping * proportion).toFixed(2));
+                            const lineTotal = itemSubtotal + shipping;
                             const parts: string[] = [];
                             if (item.qty > 1) parts.push(`$${unitPrice.toFixed(2)} × ${item.qty}`);
                             else parts.push(`$${unitPrice.toFixed(2)}`);
@@ -120,7 +138,8 @@ export default async function OrdersPage({
                       </div>
                     ))}
                   </div>
-                )}
+                  );
+                })()}
                 <div className="mt-2 flex items-center gap-2 text-xs text-slate-400">
                   <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium text-white ${statusColors[order.shipments?.[0]?.derived_status ?? "unknown"] ?? "bg-gray-600"}`}>
                     {statusLabels[order.shipments?.[0]?.derived_status ?? "unknown"] ?? "Unknown"}
