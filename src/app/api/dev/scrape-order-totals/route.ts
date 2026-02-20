@@ -91,15 +91,21 @@ export async function GET() {
     stateMap[row.scrape_state ?? "null"] = row._count.scrape_state;
   }
 
-  // Check if chrome profile dir exists on server (indicates login has been done)
+  // Check session availability: persistent profile dir OR playwright_state in DB
   const { existsSync } = await import("fs");
   const profileDir = process.env.EBAY_CHROME_PROFILE ?? "/opt/retailarb/chrome-profile";
-  const hasProfile = existsSync(profileDir);
+  const hasProfileDir = existsSync(profileDir);
 
-  const sessionStatus = accounts.map(a => ({
+  // Also fetch playwright_state to show per-account session status
+  const accountsWithState = await prisma.ebay_accounts.findMany({
+    select: { id: true, ebay_username: true, playwright_state: true }
+  });
+
+  const sessionStatus = accountsWithState.map(a => ({
     id: a.id,
     username: a.ebay_username,
-    hasSession: hasProfile
+    hasSession: hasProfileDir || (!!a.playwright_state && a.playwright_state.length > 10),
+    sessionType: hasProfileDir ? "profile" : (!!a.playwright_state && a.playwright_state.length > 10 ? "cookies" : "none")
   }));
 
   return NextResponse.json({
@@ -108,6 +114,7 @@ export async function GET() {
     needsScrape: total - withOriginal,
     states: stateMap,
     sessionStatus,
-    profileDir
+    profileDir,
+    hasProfileDir
   });
 }

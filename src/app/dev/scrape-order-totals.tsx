@@ -6,6 +6,7 @@ interface SessionInfo {
   id: string;
   username: string;
   hasSession: boolean;
+  sessionType?: "profile" | "cookies" | "none";
 }
 
 interface Progress {
@@ -14,6 +15,8 @@ interface Progress {
   needsScrape: number;
   states: Record<string, number>;
   sessionStatus: SessionInfo[];
+  profileDir?: string;
+  hasProfileDir?: boolean;
 }
 
 export default function ScrapeOrderTotals() {
@@ -113,7 +116,13 @@ export default function ScrapeOrderTotals() {
             }`}>
               <span className={`h-2 w-2 rounded-full ${a.hasSession ? "bg-green-400" : "bg-yellow-400"}`} />
               <span className="font-mono">{a.username}</span>
-              <span className="text-slate-400 ml-1">{a.hasSession ? "Session active" : "No session — capture required before scraping"}</span>
+              <span className="text-slate-400 ml-1">
+                {a.hasSession
+                  ? a.sessionType === "profile"
+                    ? "Session active (persistent profile)"
+                    : "Session active (saved cookies)"
+                  : "No session — capture required before scraping"}
+              </span>
               {!a.hasSession && (
                 <button
                   type="button"
@@ -130,40 +139,51 @@ export default function ScrapeOrderTotals() {
 
       {/* Session capture instructions */}
       {showInstructions && (
-        <div className="rounded border border-slate-600 bg-slate-800 p-3 space-y-2 text-xs text-slate-300">
-          <p className="font-semibold text-slate-200">One-time eBay Login (server-side)</p>
+        <div className="rounded border border-slate-600 bg-slate-800 p-3 space-y-3 text-xs text-slate-300">
+          <p className="font-semibold text-slate-200">Option A — Local capture script (easiest)</p>
           <p className="text-slate-400">
-            The scraper uses a persistent Chrome profile stored on the server. You only need to
-            log in once — the session is saved to disk and reused for all future scrapes.
+            Run this on your local machine. It opens a browser, you sign in, and it saves the
+            session to the app automatically. No server display needed.
           </p>
           <ol className="list-decimal list-inside space-y-1.5 text-slate-400">
             <li>
-              SSH into the server:
+              Find your account ID (check the URL of this page or run on server:
               <code className="block mt-0.5 bg-slate-900 rounded px-2 py-1 text-slate-200 font-mono">
-                ssh arbdesk
+                psql $DATABASE_URL -c &quot;SELECT id, ebay_username FROM ebay_accounts;&quot;
               </code>
             </li>
             <li>
-              Install Chromium on the server (one-time):
+              Get your session cookie — log in, open DevTools → Application → Cookies, copy
+              <code className="mx-1 bg-slate-900 rounded px-1 text-slate-200">next-auth.session-token</code>
+            </li>
+            <li>
+              Run the capture script locally:
+              <code className="block mt-0.5 bg-slate-900 rounded px-2 py-1 text-slate-200 font-mono whitespace-pre-wrap break-all">
+                {`APP_URL=https://68.183.121.176:3000 ACCOUNT_ID=<id> SESSION_COOKIE=<token> node scripts/capture-ebay-session.js`}
+              </code>
+            </li>
+            <li>Refresh this page — the session indicator turns green once cookies are saved.</li>
+          </ol>
+
+          <p className="font-semibold text-slate-200 pt-1 border-t border-slate-700">Option B — Server-side persistent profile</p>
+          <p className="text-slate-400">
+            More durable (never expires). Requires a display (VNC or X11 forwarding).
+          </p>
+          <ol className="list-decimal list-inside space-y-1.5 text-slate-400">
+            <li>
+              SSH into the server with X11 forwarding:
               <code className="block mt-0.5 bg-slate-900 rounded px-2 py-1 text-slate-200 font-mono">
-                cd /opt/retailarb && npx playwright install chromium
+                ssh -X arbdesk
               </code>
             </li>
             <li>
               Run the login script:
               <code className="block mt-0.5 bg-slate-900 rounded px-2 py-1 text-slate-200 font-mono">
-                node scripts/ebay-login.js
+                cd /opt/retailarb && DISPLAY=localhost:10.0 node scripts/ebay-login.js
               </code>
-              This opens a Chromium window (requires a display — use VNC or X11 forwarding).
-              Sign in to eBay, then close the window. The session saves automatically.
+              Sign in to eBay in the browser that opens, then close it.
             </li>
-            <li className="text-yellow-400">
-              <strong>No display on the server?</strong> Use X11 forwarding:
-              <code className="block mt-0.5 bg-slate-900 rounded px-2 py-1 text-slate-200 font-mono">
-                ssh -X arbdesk "cd /opt/retailarb && DISPLAY=:0 node scripts/ebay-login.js"
-              </code>
-            </li>
-            <li>Refresh this page — the session indicator turns green once the profile directory exists.</li>
+            <li>Refresh this page — session indicator turns green once the profile directory exists.</li>
           </ol>
         </div>
       )}

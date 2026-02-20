@@ -378,11 +378,11 @@ const alertsWorker = new Worker(
  * browser context across all orders in the batch (much faster than opening a
  * new browser per order).
  *
- * Uses a persistent Chrome profile directory on the server (/opt/retailarb/chrome-profile)
- * so the eBay login session is stored on disk and never expires. On the first run
- * the scraper will land on the eBay sign-in page — mark orders as NEEDS_LOGIN and
- * stop. The operator must trigger a headful login (see /dev page instructions), after
- * which all subsequent runs are fully headless.
+ * Session strategy (in priority order):
+ *   1. Persistent Chrome profile directory on disk (EBAY_CHROME_PROFILE env var or
+ *      /opt/retailarb/chrome-profile) — set up once via scripts/ebay-login.js
+ *   2. playwright_state JSON stored in the ebay_accounts table — set up via
+ *      scripts/capture-ebay-session.js run locally
  *
  * Extraction logic (confirmed from live eBay order page):
  *   - "You got a refund! A total of $X.XX was sent…" banners → sum = total refunds
@@ -392,7 +392,6 @@ const alertsWorker = new Worker(
  * Targeted selectors are tried first; falls back to innerText regex if not found.
  */
 const CHROME_PROFILE_DIR = process.env.EBAY_CHROME_PROFILE ?? "/opt/retailarb/chrome-profile";
-const BATCH_SIZE = 15;
 
 const orderScrapeWorker = new Worker(
   "order_scrape_batch_job",
@@ -400,20 +399,53 @@ const orderScrapeWorker = new Worker(
     const { orderIds } = job.data as { orderIds: string[] };
     if (!orderIds?.length) return;
 
-    // Fetch all orders in this batch
+    // Fetch all orders in this batch (include ebay_account for playwright_state fallback)
     const orders = await prisma.orders.findMany({
-      where: { order_id: { in: orderIds } }
+      where: { order_id: { in: orderIds } },
+      include: { ebay_account: { select: { playwright_state: true } } }
     });
 
-    const browser = await chromium.launchPersistentContext(CHROME_PROFILE_DIR, {
-      headless: true,
-      args: ["--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"]
-    });
+    // Determine session strategy
+    const { existsSync } = await import("fs");
+    const useProfileDir = existsSync(CHROME_PROFILE_DIR);
+
+    let browser: Awaited<ReturnType<typeof chromium.launchPersistentContext>> | null = null;
+    let standaloneContext: Awaited<ReturnType<typeof chromium.launch>> | null = null;
+    let page: import("playwright").Page;
+
+    if (useProfileDir) {
+      browser = await chromium.launchPersistentContext(CHROME_PROFILE_DIR, {
+        headless: true,
+        args: ["--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"]
+      });
+      page = await browser.newPage();
+    } else {
+      // Fall back to playwright_state from DB
+      const playwrightState = orders[0]?.ebay_account?.playwright_state;
+      if (!playwrightState) {
+        await prisma.orders.updateMany({
+          where: { order_id: { in: orderIds }, original_total: null },
+          data: {
+            scrape_state: "NEEDS_LOGIN",
+            scrape_attempts: { increment: 1 },
+            last_scraped_at: new Date()
+          }
+        });
+        throw new Error("No session available. Set up a Chrome profile or capture playwright_state via /dev page.");
+      }
+      standaloneContext = await chromium.launch({
+        headless: true,
+        args: ["--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"]
+      });
+      const ctx = await standaloneContext.newContext({
+        storageState: JSON.parse(playwrightState)
+      });
+      page = await ctx.newPage();
+    }
 
     let needsLogin = false;
 
     try {
-      const page = await browser.newPage();
 
       for (const order of orders) {
         if (order.original_total != null) {
@@ -529,7 +561,8 @@ const orderScrapeWorker = new Worker(
         }
       }
     } finally {
-      await browser.close();
+      if (browser) await browser.close();
+      if (standaloneContext) await standaloneContext.close();
     }
 
     if (needsLogin) {
