@@ -20,7 +20,7 @@ export default function ScrapeOrderTotals() {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [enqueued, setEnqueued] = useState<number | null>(null);
+  const [enqueued, setEnqueued] = useState<{ orders: number; batches: number } | null>(null);
   const [showInstructions, setShowInstructions] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -72,7 +72,7 @@ export default function ScrapeOrderTotals() {
         setRunning(false);
         return;
       }
-      setEnqueued(data.enqueued);
+      setEnqueued({ orders: data.enqueued, batches: data.batches ?? 0 });
       if (data.enqueued === 0) {
         setRunning(false);
         await fetchProgress();
@@ -131,40 +131,39 @@ export default function ScrapeOrderTotals() {
       {/* Session capture instructions */}
       {showInstructions && (
         <div className="rounded border border-slate-600 bg-slate-800 p-3 space-y-2 text-xs text-slate-300">
-          <p className="font-semibold text-slate-200">Capture eBay Session (one-time setup)</p>
+          <p className="font-semibold text-slate-200">One-time eBay Login (server-side)</p>
           <p className="text-slate-400">
-            Run this script on your <strong>local machine</strong> (not the server). It opens a browser,
-            lets you sign in to eBay, then saves the session to the app.
+            The scraper uses a persistent Chrome profile stored on the server. You only need to
+            log in once — the session is saved to disk and reused for all future scrapes.
           </p>
           <ol className="list-decimal list-inside space-y-1.5 text-slate-400">
             <li>
-              Install Playwright locally if needed:
-              <code className="ml-1 block mt-0.5 bg-slate-900 rounded px-2 py-1 text-slate-200 font-mono">
-                npm install playwright && npx playwright install chromium
+              SSH into the server:
+              <code className="block mt-0.5 bg-slate-900 rounded px-2 py-1 text-slate-200 font-mono">
+                ssh arbdesk
               </code>
             </li>
             <li>
-              Copy the script from the repo:
-              <code className="ml-1 block mt-0.5 bg-slate-900 rounded px-2 py-1 text-slate-200 font-mono">
-                scripts/capture-ebay-session.js
+              Install Chromium on the server (one-time):
+              <code className="block mt-0.5 bg-slate-900 rounded px-2 py-1 text-slate-200 font-mono">
+                cd /opt/retailarb && npx playwright install chromium
               </code>
             </li>
             <li>
-              Get your <strong>session cookie</strong>: in your browser, open DevTools → Application → Cookies → find <code>next-auth.session-token</code>
+              Run the login script:
+              <code className="block mt-0.5 bg-slate-900 rounded px-2 py-1 text-slate-200 font-mono">
+                node scripts/ebay-login.js
+              </code>
+              This opens a Chromium window (requires a display — use VNC or X11 forwarding).
+              Sign in to eBay, then close the window. The session saves automatically.
             </li>
-            <li>
-              Get your <strong>account ID</strong>: {accounts.map(a => (
-                <span key={a.id} className="font-mono text-slate-200">{a.id} ({a.username})</span>
-              ))}
-            </li>
-            <li>
-              Run the script:
-              <code className="ml-1 block mt-0.5 bg-slate-900 rounded px-2 py-1 text-slate-200 font-mono whitespace-pre-wrap break-all">
-                {`APP_URL=http://68.183.121.176:3000 ACCOUNT_ID=<id> SESSION_COOKIE=<token> node scripts/capture-ebay-session.js`}
+            <li className="text-yellow-400">
+              <strong>No display on the server?</strong> Use X11 forwarding:
+              <code className="block mt-0.5 bg-slate-900 rounded px-2 py-1 text-slate-200 font-mono">
+                ssh -X arbdesk "cd /opt/retailarb && DISPLAY=:0 node scripts/ebay-login.js"
               </code>
             </li>
-            <li>Sign in to eBay in the browser that opens. The session saves automatically.</li>
-            <li>Refresh this page — the session indicator should turn green.</li>
+            <li>Refresh this page — the session indicator turns green once the profile directory exists.</li>
           </ol>
         </div>
       )}
@@ -205,9 +204,9 @@ export default function ScrapeOrderTotals() {
 
       {enqueued !== null && (
         <p className="text-xs text-slate-400">
-          {enqueued === 0
+          {enqueued.orders === 0
             ? "No orders need scraping — all already have original_total set."
-            : `${enqueued} jobs enqueued. Worker is processing orders now…`}
+            : `${enqueued.orders} orders enqueued in ${enqueued.batches} batches (${15} orders/batch). Worker is processing now…`}
         </p>
       )}
 

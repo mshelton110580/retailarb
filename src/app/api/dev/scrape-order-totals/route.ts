@@ -8,62 +8,59 @@ const connection = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379"
   maxRetriesPerRequest: null
 });
 
+const BATCH_SIZE = 15;
+
 /**
  * POST /api/dev/scrape-order-totals
  *
- * Enqueues order_scrape_job for every order where original_total IS NULL.
- * ADMIN only. Returns counts of queued jobs.
+ * Enqueues order_scrape_batch_job jobs (15 orders per job) for all orders
+ * where original_total IS NULL.
+ * ADMIN only.
  */
 export async function POST(req: Request) {
   const auth = await requireRole(["ADMIN"]);
   if (!auth.ok) return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
 
   const body = await req.json().catch(() => ({}));
-  const reset = body.reset === true; // re-queue FAILED orders too
-
-  const where: Record<string, unknown> = { original_total: null };
-  if (!reset) {
-    // Skip orders already queued or in progress (PENDING state means already enqueued this session)
-    where.scrape_state = { not: "PENDING" };
-    // Actually — enqueue all NULL original_total orders, worker skips if already DONE
-  }
+  const reset = body.reset === true;
 
   const orders = await prisma.orders.findMany({
-    where: { original_total: null },
-    select: { order_id: true, scrape_state: true }
+    where: {
+      original_total: null,
+      ...(reset ? {} : { scrape_state: { not: "NEEDS_LOGIN" } })
+    },
+    select: { order_id: true },
+    orderBy: { purchase_date: "desc" }
   });
 
-  const queue = new Queue("order_scrape_job", { connection: connection as any });
-
-  let enqueued = 0;
-  for (const order of orders) {
-    // Skip if already marked DONE (shouldn't happen since we filter original_total=null, but safety check)
-    if (order.scrape_state === "DONE") continue;
-    // Skip NEEDS_LOGIN unless reset=true
-    if (!reset && order.scrape_state === "NEEDS_LOGIN") continue;
-
-    await queue.add(
-      "scrape",
-      { orderId: order.order_id },
-      { removeOnComplete: 100, removeOnFail: 50 }
-    );
-    enqueued++;
+  if (orders.length === 0) {
+    return NextResponse.json({ ok: true, enqueued: 0, batches: 0, total: 0 });
   }
 
-  // Mark enqueued orders as PENDING so the UI can show progress
-  if (enqueued > 0) {
-    await prisma.orders.updateMany({
-      where: {
-        original_total: null,
-        scrape_state: reset ? undefined : { not: "NEEDS_LOGIN" }
-      },
-      data: { scrape_state: "PENDING" }
-    });
+  // Chunk into batches of BATCH_SIZE
+  const batches: string[][] = [];
+  for (let i = 0; i < orders.length; i += BATCH_SIZE) {
+    batches.push(orders.slice(i, i + BATCH_SIZE).map(o => o.order_id));
   }
+
+  const queue = new Queue("order_scrape_batch_job", { connection: connection as any });
+  for (const batch of batches) {
+    await queue.add("batch", { orderIds: batch }, { removeOnComplete: 50, removeOnFail: 20 });
+  }
+
+  // Mark all as PENDING
+  await prisma.orders.updateMany({
+    where: {
+      original_total: null,
+      ...(reset ? {} : { scrape_state: { not: "NEEDS_LOGIN" } })
+    },
+    data: { scrape_state: "PENDING" }
+  });
 
   return NextResponse.json({
     ok: true,
-    enqueued,
+    enqueued: orders.length,
+    batches: batches.length,
     total: orders.length
   });
 }
@@ -71,7 +68,7 @@ export async function POST(req: Request) {
 /**
  * GET /api/dev/scrape-order-totals
  *
- * Returns current scrape progress stats.
+ * Returns current scrape progress stats and Chrome profile session status.
  */
 export async function GET() {
   const auth = await requireRole(["ADMIN"]);
@@ -85,11 +82,7 @@ export async function GET() {
       _count: { scrape_state: true }
     }),
     prisma.ebay_accounts.findMany({
-      select: {
-        id: true,
-        ebay_username: true,
-        playwright_state: true
-      }
+      select: { id: true, ebay_username: true }
     })
   ]);
 
@@ -98,10 +91,15 @@ export async function GET() {
     stateMap[row.scrape_state ?? "null"] = row._count.scrape_state;
   }
 
+  // Check if chrome profile dir exists on server (indicates login has been done)
+  const { existsSync } = await import("fs");
+  const profileDir = process.env.EBAY_CHROME_PROFILE ?? "/opt/retailarb/chrome-profile";
+  const hasProfile = existsSync(profileDir);
+
   const sessionStatus = accounts.map(a => ({
     id: a.id,
     username: a.ebay_username,
-    hasSession: !!(a.playwright_state && a.playwright_state.length > 10)
+    hasSession: hasProfile
   }));
 
   return NextResponse.json({
@@ -109,6 +107,7 @@ export async function GET() {
     withOriginal,
     needsScrape: total - withOriginal,
     states: stateMap,
-    sessionStatus
+    sessionStatus,
+    profileDir
   });
 }
