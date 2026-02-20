@@ -29,13 +29,31 @@ export async function POST() {
     try {
       const { token } = await getValidAccessToken(account.id);
 
-      // Fetch all orders from the beginning of our data range
-      const since = new Date("2025-11-01T00:00:00Z");
-      const until = new Date();
+      // Trading API max window is 90 days — chunk into 30-day windows to be safe
+      const windowDays = 30;
+      const start = new Date("2025-11-01T00:00:00Z");
+      const end = new Date();
+      const allOrders: Awaited<ReturnType<typeof getOrders>>["orders"] = [];
 
-      const result = await getOrders(token, since.toISOString(), until.toISOString());
+      let cursor = new Date(start);
+      while (cursor < end) {
+        const windowEnd = new Date(cursor);
+        windowEnd.setDate(windowEnd.getDate() + windowDays);
+        const until = windowEnd > end ? end : windowEnd;
+        const result = await getOrders(token, cursor.toISOString(), until.toISOString());
+        allOrders.push(...result.orders);
+        cursor = until;
+      }
 
-      for (const order of result.orders) {
+      // Deduplicate (windows can overlap on the boundary)
+      const seen = new Set<string>();
+      const uniqueOrders = allOrders.filter(o => {
+        if (seen.has(o.orderId)) return false;
+        seen.add(o.orderId);
+        return true;
+      });
+
+      for (const order of uniqueOrders) {
         const subtotalNum = parseFloat(order.subtotal);
         const adjustmentNum = parseFloat(order.adjustmentAmount);
         const originalTotal = subtotalNum > 0
@@ -59,6 +77,37 @@ export async function POST() {
       console.error("backfill-original-totals error:", err);
       errors++;
     }
+  }
+
+  // For orders older than 90 days (beyond Trading API range), fall back to
+  // returns + INR data already in the DB: original_total = current_total + refunds
+  const oldOrders = await prisma.$queryRaw<Array<{
+    order_id: string;
+    current_total: string;
+    returns_refunded: string;
+    inr_claimed: string;
+  }>>`
+    SELECT o.order_id,
+      (o.totals->>'total')::numeric as current_total,
+      COALESCE(SUM(r.actual_refund), 0)::numeric as returns_refunded,
+      COALESCE(SUM(i.claim_amount), 0)::numeric as inr_claimed
+    FROM orders o
+    LEFT JOIN returns r ON r.order_id = o.order_id
+    LEFT JOIN inr_cases i ON i.order_id = o.order_id
+    WHERE o.original_total IS NULL
+    GROUP BY o.order_id, o.totals
+  `;
+
+  for (const row of oldOrders) {
+    const currentTotal = parseFloat(row.current_total) || 0;
+    const refunds = parseFloat(row.returns_refunded) || 0;
+    const inr = parseFloat(row.inr_claimed) || 0;
+    const originalTotal = parseFloat((currentTotal + refunds + inr).toFixed(2));
+    await prisma.orders.update({
+      where: { order_id: row.order_id },
+      data: { original_total: originalTotal }
+    });
+    updated++;
   }
 
   return NextResponse.json({ ok: true, updated, unchanged, errors });
