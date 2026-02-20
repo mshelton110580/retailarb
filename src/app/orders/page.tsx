@@ -116,7 +116,8 @@ export default async function OrdersPage({
                             const parts: string[] = [];
                             if (item.qty > 1) parts.push(`$${unitPrice.toFixed(2)} × ${item.qty}`);
                             else parts.push(`$${unitPrice.toFixed(2)}`);
-                            if (shipping > 0) parts.push(`+$${shipping.toFixed(2)} ship`);
+                            if (orderShipping === 0) parts.push("✓ free ship");
+                            else if (shipping > 0) parts.push(`+$${shipping.toFixed(2)} ship`);
                             if (tax > 0) parts.push(`+$${tax.toFixed(2)} tax`);
                             return `${parts.join(" ")} = $${lineTotal.toFixed(2)}`;
                           })()}
@@ -132,6 +133,11 @@ export default async function OrdersPage({
                         </a>
                       </div>
                     ))}
+                    <div className="mt-1 text-right text-xs text-slate-500">
+                      Order total: <span className="text-slate-300 font-medium">
+                        ${(order.original_total ? Number(order.original_total) + orderTax : totalItemSubtotal + orderShipping + orderTax).toFixed(2)}
+                      </span>
+                    </div>
                   </div>
                   );
                 })()}

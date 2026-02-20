@@ -70,7 +70,15 @@ export default async function OrderDetailPage({ params }: { params: { orderId: s
             </p>
           </div>
           <div>
-            <p className="text-slate-500">Total</p>
+            <p className="text-slate-500">Original Total</p>
+            <p className="text-slate-200">
+              {order.original_total != null
+                ? `$${Number(order.original_total).toFixed(2)}`
+                : "N/A"}
+            </p>
+          </div>
+          <div>
+            <p className="text-slate-500">Current Balance</p>
             <p className="text-slate-200">
               {order.totals && typeof order.totals === "object" && "total" in (order.totals as any)
                 ? `$${Number((order.totals as any).total).toFixed(2)}`
@@ -83,44 +91,75 @@ export default async function OrderDetailPage({ params }: { params: { orderId: s
       {/* Items */}
       <section className="rounded-lg border border-slate-800 bg-slate-900 p-4">
         <h2 className="text-lg font-semibold">Items</h2>
-        <div className="mt-3 space-y-2">
-          {order.order_items.map((item) => (
-            <div key={item.id} className="rounded border border-slate-800 p-3">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1 min-w-0">
-                  <a
-                    href={`https://www.ebay.com/itm/${item.item_id}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="font-medium text-blue-400 hover:text-blue-300 hover:underline"
-                    title="View item on eBay"
-                  >
-                    {item.title}
-                  </a>
-                  <div className="mt-1 flex items-center gap-3 text-xs text-slate-400">
-                    <span>Item ID: {item.item_id}</span>
-                    <span>Qty: {item.qty}</span>
-                    <span>
-                      Total: $
-                      {order.totals && typeof order.totals === "object" && "total" in (order.totals as any)
-                        ? Number((order.totals as any).total).toFixed(2)
-                        : "0.00"}
-                    </span>
+        {(() => {
+          const orderShipping = order.shipping_cost ? Number(order.shipping_cost) : 0;
+          const orderTax = order.tax_amount ? Number(order.tax_amount) : 0;
+          const totalItemSubtotal = order.order_items.reduce(
+            (sum, i) => sum + Number(i.transaction_price) * i.qty, 0
+          );
+          return (
+            <div className="mt-3 space-y-2">
+              {order.order_items.map((item) => {
+                const unitPrice = Number(item.transaction_price);
+                const itemSubtotal = unitPrice * item.qty;
+                const proportion = totalItemSubtotal > 0 ? itemSubtotal / totalItemSubtotal : 1 / order.order_items.length;
+                const shipping = parseFloat((orderShipping * proportion).toFixed(2));
+                const tax = parseFloat((orderTax * proportion).toFixed(2));
+                const lineTotal = itemSubtotal + shipping + tax;
+                return (
+                  <div key={item.id} className="rounded border border-slate-800 p-3">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <a
+                          href={`https://www.ebay.com/itm/${item.item_id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="font-medium text-blue-400 hover:text-blue-300 hover:underline"
+                          title="View item on eBay"
+                        >
+                          {item.title}
+                        </a>
+                        <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-slate-400">
+                          <span>Item ID: {item.item_id}</span>
+                          <span>Qty: {item.qty}</span>
+                          <span>
+                            {item.qty > 1 ? `$${unitPrice.toFixed(2)} × ${item.qty}` : `$${unitPrice.toFixed(2)}`}
+                            {orderShipping === 0
+                              ? <span className="ml-1 text-emerald-400">✓ free shipping</span>
+                              : ` +$${shipping.toFixed(2)} ship`}
+                            {tax > 0 && ` +$${tax.toFixed(2)} tax`}
+                            {" = "}<span className="text-slate-200 font-medium">${lineTotal.toFixed(2)}</span>
+                          </span>
+                        </div>
+                      </div>
+                      <a
+                        href={`https://www.ebay.com/itm/${item.item_id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex-shrink-0 rounded bg-slate-800 px-2 py-1 text-xs text-slate-400 hover:text-blue-400 hover:bg-slate-700 transition-colors"
+                        title="Open item on eBay"
+                      >
+                        eBay ↗
+                      </a>
+                    </div>
+                  </div>
+                );
+              })}
+              {/* Order total row */}
+              <div className="mt-2 flex justify-end border-t border-slate-700 pt-2 text-sm">
+                <div className="space-y-0.5 text-right text-xs text-slate-400">
+                  <div>Subtotal: <span className="text-slate-200">${totalItemSubtotal.toFixed(2)}</span></div>
+                  {orderShipping > 0 && <div>Shipping: <span className="text-slate-200">${orderShipping.toFixed(2)}</span></div>}
+                  {orderShipping === 0 && <div className="text-emerald-400">Free Shipping</div>}
+                  {orderTax > 0 && <div>Tax: <span className="text-slate-200">${orderTax.toFixed(2)}</span></div>}
+                  <div className="font-semibold text-slate-200">
+                    Order Total: ${(order.original_total ? Number(order.original_total) : totalItemSubtotal + orderShipping + orderTax).toFixed(2)}
                   </div>
                 </div>
-                <a
-                  href={`https://www.ebay.com/itm/${item.item_id}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex-shrink-0 rounded bg-slate-800 px-2 py-1 text-xs text-slate-400 hover:text-blue-400 hover:bg-slate-700 transition-colors"
-                  title="Open item on eBay"
-                >
-                  eBay ↗
-                </a>
               </div>
             </div>
-          ))}
-        </div>
+          );
+        })()}
       </section>
 
       {/* Tracking & Shipments */}
