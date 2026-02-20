@@ -156,7 +156,7 @@ export async function GET(req: Request) {
       trackingNumbers: u.order?.shipments?.flatMap(s =>
         s.tracking_numbers.map(t => t.tracking_number)
       ) ?? [],
-      images: u.images.map(i => ({ id: i.id, url: `/uploads/${i.image_path}` }))
+      images: u.images.map(i => ({ id: i.id, url: `/api/uploads/${i.image_path}` }))
     })),
     total,
     limit,

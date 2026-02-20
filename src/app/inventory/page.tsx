@@ -812,10 +812,10 @@ export default async function InventoryPage({
                               {(unit as any).images?.length > 0 && (
                                 <div className="flex flex-wrap gap-1 pl-14">
                                   {(unit as any).images.map((img: { id: string; image_path: string }) => (
-                                    <a key={img.id} href={`/uploads/${img.image_path}`} target="_blank" rel="noreferrer">
+                                    <a key={img.id} href={`/api/uploads/${img.image_path}`} target="_blank" rel="noreferrer">
                                       {/* eslint-disable-next-line @next/next/no-img-element */}
                                       <img
-                                        src={`/uploads/${img.image_path}`}
+                                        src={`/api/uploads/${img.image_path}`}
                                         alt="Unit photo"
                                         className="h-12 w-12 rounded border border-slate-700 object-cover hover:opacity-80 transition-opacity"
                                       />

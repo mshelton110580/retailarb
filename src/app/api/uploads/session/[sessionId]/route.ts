@@ -44,7 +44,7 @@ export async function GET(
     },
     images: session.images.map((img) => ({
       id: img.id,
-      url: `/uploads/${img.image_path}`,
+      url: `/api/uploads/${img.image_path}`,
       createdAt: img.created_at,
     })),
   });

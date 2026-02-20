@@ -61,7 +61,7 @@ export async function POST(
       },
     });
 
-    saved.push({ id: image.id, url: `/uploads/${filename}` });
+    saved.push({ id: image.id, url: `/api/uploads/${filename}` });
   }
 
   // Return updated image list for the session
@@ -75,7 +75,7 @@ export async function POST(
     uploaded: saved,
     images: allImages.map((img) => ({
       id: img.id,
-      url: `/uploads/${img.image_path}`,
+      url: `/api/uploads/${img.image_path}`,
       createdAt: img.created_at,
     })),
   });

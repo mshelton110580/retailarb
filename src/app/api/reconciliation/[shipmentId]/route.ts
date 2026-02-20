@@ -91,7 +91,7 @@ export async function GET(
       isNonGood: !goodConditions.has(u.condition_status?.toLowerCase() ?? ""),
       images: u.images.map((img) => ({
         id: img.id,
-        url: `/uploads/${img.image_path}`,
+        url: `/api/uploads/${img.image_path}`,
         createdAt: img.created_at,
       })),
       imageCount: u.images.length,
