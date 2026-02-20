@@ -41,10 +41,15 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
           // original_total = what was originally paid = Subtotal (items) + ShippingServiceCost.
           //   Subtotal and ShippingServiceCost are fixed at purchase time and never change,
           //   even after refunds. Total decreases as refunds are issued, so it cannot be used.
+          //   Fallback: if ShippingServiceCost is missing (e.g. multi-item bundled shipping),
+          //   take max(Subtotal, Total) — Total only goes down with refunds so the larger value
+          //   is always closer to the true original.
           // totals.total is always updated to the current (possibly post-refund) value.
-          const originalTotal = parseFloat(
-            (parseFloat(order.subtotal) + parseFloat(order.shippingCost)).toFixed(2)
-          );
+          const subtotalNum = parseFloat(order.subtotal);
+          const shippingNum = parseFloat(order.shippingCost);
+          const subtotalPlusShipping = parseFloat((subtotalNum + shippingNum).toFixed(2));
+          const totalNum = parseFloat(order.total);
+          const originalTotal = Math.max(subtotalPlusShipping, totalNum);
 
           await prisma.orders.upsert({
             where: { order_id: String(order.orderId) },
