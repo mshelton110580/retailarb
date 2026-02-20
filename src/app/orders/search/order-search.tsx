@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Link from "next/link";
-import { VariableSizeList as VList } from "react-window";
 
 type Account = { id: string; ebay_username: string | null };
 
@@ -153,11 +152,6 @@ type ItemRow = {
   order: Order;
 };
 
-// Row heights
-const ROW_H = 48;          // collapsed row px
-const EXPANDED_H = 260;    // expanded detail panel px (approximate)
-const HEADER_H = 36;
-
 // ── Return/INR badge helpers ────────────────────────────────────────────────
 
 function ReturnBadge({ r }: { r: ReturnCase }) {
@@ -294,7 +288,7 @@ const STORAGE_KEY = "arbdesk_search_filters";
 
 type DatePreset = "30" | "60" | "90" | "all";
 
-type CaseFilter = "needsReturn" | "hasReturn" | "hasInr" | "needsInr";
+type CaseFilter = "needsReturn" | "hasOpenReturn" | "hasClosedReturn" | "hasOpenInr" | "hasClosedInr" | "needsInr";
 
 type SavedFilters = {
   groupBy: GroupBy;
@@ -314,6 +308,7 @@ type SavedFilters = {
 
 const VALID_SHIP_STATUSES = new Set(SHIP_STATUSES.map(s => s.value));
 const VALID_ORDER_STATUSES = new Set(ORDER_STATUSES);
+const VALID_CASE_FILTERS = new Set<CaseFilter>(["needsReturn", "hasOpenReturn", "hasClosedReturn", "hasOpenInr", "hasClosedInr", "needsInr"]);
 
 function loadSaved(): Partial<SavedFilters> {
   if (typeof window === "undefined") return {};
@@ -327,6 +322,9 @@ function loadSaved(): Partial<SavedFilters> {
     if (parsed.filterOrderStatus) {
       parsed.filterOrderStatus = parsed.filterOrderStatus.filter(v => VALID_ORDER_STATUSES.has(v));
     }
+    if (parsed.filterCase) {
+      parsed.filterCase = parsed.filterCase.filter(v => VALID_CASE_FILTERS.has(v));
+    }
     return parsed;
   } catch { return {}; }
 }
@@ -338,6 +336,17 @@ function datePresetFrom(preset: DatePreset): string {
   return d.toISOString().slice(0, 10);
 }
 
+// ── Case filter helpers ───────────────────────────────────────────────────────
+
+function isReturnClosed(r: ReturnCase): boolean {
+  const state = (r.state ?? r.status ?? "").replace(/_/g, " ").toLowerCase();
+  return state.includes("closed") || state.includes("refund");
+}
+
+function isInrClosed(c: InrCase): boolean {
+  return c.status === "CLOSED" || c.status === "CS_CLOSED";
+}
+
 // ── Case filter predicate ─────────────────────────────────────────────────────
 
 function matchesCaseFilter(order: Order, filters: CaseFilter[]): boolean {
@@ -345,11 +354,17 @@ function matchesCaseFilter(order: Order, filters: CaseFilter[]): boolean {
   return filters.every(f => {
     switch (f) {
       case "needsReturn": return order.needsReturn && !order.returnCase;
-      case "hasReturn":   return order.returnCase != null;
-      case "hasInr":      return order.inrCase != null;
+      case "hasOpenReturn":   return order.returnCase != null && !isReturnClosed(order.returnCase);
+      case "hasClosedReturn": return order.returnCase != null && isReturnClosed(order.returnCase);
+      case "hasOpenInr":      return order.inrCase != null && !isInrClosed(order.inrCase);
+      case "hasClosedInr":    return order.inrCase != null && isInrClosed(order.inrCase);
       case "needsInr": {
         const s = order.shipment?.derivedStatus;
-        return (s === "not_received" || s === "not_delivered") && !order.inrCase;
+        // Only actionable for active (non-cancelled, non-refunded) orders with unshipped/undelivered items
+        return (s === "not_received" || s === "not_delivered")
+          && !order.inrCase
+          && order.orderStatus !== "Cancelled"
+          && !order.hasRefund;
       }
     }
   });
@@ -422,25 +437,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   // Cancel token: increment to abort in-flight background loads on filter change
   const fetchGenRef = useRef(0);
 
-  // Virtual list ref — needed to reset scroll & clear size cache on sort/data change
-  const listRef = useRef<VList>(null);
-  const sizeCache = useRef<Record<string, number>>({});
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = useState(900);
-
   const effectiveDateFrom = datePreset !== "all" ? datePresetFrom(datePreset) : dateFrom;
-
-  // Track container width for react-window
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    setContainerWidth(el.offsetWidth);
-    const ro = new ResizeObserver(entries => {
-      setContainerWidth(entries[0]?.contentRect.width ?? el.offsetWidth);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
 
   // ── Fetch all pages for current filters ──────────────────────────────────
 
@@ -456,8 +453,6 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
     setLoadedPages(0);
     setExpanded(new Set());
     setLoadingFirst(true);
-    sizeCache.current = {};
-    listRef.current?.resetAfterIndex(0);
 
     // Fetch first page
     const p1 = buildParams({ ...filterSnapshot, limit: PAGE_SIZE, offset: 0 });
@@ -583,13 +578,6 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
     });
   }, [orders, colDef, sortDir, filterCase]);
 
-  // Reset list when sorted rows change
-  useEffect(() => {
-    sizeCache.current = {};
-    listRef.current?.resetAfterIndex(0);
-    listRef.current?.scrollToItem(0);
-  }, [sortedItemRows, sortedOrders]);
-
   // ── Sort handler ──────────────────────────────────────────────────────────
 
   function handleColSort(col: ColDef) {
@@ -618,11 +606,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   function toggleExpand(key: string) {
     setExpanded(prev => {
       const next = new Set(prev);
-      const wasOpen = next.has(key);
-      wasOpen ? next.delete(key) : next.add(key);
-      // Recalculate sizes for all affected rows
-      sizeCache.current = {};
-      listRef.current?.resetAfterIndex(0);
+      next.has(key) ? next.delete(key) : next.add(key);
       return next;
     });
   }
@@ -714,7 +698,9 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
       case "inrCase": {
         if (order.inrCase) return <InrBadge c={order.inrCase} />;
         const inrStatus = order.shipment?.derivedStatus;
-        if (inrStatus === "not_received" || inrStatus === "not_delivered") {
+        const canFileInr = (inrStatus === "not_received" || inrStatus === "not_delivered")
+          && order.orderStatus !== "Cancelled" && !order.hasRefund;
+        if (canFileInr) {
           return (
             <a href={`https://order.ebay.com/ord/show?orderId=${order.orderId}`} target="_blank" rel="noreferrer"
               title="No INR filed — click to open this order on eBay and use 'More actions' > 'I didn't receive it'"
@@ -789,7 +775,9 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
       case "inrCase": {
         if (order.inrCase) return <InrBadge c={order.inrCase} />;
         const inrStatus = order.shipment?.derivedStatus;
-        if (inrStatus === "not_received" || inrStatus === "not_delivered") {
+        const canFileInr = (inrStatus === "not_received" || inrStatus === "not_delivered")
+          && order.orderStatus !== "Cancelled" && !order.hasRefund;
+        if (canFileInr) {
           return (
             <a href={`https://order.ebay.com/ord/show?orderId=${order.orderId}`} target="_blank" rel="noreferrer"
               title="No INR filed — click to open this order on eBay and use 'More actions' > 'I didn't receive it'"
@@ -986,7 +974,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
 
   function HeaderRow({ cols }: { cols: ColDef[] }) {
     return (
-      <div className="flex items-center gap-3 px-4 py-2 border-b border-slate-700 bg-slate-950" style={{ height: HEADER_H }}>
+      <div className="flex items-center gap-3 px-4 py-2 border-b border-slate-700 bg-slate-950 h-9">
         <span className="w-3 flex-shrink-0" />
         {cols.map(c => (
           <button
@@ -1005,67 +993,29 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
     );
   }
 
-  // ── Virtual row renderers ─────────────────────────────────────────────────
+  // ── Case filter counts (computed over all loaded orders) ─────────────────
 
-  function getItemRowKey(index: number) { return sortedItemRows[index]?.key ?? String(index); }
-  function getOrderRowKey(index: number) { return sortedOrders[index]?.orderId ?? String(index); }
-
-  function itemRowHeight(index: number) {
-    const row = sortedItemRows[index];
-    if (!row) return ROW_H;
-    return expanded.has(row.key) ? ROW_H + EXPANDED_H : ROW_H;
-  }
-
-  function orderRowHeight(index: number) {
-    const order = sortedOrders[index];
-    if (!order) return ROW_H;
-    return expanded.has(order.orderId) ? ROW_H + EXPANDED_H : ROW_H;
-  }
-
-  const ItemRowRenderer = useCallback(({ index, style }: { index: number; style: React.CSSProperties }) => {
-    const row = sortedItemRows[index];
-    if (!row) return null;
-    const { order } = row;
-    const isExpanded = expanded.has(row.key);
-    return (
-      <div style={style} className={`border-b border-slate-800 ${isExpanded ? "" : "hover:bg-slate-800/50"} transition-colors`}>
-        <div className="flex items-center gap-3 px-4 cursor-pointer" style={{ height: ROW_H }} onClick={() => toggleExpand(row.key)}>
-          <span className="text-slate-600 text-xs w-3 flex-shrink-0">{isExpanded ? "▼" : "▶"}</span>
-          {itemsCols.map(c => (
-            <div key={c.key} className={colWidth[c.key] ?? "flex-shrink-0"}>
-              {renderItemCell(c.key, row)}
-            </div>
-          ))}
-          <a href={order.orderUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
-            className="flex-shrink-0 text-xs text-slate-600 hover:text-blue-400" title="View on eBay">↗</a>
-        </div>
-        {isExpanded && <ExpandedDetail order={order} />}
-      </div>
-    );
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortedItemRows, expanded, itemsCols]);
-
-  const OrderRowRenderer = useCallback(({ index, style }: { index: number; style: React.CSSProperties }) => {
-    const order = sortedOrders[index];
-    if (!order) return null;
-    const isExpanded = expanded.has(order.orderId);
-    return (
-      <div style={style} className={`border-b border-slate-800 ${isExpanded ? "" : "hover:bg-slate-800/50"} transition-colors`}>
-        <div className="flex items-center gap-3 px-4 cursor-pointer" style={{ height: ROW_H }} onClick={() => toggleExpand(order.orderId)}>
-          <span className="text-slate-600 text-xs w-3 flex-shrink-0">{isExpanded ? "▼" : "▶"}</span>
-          {ordersCols.map(c => (
-            <div key={c.key} className={colWidth[c.key] ?? "flex-shrink-0"}>
-              {renderOrderCell(c.key, order)}
-            </div>
-          ))}
-          <a href={order.orderUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
-            className="flex-shrink-0 text-xs text-slate-600 hover:text-blue-400" title="View on eBay">↗</a>
-        </div>
-        {isExpanded && <ExpandedOrderDetail order={order} />}
-      </div>
-    );
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortedOrders, expanded, ordersCols]);
+  const caseFilterCounts = useMemo(() => {
+    const counts: Record<CaseFilter, number> = {
+      needsReturn: 0, hasOpenReturn: 0, hasClosedReturn: 0,
+      hasOpenInr: 0, hasClosedInr: 0, needsInr: 0,
+    };
+    for (const o of orders) {
+      if (o.needsReturn && !o.returnCase) counts.needsReturn++;
+      if (o.returnCase) {
+        if (isReturnClosed(o.returnCase)) counts.hasClosedReturn++;
+        else counts.hasOpenReturn++;
+      }
+      if (o.inrCase) {
+        if (isInrClosed(o.inrCase)) counts.hasClosedInr++;
+        else counts.hasOpenInr++;
+      }
+      const s = o.shipment?.derivedStatus;
+      if ((s === "not_received" || s === "not_delivered") && !o.inrCase
+          && o.orderStatus !== "Cancelled" && !o.hasRefund) counts.needsInr++;
+    }
+    return counts;
+  }, [orders]);
 
   // ── JSX ───────────────────────────────────────────────────────────────────
 
@@ -1202,18 +1152,30 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
           <p className="mb-1.5 text-xs text-slate-500">Returns &amp; INR</p>
           <div className="flex flex-wrap gap-1.5">
             {([
-              { value: "needsReturn" as CaseFilter, label: "Needs Return",  activeClass: "bg-orange-950 border border-orange-800 text-orange-300" },
-              { value: "hasReturn"   as CaseFilter, label: "Has Return",    activeClass: "bg-orange-900 text-orange-200" },
-              { value: "hasInr"      as CaseFilter, label: "Has INR",       activeClass: "bg-yellow-900 text-yellow-200" },
-              { value: "needsInr"    as CaseFilter, label: "Needs INR",     activeClass: "bg-yellow-950 border border-yellow-800 text-yellow-300" },
-            ]).map(chip => (
-              <button key={chip.value} onClick={() => toggleCaseFilter(chip.value)}
-                className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
-                  filterCase.includes(chip.value) ? chip.activeClass : "bg-slate-800 text-slate-400 hover:bg-slate-700"
-                }`}>
-                {chip.label}
-              </button>
-            ))}
+              { value: "needsReturn"   as CaseFilter, label: "Needs Return",    activeClass: "bg-orange-950 border border-orange-800 text-orange-300" },
+              { value: "hasOpenReturn" as CaseFilter, label: "Open Return",     activeClass: "bg-orange-900 text-orange-200" },
+              { value: "hasClosedReturn" as CaseFilter, label: "Closed Return", activeClass: "bg-slate-700 text-slate-300" },
+              { value: "needsInr"      as CaseFilter, label: "Needs INR",       activeClass: "bg-yellow-950 border border-yellow-800 text-yellow-300" },
+              { value: "hasOpenInr"    as CaseFilter, label: "Open INR",        activeClass: "bg-yellow-900 text-yellow-200" },
+              { value: "hasClosedInr"  as CaseFilter, label: "Closed INR",      activeClass: "bg-slate-700 text-slate-300" },
+            ]).map(chip => {
+              const count = caseFilterCounts[chip.value];
+              return (
+                <button key={chip.value} onClick={() => toggleCaseFilter(chip.value)}
+                  className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                    filterCase.includes(chip.value) ? chip.activeClass : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                  }`}>
+                  {chip.label}
+                  {count > 0 && (
+                    <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                      filterCase.includes(chip.value) ? "bg-black/30 text-current" : "bg-slate-700 text-slate-300"
+                    }`}>
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -1251,11 +1213,18 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
       {/* ── Results header ── */}
       <div className="flex items-center justify-between text-sm text-slate-400">
         <span>
-          {loadingFirst ? "Loading…" : groupBy === "items"
-            ? `${sortedItemRows.length} item${sortedItemRows.length !== 1 ? "s" : ""} across ${loadedCount} order${loadedCount !== 1 ? "s" : ""}`
-            : `${loadedCount} order${loadedCount !== 1 ? "s" : ""}`}
-          {total > 0 && loadedCount < total ? ` (${loadedCount} of ${total} loaded…)` : ""}
-          {(search || trackingScan || filterShipStatus.length || filterOrderStatus.length || filterCheckedIn || filterAccountId || filterCase.length || effectiveDateFrom || dateTo) && !loadingFirst ? " (filtered)" : ""}
+          {loadingFirst ? "Loading…" : (
+            <>
+              <span className="font-medium text-slate-200">{rowCount.toLocaleString()}</span>
+              {groupBy === "items" ? " items" : " orders"}
+              {filterCase.length > 0 || rowCount < loadedCount ? (
+                <span className="text-slate-500"> (filtered from {loadedCount.toLocaleString()})</span>
+              ) : null}
+              {total > 0 && loadedCount < total ? (
+                <span className="text-slate-500"> · {loadedCount.toLocaleString()} of {total.toLocaleString()} loaded</span>
+              ) : null}
+            </>
+          )}
         </span>
         {loadingMore && (
           <span className="text-xs text-blue-500 animate-pulse">Loading more…</span>
@@ -1263,7 +1232,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
       </div>
 
       {/* ── Results table ── */}
-      <div ref={containerRef} className="rounded-lg border border-slate-800 bg-slate-900 overflow-hidden">
+      <div className="rounded-lg border border-slate-800 bg-slate-900 overflow-hidden">
         {loadingFirst ? (
           <p className="p-6 text-sm text-slate-500 text-center">Loading orders…</p>
         ) : rowCount === 0 ? (
@@ -1271,41 +1240,58 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
         ) : groupBy === "items" ? (
           <>
             <HeaderRow cols={itemsCols} />
-            <VList
-              ref={listRef}
-              width={containerWidth}
-              height={Math.min(rowCount * ROW_H, 700)}
-              itemCount={rowCount}
-              itemSize={itemRowHeight}
-              itemKey={getItemRowKey}
-              overscanCount={5}
-            >
-              {ItemRowRenderer}
-            </VList>
+            <div>
+              {sortedItemRows.map(row => {
+                const { order } = row;
+                const isExpanded = expanded.has(row.key);
+                return (
+                  <div key={row.key} className={`border-b border-slate-800 ${isExpanded ? "" : "hover:bg-slate-800/50"} transition-colors`}>
+                    <div className="flex items-center gap-3 px-4 h-12 cursor-pointer" onClick={() => toggleExpand(row.key)}>
+                      <span className="text-slate-600 text-xs w-3 flex-shrink-0">{isExpanded ? "▼" : "▶"}</span>
+                      {itemsCols.map(c => (
+                        <div key={c.key} className={colWidth[c.key] ?? "flex-shrink-0"}>
+                          {renderItemCell(c.key, row)}
+                        </div>
+                      ))}
+                      <a href={order.orderUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                        className="flex-shrink-0 text-xs text-slate-600 hover:text-blue-400" title="View on eBay">↗</a>
+                    </div>
+                    {isExpanded && <ExpandedDetail order={order} />}
+                  </div>
+                );
+              })}
+            </div>
           </>
         ) : (
           <>
             <HeaderRow cols={ordersCols} />
-            <VList
-              ref={listRef}
-              width={containerWidth}
-              height={Math.min(rowCount * ROW_H, 700)}
-              itemCount={rowCount}
-              itemSize={orderRowHeight}
-              itemKey={getOrderRowKey}
-              overscanCount={5}
-            >
-              {OrderRowRenderer}
-            </VList>
+            <div>
+              {sortedOrders.map(order => {
+                const isExpanded = expanded.has(order.orderId);
+                return (
+                  <div key={order.orderId} className={`border-b border-slate-800 ${isExpanded ? "" : "hover:bg-slate-800/50"} transition-colors`}>
+                    <div className="flex items-center gap-3 px-4 h-12 cursor-pointer" onClick={() => toggleExpand(order.orderId)}>
+                      <span className="text-slate-600 text-xs w-3 flex-shrink-0">{isExpanded ? "▼" : "▶"}</span>
+                      {ordersCols.map(c => (
+                        <div key={c.key} className={colWidth[c.key] ?? "flex-shrink-0"}>
+                          {renderOrderCell(c.key, order)}
+                        </div>
+                      ))}
+                      <a href={order.orderUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                        className="flex-shrink-0 text-xs text-slate-600 hover:text-blue-400" title="View on eBay">↗</a>
+                    </div>
+                    {isExpanded && <ExpandedOrderDetail order={order} />}
+                  </div>
+                );
+              })}
+            </div>
           </>
         )}
       </div>
 
-      {!isLoading && loadedCount > 0 && (
+      {!isLoading && loadedCount > 0 && loadedCount < total && (
         <p className="text-center text-xs text-slate-600">
-          {loadedCount === total
-            ? `All ${total} order${total !== 1 ? "s" : ""} loaded · sorts apply across full dataset`
-            : `${loadedCount} of ${total} orders loaded`}
+          {loadedCount.toLocaleString()} of {total.toLocaleString()} orders loaded
         </p>
       )}
     </div>
