@@ -70,17 +70,33 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
           // Tax is included so original_total truly reflects what was paid at purchase time.
           const originalTotal = parseFloat((subtotalNum + shippingNum + taxNum).toFixed(2));
 
+          // Detect orders where original_total was stored as subtotal-only (shipping was 0 at creation time).
+          // This happens when the API response had shipping in a field that wasn't read at the time.
+          // Condition: existing original_total ≈ existing subtotal, but we now have a non-zero shipping cost.
+          const existingOrder = await prisma.orders.findUnique({
+            where: { order_id: String(order.orderId) },
+            select: { original_total: true, subtotal: true },
+          });
+          const needsTotalFix = existingOrder != null
+            && shippingNum > 0
+            && existingOrder.original_total != null
+            && existingOrder.subtotal != null
+            && Math.abs(Number(existingOrder.original_total) - Number(existingOrder.subtotal)) < 0.01;
+
           await prisma.orders.upsert({
             where: { order_id: String(order.orderId) },
             update: {
               order_status: order.orderStatus,
               totals: { total: order.total },
-              // subtotal, shipping_cost, original_total are immutable — set on CREATE only
-              // tax_amount is updated each sync as eBay may adjust it
               tax_amount: taxNum,
               ship_to_city: order.shippingAddress?.city ?? null,
               ship_to_state: order.shippingAddress?.state ?? null,
               ship_to_postal: order.shippingAddress?.postalCode ?? null,
+              // Fix original_total + shipping_cost if they were stored without shipping
+              ...(needsTotalFix ? {
+                shipping_cost: shippingNum,
+                original_total: originalTotal,
+              } : {}),
             },
             create: {
               order_id: String(order.orderId),
