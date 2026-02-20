@@ -29,9 +29,9 @@ export async function POST(req: Request) {
   // Parse "name=value; name2=value2" into Playwright cookie objects for ebay.com
   const cookies = raw
     .split(";")
-    .map(part => part.trim())
+    .map((part: string) => part.trim())
     .filter(Boolean)
-    .map(part => {
+    .map((part: string) => {
       const eqIdx = part.indexOf("=");
       const name = eqIdx === -1 ? part : part.slice(0, eqIdx).trim();
       const value = eqIdx === -1 ? "" : part.slice(eqIdx + 1).trim();
