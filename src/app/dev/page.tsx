@@ -3,7 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import PageHeader from "@/components/page-header";
 import EbayExportUpload from "./ebay-export-upload";
 import UploadTmp from "./upload-tmp";
-import ScrapeOrderTotals from "./scrape-order-totals";
+import BackfillOriginalTotals from "./backfill-original-totals";
 
 /**
  * /dev — Hidden developer tools page.
@@ -31,12 +31,12 @@ export default async function DevPage() {
         <UploadTmp />
       </section>
 
-      {/* Scrape original order totals from eBay order pages */}
+      {/* Backfill original_total from Trading API */}
       <section className="space-y-2">
         <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-500">
           Order Total Backfill
         </h2>
-        <ScrapeOrderTotals />
+        <BackfillOriginalTotals />
       </section>
 
       {/* eBay Export Backfill */}

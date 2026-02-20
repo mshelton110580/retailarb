@@ -26,11 +26,21 @@ const syncOrdersWorker = new Worker(
       const { token } = await getValidAccessToken(id);
       const result = await getOrders(token, since.toISOString(), now.toISOString());
       for (const order of result.orders) {
+        // subtotal = pre-refund total (items + shipping before any adjustment)
+        // adjustmentAmount is negative when a refund was issued
+        const subtotalNum = parseFloat(order.subtotal);
+        const adjustmentNum = parseFloat(order.adjustmentAmount);
+        // original_total is subtotal when positive, fallback to total - adjustment
+        const originalTotal = subtotalNum > 0
+          ? subtotalNum
+          : parseFloat((parseFloat(order.total) - adjustmentNum).toFixed(2));
+
         await prisma.orders.upsert({
           where: { order_id: order.orderId },
           update: {
             order_status: order.orderStatus,
             totals: { total: order.total },
+            original_total: originalTotal,
             ship_to_city: order.shippingAddress?.city,
             ship_to_state: order.shippingAddress?.state,
             ship_to_postal: order.shippingAddress?.postalCode,
@@ -42,6 +52,7 @@ const syncOrdersWorker = new Worker(
             purchase_date: new Date(order.createdTime),
             order_status: order.orderStatus,
             totals: { total: order.total },
+            original_total: originalTotal,
             ship_to_city: order.shippingAddress?.city,
             ship_to_state: order.shippingAddress?.state,
             ship_to_postal: order.shippingAddress?.postalCode,
