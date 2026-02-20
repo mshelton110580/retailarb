@@ -657,9 +657,30 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
           </span>
         );
       case "returnCase":
-        return order.returnCase ? <ReturnBadge r={order.returnCase} /> : <span className="text-xs text-slate-600">—</span>;
-      case "inrCase":
-        return order.inrCase ? <InrBadge c={order.inrCase} /> : <span className="text-xs text-slate-600">—</span>;
+        if (order.returnCase) return <ReturnBadge r={order.returnCase} />;
+        return (
+          <a href={`https://order.ebay.com/ord/show?orderId=${order.orderId}`} target="_blank" rel="noreferrer"
+            title="No return filed — click to open this order on eBay and use 'More actions' > 'Return this item'"
+            onClick={e => e.stopPropagation()}
+            className="inline-block rounded px-2 py-0.5 text-[10px] font-medium bg-orange-950 border border-orange-800 text-orange-400 hover:bg-orange-900 transition-colors">
+            File Return ↗
+          </a>
+        );
+      case "inrCase": {
+        if (order.inrCase) return <InrBadge c={order.inrCase} />;
+        const inrStatus = order.shipment?.derivedStatus;
+        if (inrStatus === "not_received" || inrStatus === "not_delivered") {
+          return (
+            <a href={`https://order.ebay.com/ord/show?orderId=${order.orderId}`} target="_blank" rel="noreferrer"
+              title="No INR filed — click to open this order on eBay and use 'More actions' > 'I didn't receive it'"
+              onClick={e => e.stopPropagation()}
+              className="inline-block rounded px-2 py-0.5 text-[10px] font-medium bg-yellow-950 border border-yellow-800 text-yellow-400 hover:bg-yellow-900 transition-colors">
+              File INR ↗
+            </a>
+          );
+        }
+        return <span className="text-xs text-slate-600">—</span>;
+      }
       case "escalated":
         return <EscalatedBadge order={order} />;
       default: return null;
@@ -710,9 +731,30 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
           </span>
         );
       case "returnCase":
-        return order.returnCase ? <ReturnBadge r={order.returnCase} /> : <span className="text-xs text-slate-600">—</span>;
-      case "inrCase":
-        return order.inrCase ? <InrBadge c={order.inrCase} /> : <span className="text-xs text-slate-600">—</span>;
+        if (order.returnCase) return <ReturnBadge r={order.returnCase} />;
+        return (
+          <a href={`https://order.ebay.com/ord/show?orderId=${order.orderId}`} target="_blank" rel="noreferrer"
+            title="No return filed — click to open this order on eBay and use 'More actions' > 'Return this item'"
+            onClick={e => e.stopPropagation()}
+            className="inline-block rounded px-2 py-0.5 text-[10px] font-medium bg-orange-950 border border-orange-800 text-orange-400 hover:bg-orange-900 transition-colors">
+            File Return ↗
+          </a>
+        );
+      case "inrCase": {
+        if (order.inrCase) return <InrBadge c={order.inrCase} />;
+        const inrStatus = order.shipment?.derivedStatus;
+        if (inrStatus === "not_received" || inrStatus === "not_delivered") {
+          return (
+            <a href={`https://order.ebay.com/ord/show?orderId=${order.orderId}`} target="_blank" rel="noreferrer"
+              title="No INR filed — click to open this order on eBay and use 'More actions' > 'I didn't receive it'"
+              onClick={e => e.stopPropagation()}
+              className="inline-block rounded px-2 py-0.5 text-[10px] font-medium bg-yellow-950 border border-yellow-800 text-yellow-400 hover:bg-yellow-900 transition-colors">
+              File INR ↗
+            </a>
+          );
+        }
+        return <span className="text-xs text-slate-600">—</span>;
+      }
       case "escalated":
         return <EscalatedBadge order={order} />;
       case "itemId": case "qty": case "price": return null;
