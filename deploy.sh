@@ -9,15 +9,19 @@ SERVER="root@68.183.121.176"
 SSH_KEY="$HOME/.ssh/temp_do_key2"
 REMOTE_DIR="/opt/retailarb"
 
-echo "==> Syncing files (excluding .env)..."
+echo "==> Syncing files (excluding .env and uploaded photos)..."
 rsync -avz --delete \
   --exclude='.env' \
   --exclude='node_modules' \
   --exclude='.next' \
   --exclude='.git' \
   --exclude='storage' \
+  --exclude='public/uploads' \
   -e "ssh -i $SSH_KEY" \
   /workspace/retailarb/ $SERVER:$REMOTE_DIR/
+
+echo "==> Ensuring uploads directory exists on server..."
+ssh -i $SSH_KEY $SERVER "mkdir -p $REMOTE_DIR/public/uploads"
 
 echo "==> Ensuring .env exists on server (restoring from backup if needed)..."
 ssh -i $SSH_KEY $SERVER \
