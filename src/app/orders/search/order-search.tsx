@@ -419,8 +419,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [offset, setOffset] = useState(0);
-  const LIMIT = 50;
+  const LIMIT = 500;
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -430,10 +429,8 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   // Resolve effective dateFrom: preset takes priority over manual input
   const effectiveDateFrom = datePreset !== "all" ? datePresetFrom(datePreset) : dateFrom;
 
-  const fetchOrders = useCallback(async (resetOffset = false) => {
+  const fetchOrders = useCallback(async () => {
     setLoading(true);
-    const currentOffset = resetOffset ? 0 : offset;
-    if (resetOffset) setOffset(0);
 
     const params = new URLSearchParams();
     if (search) params.set("search", search);
@@ -447,7 +444,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
     params.set("sortBy", sortBy);
     params.set("sortDir", sortDir);
     params.set("limit", String(LIMIT));
-    params.set("offset", String(currentOffset));
+    params.set("offset", "0");
 
     try {
       const res = await fetch(`/api/orders/search?${params}`);
@@ -459,7 +456,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
     } finally {
       setLoading(false);
     }
-  }, [search, trackingScan, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo, sortBy, sortDir, offset]);
+  }, [search, trackingScan, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo, sortBy, sortDir]);
 
   // Persist filter state to localStorage whenever it changes
   useEffect(() => {
@@ -476,17 +473,12 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => { fetchOrders(true); }, 300);
+    debounceRef.current = setTimeout(() => { fetchOrders(); }, 300);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, trackingScan, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo, sortBy, sortDir]);
 
-  useEffect(() => {
-    if (offset > 0) fetchOrders(false);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [offset]);
-
-  useEffect(() => { fetchOrders(true); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  useEffect(() => { fetchOrders(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
   // ── Flatten + client-sort ─────────────────────────────────────────────────
 
@@ -1138,7 +1130,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
             : `${total} order${total !== 1 ? "s" : ""}`}
           {(search || trackingScan || filterShipStatus.length || filterOrderStatus.length || filterCheckedIn || filterAccountId || effectiveDateFrom || dateTo) && " (filtered)"}
         </span>
-        <span className="text-xs text-slate-600">Showing {offset + 1}–{Math.min(offset + LIMIT, total)} of {total} orders</span>
+        <span className="text-xs text-slate-600">{total > LIMIT ? `Showing first ${LIMIT} of ${total} — refine filters to narrow results` : ""}</span>
       </div>
 
       {/* ── Results table ── */}
@@ -1203,18 +1195,6 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
         )}
       </div>
 
-      {/* ── Pagination ── */}
-      {total > LIMIT && (
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-xs text-slate-500">Page {Math.floor(offset / LIMIT) + 1} of {Math.ceil(total / LIMIT)}</span>
-          <div className="flex gap-2">
-            <button onClick={() => setOffset(Math.max(0, offset - LIMIT))} disabled={offset === 0 || loading}
-              className="rounded border border-slate-700 px-3 py-1.5 text-xs hover:bg-slate-800 disabled:opacity-40">Previous</button>
-            <button onClick={() => setOffset(offset + LIMIT)} disabled={offset + LIMIT >= total || loading}
-              className="rounded border border-slate-700 px-3 py-1.5 text-xs hover:bg-slate-800 disabled:opacity-40">Next</button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
