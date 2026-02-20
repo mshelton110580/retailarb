@@ -46,7 +46,7 @@ export async function POST(req: Request) {
         sameSite: "None" as const
       };
     })
-    .filter(c => c.name.length > 0);
+    .filter((c: { name: string }) => c.name.length > 0);
 
   if (cookies.length === 0) {
     return NextResponse.json({ error: "No cookies found in the provided string" }, { status: 400 });
