@@ -19,6 +19,7 @@ export type GetOrdersResult = {
     total: string;
     subtotal: string;
     adjustmentAmount: string;
+    shippingCost: string;
     shippingAddress?: {
       city?: string;
       state?: string;
@@ -157,6 +158,7 @@ function parseOrdersFromResponse(ordersRaw: any): GetOrdersResult["orders"] {
       total: extractValue(order?.Total) ?? "0",
       subtotal: extractValue(order?.Subtotal) ?? "0",
       adjustmentAmount: extractValue(order?.AdjustmentAmount) ?? "0",
+      shippingCost: extractValue(order?.ShippingServiceSelected?.ShippingServiceCost) ?? "0",
       shippingAddress: {
         city: order?.ShippingAddress?.CityName,
         state: order?.ShippingAddress?.StateOrProvince,
