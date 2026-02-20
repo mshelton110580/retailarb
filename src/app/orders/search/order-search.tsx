@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Link from "next/link";
+import { VariableSizeList as VList } from "react-window";
 
 type Account = { id: string; ebay_username: string | null };
 
@@ -88,76 +89,28 @@ type ColKey =
   | "inrCase"
   | "escalated";
 
-// Which columns trigger a server-side re-fetch vs. client-side sort
-type SortMode = "server" | "client";
-
-// Map from ColKey to the sortBy param value sent to the API (server-sort cols only)
-const SERVER_SORT_KEY: Partial<Record<ColKey, string>> = {
-  date:  "purchaseDate",
-  total: "total",
-};
-
 type ColDef = {
   key: ColKey;
   label: string;
   defaultOn: boolean;
   itemsOnly?: boolean;
-  sortMode: SortMode;
-  // For client sort: how to extract a comparable primitive from an Order (or ItemRow)
   sortValue?: (order: Order, itemRow?: ItemRow) => string | number | boolean | null;
 };
 
 const ALL_COLS: ColDef[] = [
-  {
-    key: "orderId", label: "Order #", defaultOn: true, sortMode: "client",
-    sortValue: o => o.orderId,
-  },
-  {
-    key: "date", label: "Date", defaultOn: true, sortMode: "server",
-  },
-  {
-    key: "account", label: "Account", defaultOn: true, sortMode: "client",
-    sortValue: o => o.ebayUsername ?? "",
-  },
-  {
-    key: "item", label: "Item / Title", defaultOn: true, sortMode: "client",
-    sortValue: (o, row) => row ? row.title : (o.items[0]?.title ?? ""),
-  },
-  {
-    key: "itemId", label: "Item ID", defaultOn: true, itemsOnly: true, sortMode: "client",
-    sortValue: (_o, row) => row?.itemId ?? "",
-  },
-  {
-    key: "qty", label: "Qty", defaultOn: true, itemsOnly: true, sortMode: "client",
-    sortValue: (_o, row) => row?.qty ?? 0,
-  },
-  {
-    key: "price", label: "Price", defaultOn: true, itemsOnly: true, sortMode: "client",
-    sortValue: (_o, row) => row?.price ?? 0,
-  },
-  {
-    key: "total", label: "Order Total", defaultOn: true, sortMode: "server",
-  },
-  {
-    key: "shipStatus", label: "Ship Status", defaultOn: true, sortMode: "client",
-    sortValue: o => o.shipment?.derivedStatus ?? "",
-  },
-  {
-    key: "checkedIn", label: "Check-in", defaultOn: true, sortMode: "client",
-    sortValue: o => o.shipment?.checkedInAt ? 1 : 0,
-  },
-  {
-    key: "returnCase", label: "Return", defaultOn: true, sortMode: "client",
-    sortValue: o => o.returnCase ? (o.returnCase.escalated ? 2 : 1) : 0,
-  },
-  {
-    key: "inrCase", label: "INR", defaultOn: true, sortMode: "client",
-    sortValue: o => o.inrCase ? (o.inrCase.escalatedToCase ? 2 : 1) : 0,
-  },
-  {
-    key: "escalated", label: "Escalated", defaultOn: false, sortMode: "client",
-    sortValue: o => (o.returnCase?.escalated || o.inrCase?.escalatedToCase) ? 1 : 0,
-  },
+  { key: "orderId",    label: "Order #",      defaultOn: true,  sortValue: o => o.orderId },
+  { key: "date",       label: "Date",         defaultOn: true,  sortValue: o => o.purchaseDate },
+  { key: "account",   label: "Account",      defaultOn: true,  sortValue: o => o.ebayUsername ?? "" },
+  { key: "item",       label: "Item / Title", defaultOn: true,  sortValue: (o, row) => row ? row.title : (o.items[0]?.title ?? "") },
+  { key: "itemId",    label: "Item ID",      defaultOn: true,  itemsOnly: true, sortValue: (_o, row) => row?.itemId ?? "" },
+  { key: "qty",        label: "Qty",          defaultOn: true,  itemsOnly: true, sortValue: (_o, row) => row?.qty ?? 0 },
+  { key: "price",      label: "Price",        defaultOn: true,  itemsOnly: true, sortValue: (_o, row) => row?.price ?? 0 },
+  { key: "total",      label: "Order Total",  defaultOn: true,  sortValue: o => o.originalTotal ?? 0 },
+  { key: "shipStatus", label: "Ship Status",  defaultOn: true,  sortValue: o => o.shipment?.derivedStatus ?? "" },
+  { key: "checkedIn",  label: "Check-in",     defaultOn: true,  sortValue: o => o.shipment?.checkedInAt ? 1 : 0 },
+  { key: "returnCase", label: "Return",       defaultOn: true,  sortValue: o => o.returnCase ? (o.returnCase.escalated ? 2 : 1) : 0 },
+  { key: "inrCase",    label: "INR",          defaultOn: true,  sortValue: o => o.inrCase ? (o.inrCase.escalatedToCase ? 2 : 1) : 0 },
+  { key: "escalated",  label: "Escalated",    defaultOn: false, sortValue: o => (o.returnCase?.escalated || o.inrCase?.escalatedToCase) ? 1 : 0 },
 ];
 
 const DEFAULT_ON = new Set(ALL_COLS.filter(c => c.defaultOn).map(c => c.key));
@@ -171,9 +124,7 @@ const SHIP_STATUSES = [
   { value: "not_received",  label: "Never Shipped" },
 ];
 
-const ORDER_STATUSES = [
-  "Completed", "Cancelled",
-];
+const ORDER_STATUSES = ["Completed", "Cancelled"];
 
 const shipStatusColor: Record<string, string> = {
   delivered:     "bg-green-900 text-green-300",
@@ -201,6 +152,11 @@ type ItemRow = {
   price: number;
   order: Order;
 };
+
+// Row heights
+const ROW_H = 48;          // collapsed row px
+const EXPANDED_H = 260;    // expanded detail panel px (approximate)
+const HEADER_H = 36;
 
 // ── Return/INR badge helpers ────────────────────────────────────────────────
 
@@ -341,10 +297,8 @@ type DatePreset = "30" | "60" | "90" | "all";
 type SavedFilters = {
   groupBy: GroupBy;
   visibleCols: ColKey[];
-  sortBy: string;
+  sortBy: ColKey;
   sortDir: "asc" | "desc";
-  clientSortCol: ColKey | null;
-  clientSortDir: "asc" | "desc";
   search: string;
   filterShipStatus: string[];
   filterOrderStatus: string[];
@@ -364,7 +318,6 @@ function loadSaved(): Partial<SavedFilters> {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return {};
     const parsed: Partial<SavedFilters> = JSON.parse(raw);
-    // Strip out any stale filter values that no longer exist
     if (parsed.filterShipStatus) {
       parsed.filterShipStatus = parsed.filterShipStatus.filter(v => VALID_SHIP_STATUSES.has(v));
     }
@@ -382,10 +335,36 @@ function datePresetFrom(preset: DatePreset): string {
   return d.toISOString().slice(0, 10);
 }
 
+// ── Fetch params builder ──────────────────────────────────────────────────────
+
+function buildParams(opts: {
+  search: string; trackingScan: string; filterShipStatus: string[];
+  filterOrderStatus: string[]; filterCheckedIn: string; filterAccountId: string;
+  effectiveDateFrom: string; dateTo: string; sortBy: ColKey; sortDir: "asc" | "desc";
+  limit: number; offset: number;
+}) {
+  const p = new URLSearchParams();
+  if (opts.search) p.set("search", opts.search);
+  if (opts.trackingScan) p.set("tracking", opts.trackingScan);
+  if (opts.filterShipStatus.length) p.set("shipStatus", opts.filterShipStatus.join(","));
+  if (opts.filterOrderStatus.length) p.set("status", opts.filterOrderStatus.join(","));
+  if (opts.filterCheckedIn) p.set("checkedIn", opts.filterCheckedIn);
+  if (opts.filterAccountId) p.set("accountId", opts.filterAccountId);
+  if (opts.effectiveDateFrom) p.set("dateFrom", opts.effectiveDateFrom);
+  if (opts.dateTo) p.set("dateTo", opts.dateTo);
+  // All sort is client-side; use server default for consistent page ordering
+  p.set("sortBy", "purchaseDate");
+  p.set("sortDir", "desc");
+  p.set("limit", String(opts.limit));
+  p.set("offset", String(opts.offset));
+  return p;
+}
+
+const PAGE_SIZE = 250;
+
 // ── Main component ──────────────────────────────────────────────────────────
 
 export default function OrderSearch({ accounts }: { accounts: Account[] }) {
-  // Load persisted state once (before first render)
   const saved = useMemo(() => loadSaved(), []);
 
   const [groupBy, setGroupBy] = useState<GroupBy>(saved.groupBy ?? "items");
@@ -393,94 +372,147 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
     saved.visibleCols ? new Set(saved.visibleCols) : DEFAULT_ON
   );
 
-  // Server-sort state (triggers API refetch)
-  const [sortBy, setSortBy] = useState(saved.sortBy ?? "purchaseDate");
+  // Single unified sort (always client-side now — all data is in memory)
+  const [sortBy, setSortBy] = useState<ColKey>(saved.sortBy ?? "date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">(saved.sortDir ?? "desc");
 
-  // Client-sort state (sorts current page in-place)
-  const [clientSortCol, setClientSortCol] = useState<ColKey | null>(saved.clientSortCol ?? null);
-  const [clientSortDir, setClientSortDir] = useState<"asc" | "desc">(saved.clientSortDir ?? "asc");
-
-  // Date preset — "90" means last 90 days, "all" means no date filter
   const [datePreset, setDatePreset] = useState<DatePreset>(saved.datePreset ?? "90");
 
-  // Search & filter state
   const [search, setSearch] = useState(saved.search ?? "");
   const [trackingScan, setTrackingScan] = useState("");
   const [filterShipStatus, setFilterShipStatus] = useState<string[]>(saved.filterShipStatus ?? []);
   const [filterOrderStatus, setFilterOrderStatus] = useState<string[]>(saved.filterOrderStatus ?? []);
   const [filterCheckedIn, setFilterCheckedIn] = useState(saved.filterCheckedIn ?? "");
   const [filterAccountId, setFilterAccountId] = useState(saved.filterAccountId ?? "");
-  // Manual date range — only used when datePreset is overridden by manual input
   const [dateFrom, setDateFrom] = useState(saved.datePreset === "all" || (saved.datePreset == null && !saved.dateFrom) ? "" : (saved.dateFrom ?? ""));
   const [dateTo, setDateTo] = useState(saved.dateTo ?? "");
 
-  // Data state
+  // Data state — orders accumulate as background pages load
   const [orders, setOrders] = useState<Order[]>([]);
   const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const LIMIT = 500;
+  const [loadedPages, setLoadedPages] = useState(0);   // how many pages fetched
+  const [loadingFirst, setLoadingFirst] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const trackingRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Cancel token: increment to abort in-flight background loads on filter change
+  const fetchGenRef = useRef(0);
 
-  // Resolve effective dateFrom: preset takes priority over manual input
+  // Virtual list ref — needed to reset scroll & clear size cache on sort/data change
+  const listRef = useRef<VList>(null);
+  const sizeCache = useRef<Record<string, number>>({});
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(900);
+
   const effectiveDateFrom = datePreset !== "all" ? datePresetFrom(datePreset) : dateFrom;
 
-  const fetchOrders = useCallback(async () => {
-    setLoading(true);
+  // Track container width for react-window
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    setContainerWidth(el.offsetWidth);
+    const ro = new ResizeObserver(entries => {
+      setContainerWidth(entries[0]?.contentRect.width ?? el.offsetWidth);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
-    const params = new URLSearchParams();
-    if (search) params.set("search", search);
-    if (trackingScan) params.set("tracking", trackingScan);
-    if (filterShipStatus.length) params.set("shipStatus", filterShipStatus.join(","));
-    if (filterOrderStatus.length) params.set("status", filterOrderStatus.join(","));
-    if (filterCheckedIn) params.set("checkedIn", filterCheckedIn);
-    if (filterAccountId) params.set("accountId", filterAccountId);
-    if (effectiveDateFrom) params.set("dateFrom", effectiveDateFrom);
-    if (dateTo) params.set("dateTo", dateTo);
-    params.set("sortBy", sortBy);
-    params.set("sortDir", sortDir);
-    params.set("limit", String(LIMIT));
-    params.set("offset", "0");
+  // ── Fetch all pages for current filters ──────────────────────────────────
 
+  const fetchAll = useCallback(async (filterSnapshot: {
+    search: string; trackingScan: string; filterShipStatus: string[];
+    filterOrderStatus: string[]; filterCheckedIn: string; filterAccountId: string;
+    effectiveDateFrom: string; dateTo: string; sortBy: ColKey; sortDir: "asc" | "desc";
+  }) => {
+    const gen = ++fetchGenRef.current;
+
+    setOrders([]);
+    setTotal(0);
+    setLoadedPages(0);
+    setExpanded(new Set());
+    setLoadingFirst(true);
+    sizeCache.current = {};
+    listRef.current?.resetAfterIndex(0);
+
+    // Fetch first page
+    const p1 = buildParams({ ...filterSnapshot, limit: PAGE_SIZE, offset: 0 });
+    let firstData: { orders: Order[]; total: number } | null = null;
     try {
-      const res = await fetch(`/api/orders/search?${params}`);
-      const data = await res.json();
-      setOrders(data.orders ?? []);
-      setTotal(data.total ?? 0);
+      const res = await fetch(`/api/orders/search?${p1}`);
+      if (gen !== fetchGenRef.current) return;
+      firstData = await res.json();
     } catch {
-      // silently fail
+      if (gen !== fetchGenRef.current) return;
     } finally {
-      setLoading(false);
+      if (gen === fetchGenRef.current) setLoadingFirst(false);
     }
-  }, [search, trackingScan, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo, sortBy, sortDir]);
 
-  // Persist filter state to localStorage whenever it changes
+    if (!firstData) return;
+    const serverTotal = firstData.total;
+    setTotal(serverTotal);
+    setOrders(firstData.orders);
+    setLoadedPages(1);
+
+    if (firstData.orders.length >= serverTotal) return; // all loaded
+
+    // Background: fetch remaining pages
+    setLoadingMore(true);
+    let offset = PAGE_SIZE;
+    while (offset < serverTotal) {
+      if (gen !== fetchGenRef.current) { setLoadingMore(false); return; }
+      const p = buildParams({ ...filterSnapshot, limit: PAGE_SIZE, offset });
+      try {
+        const res = await fetch(`/api/orders/search?${p}`);
+        if (gen !== fetchGenRef.current) { setLoadingMore(false); return; }
+        const data = await res.json();
+        if (gen !== fetchGenRef.current) { setLoadingMore(false); return; }
+        setOrders(prev => [...prev, ...(data.orders ?? [])]);
+        setLoadedPages(prev => prev + 1);
+      } catch {
+        if (gen !== fetchGenRef.current) { setLoadingMore(false); return; }
+        break;
+      }
+      offset += PAGE_SIZE;
+    }
+    if (gen === fetchGenRef.current) setLoadingMore(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Persist filters ───────────────────────────────────────────────────────
+
   useEffect(() => {
     try {
       const toSave: SavedFilters = {
         groupBy, visibleCols: Array.from(visibleCols) as ColKey[],
-        sortBy, sortDir, clientSortCol, clientSortDir,
+        sortBy, sortDir,
         search, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId,
         datePreset, dateFrom, dateTo,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
-    } catch { /* ignore storage errors */ }
-  }, [groupBy, visibleCols, sortBy, sortDir, clientSortCol, clientSortDir, search, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, datePreset, dateFrom, dateTo]);
+    } catch { /* ignore */ }
+  }, [groupBy, visibleCols, sortBy, sortDir, search, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, datePreset, dateFrom, dateTo]);
+
+  // ── Debounced refetch on filter change ────────────────────────────────────
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => { fetchOrders(); }, 300);
+    const snapshot = { search, trackingScan, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo, sortBy, sortDir };
+    debounceRef.current = setTimeout(() => { fetchAll(snapshot); }, 300);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, trackingScan, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo, sortBy, sortDir]);
+  }, [search, trackingScan, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo]);
 
-  useEffect(() => { fetchOrders(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  useEffect(() => {
+    const snapshot = { search, trackingScan, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo, sortBy, sortDir };
+    fetchAll(snapshot);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // ── Flatten + client-sort ─────────────────────────────────────────────────
+  // ── Flatten to item rows ──────────────────────────────────────────────────
 
   const itemRows = useMemo<ItemRow[]>(() => {
     const rows: ItemRow[] = [];
@@ -496,12 +528,13 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
     return rows;
   }, [orders]);
 
-  // Apply client-side sort to item rows
+  // ── Client-side sort ──────────────────────────────────────────────────────
+
+  const colDef = useMemo(() => ALL_COLS.find(c => c.key === sortBy), [sortBy]);
+
   const sortedItemRows = useMemo<ItemRow[]>(() => {
-    if (!clientSortCol) return itemRows;
-    const colDef = ALL_COLS.find(c => c.key === clientSortCol);
     if (!colDef?.sortValue) return itemRows;
-    const dir = clientSortDir === "asc" ? 1 : -1;
+    const dir = sortDir === "asc" ? 1 : -1;
     return [...itemRows].sort((a, b) => {
       const av = colDef.sortValue!(a.order, a) ?? "";
       const bv = colDef.sortValue!(b.order, b) ?? "";
@@ -509,14 +542,11 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
       if (av > bv) return dir;
       return 0;
     });
-  }, [itemRows, clientSortCol, clientSortDir]);
+  }, [itemRows, colDef, sortDir]);
 
-  // Apply client-side sort to orders
   const sortedOrders = useMemo<Order[]>(() => {
-    if (!clientSortCol) return orders;
-    const colDef = ALL_COLS.find(c => c.key === clientSortCol);
     if (!colDef?.sortValue) return orders;
-    const dir = clientSortDir === "asc" ? 1 : -1;
+    const dir = sortDir === "asc" ? 1 : -1;
     return [...orders].sort((a, b) => {
       const av = colDef.sortValue!(a) ?? "";
       const bv = colDef.sortValue!(b) ?? "";
@@ -524,41 +554,29 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
       if (av > bv) return dir;
       return 0;
     });
-  }, [orders, clientSortCol, clientSortDir]);
+  }, [orders, colDef, sortDir]);
 
-  // ── Sort handlers ─────────────────────────────────────────────────────────
+  // Reset list when sorted rows change
+  useEffect(() => {
+    sizeCache.current = {};
+    listRef.current?.resetAfterIndex(0);
+    listRef.current?.scrollToItem(0);
+  }, [sortedItemRows, sortedOrders]);
+
+  // ── Sort handler ──────────────────────────────────────────────────────────
 
   function handleColSort(col: ColDef) {
-    if (col.sortMode === "server") {
-      const apiKey = SERVER_SORT_KEY[col.key] ?? col.key;
-      // Clear client sort
-      setClientSortCol(null);
-      if (sortBy === apiKey) {
-        setSortDir(d => d === "asc" ? "desc" : "asc");
-      } else {
-        setSortBy(apiKey);
-        setSortDir("desc");
-      }
+    if (sortBy === col.key) {
+      setSortDir(d => d === "asc" ? "desc" : "asc");
     } else {
-      // Clear server sort indicator (keep server sort params unchanged — data doesn't reload)
-      if (clientSortCol === col.key) {
-        setClientSortDir(d => d === "asc" ? "desc" : "asc");
-      } else {
-        setClientSortCol(col.key);
-        setClientSortDir("asc");
-      }
+      setSortBy(col.key);
+      setSortDir("asc");
     }
   }
 
   function getSortIcon(col: ColDef): React.ReactNode {
-    if (col.sortMode === "server") {
-      const apiKey = SERVER_SORT_KEY[col.key] ?? col.key;
-      if (sortBy !== apiKey || clientSortCol !== null) return <span className="ml-1 text-slate-600 text-[10px]">↕</span>;
-      return <span className="ml-1 text-blue-400 text-[10px]">{sortDir === "asc" ? "↑" : "↓"}</span>;
-    } else {
-      if (clientSortCol !== col.key) return <span className="ml-1 text-slate-600 text-[10px]">↕</span>;
-      return <span className="ml-1 text-blue-400 text-[10px]">{clientSortDir === "asc" ? "↑" : "↓"}</span>;
-    }
+    if (sortBy !== col.key) return <span className="ml-1 text-slate-600 text-[10px]">↕</span>;
+    return <span className="ml-1 text-blue-400 text-[10px]">{sortDir === "asc" ? "↑" : "↓"}</span>;
   }
 
   function toggleShipStatus(val: string) {
@@ -570,7 +588,11 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   function toggleExpand(key: string) {
     setExpanded(prev => {
       const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
+      const wasOpen = next.has(key);
+      wasOpen ? next.delete(key) : next.add(key);
+      // Recalculate sizes for all affected rows
+      sizeCache.current = {};
+      listRef.current?.resetAfterIndex(0);
       return next;
     });
   }
@@ -580,7 +602,6 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
 
   const multiAccount = accounts.length > 1;
 
-  // Columns to actually render
   const itemsCols = ALL_COLS.filter(c => {
     if (!visibleCols.has(c.key)) return false;
     if (c.key === "account" && !multiAccount) return false;
@@ -757,35 +778,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
     }
   }
 
-  // ── Header row ────────────────────────────────────────────────────────────
-
-  function HeaderRow({ cols }: { cols: ColDef[] }) {
-    return (
-      <div className="flex items-center gap-3 px-4 py-2 border-b border-slate-700 bg-slate-950">
-        {/* Spacer for expand caret */}
-        <span className="w-3 flex-shrink-0" />
-        {cols.map(c => (
-          <button
-            key={c.key}
-            onClick={() => handleColSort(c)}
-            className={`${colWidth[c.key] ?? "flex-shrink-0"} flex items-center text-left text-[10px] font-semibold uppercase tracking-wider transition-colors hover:text-slate-200 ${
-              (c.sortMode === "server" && sortBy === (SERVER_SORT_KEY[c.key] ?? c.key) && clientSortCol === null) ||
-              (c.sortMode === "client" && clientSortCol === c.key)
-                ? "text-blue-400"
-                : "text-slate-500"
-            }`}
-          >
-            <span className="truncate">{c.label}</span>
-            {getSortIcon(c)}
-          </button>
-        ))}
-        {/* Spacer for eBay ↗ */}
-        <span className="flex-shrink-0 w-3" />
-      </div>
-    );
-  }
-
-  // ── Expanded detail (shared) ───────────────────────────────────────────────
+  // ── Expanded detail panels ────────────────────────────────────────────────
 
   function ExpandedDetail({ order }: { order: Order }) {
     const shipment = order.shipment;
@@ -864,8 +857,6 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
       </div>
     );
   }
-
-  // ── Expanded detail for orders view (includes item list) ─────────────────
 
   function ExpandedOrderDetail({ order }: { order: Order }) {
     const shipment = order.shipment;
@@ -961,7 +952,96 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
     );
   }
 
+  // ── Header row ────────────────────────────────────────────────────────────
+
+  function HeaderRow({ cols }: { cols: ColDef[] }) {
+    return (
+      <div className="flex items-center gap-3 px-4 py-2 border-b border-slate-700 bg-slate-950" style={{ height: HEADER_H }}>
+        <span className="w-3 flex-shrink-0" />
+        {cols.map(c => (
+          <button
+            key={c.key}
+            onClick={() => handleColSort(c)}
+            className={`${colWidth[c.key] ?? "flex-shrink-0"} flex items-center text-left text-[10px] font-semibold uppercase tracking-wider transition-colors hover:text-slate-200 ${
+              sortBy === c.key ? "text-blue-400" : "text-slate-500"
+            }`}
+          >
+            <span className="truncate">{c.label}</span>
+            {getSortIcon(c)}
+          </button>
+        ))}
+        <span className="flex-shrink-0 w-3" />
+      </div>
+    );
+  }
+
+  // ── Virtual row renderers ─────────────────────────────────────────────────
+
+  function getItemRowKey(index: number) { return sortedItemRows[index]?.key ?? String(index); }
+  function getOrderRowKey(index: number) { return sortedOrders[index]?.orderId ?? String(index); }
+
+  function itemRowHeight(index: number) {
+    const row = sortedItemRows[index];
+    if (!row) return ROW_H;
+    return expanded.has(row.key) ? ROW_H + EXPANDED_H : ROW_H;
+  }
+
+  function orderRowHeight(index: number) {
+    const order = sortedOrders[index];
+    if (!order) return ROW_H;
+    return expanded.has(order.orderId) ? ROW_H + EXPANDED_H : ROW_H;
+  }
+
+  const ItemRowRenderer = useCallback(({ index, style }: { index: number; style: React.CSSProperties }) => {
+    const row = sortedItemRows[index];
+    if (!row) return null;
+    const { order } = row;
+    const isExpanded = expanded.has(row.key);
+    return (
+      <div style={style} className={`border-b border-slate-800 ${isExpanded ? "" : "hover:bg-slate-800/50"} transition-colors`}>
+        <div className="flex items-center gap-3 px-4 cursor-pointer" style={{ height: ROW_H }} onClick={() => toggleExpand(row.key)}>
+          <span className="text-slate-600 text-xs w-3 flex-shrink-0">{isExpanded ? "▼" : "▶"}</span>
+          {itemsCols.map(c => (
+            <div key={c.key} className={colWidth[c.key] ?? "flex-shrink-0"}>
+              {renderItemCell(c.key, row)}
+            </div>
+          ))}
+          <a href={order.orderUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+            className="flex-shrink-0 text-xs text-slate-600 hover:text-blue-400" title="View on eBay">↗</a>
+        </div>
+        {isExpanded && <ExpandedDetail order={order} />}
+      </div>
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortedItemRows, expanded, itemsCols]);
+
+  const OrderRowRenderer = useCallback(({ index, style }: { index: number; style: React.CSSProperties }) => {
+    const order = sortedOrders[index];
+    if (!order) return null;
+    const isExpanded = expanded.has(order.orderId);
+    return (
+      <div style={style} className={`border-b border-slate-800 ${isExpanded ? "" : "hover:bg-slate-800/50"} transition-colors`}>
+        <div className="flex items-center gap-3 px-4 cursor-pointer" style={{ height: ROW_H }} onClick={() => toggleExpand(order.orderId)}>
+          <span className="text-slate-600 text-xs w-3 flex-shrink-0">{isExpanded ? "▼" : "▶"}</span>
+          {ordersCols.map(c => (
+            <div key={c.key} className={colWidth[c.key] ?? "flex-shrink-0"}>
+              {renderOrderCell(c.key, order)}
+            </div>
+          ))}
+          <a href={order.orderUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+            className="flex-shrink-0 text-xs text-slate-600 hover:text-blue-400" title="View on eBay">↗</a>
+        </div>
+        {isExpanded && <ExpandedOrderDetail order={order} />}
+      </div>
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortedOrders, expanded, ordersCols]);
+
   // ── JSX ───────────────────────────────────────────────────────────────────
+
+  const rowCount = groupBy === "items" ? sortedItemRows.length : sortedOrders.length;
+  const loadedCount = orders.length;
+  const isLoading = loadingFirst || loadingMore;
 
   return (
     <div className="space-y-4">
@@ -993,7 +1073,6 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
 
         {/* Row 2: Date presets + account + checked-in */}
         <div className="flex flex-wrap items-end gap-3">
-          {/* Date presets */}
           <div>
             <p className="mb-1.5 text-xs text-slate-500">Date range</p>
             <div className="flex items-center gap-1">
@@ -1011,7 +1090,6 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
             </div>
           </div>
 
-          {/* Manual date override — shown always, but grayed when a preset is active */}
           <div className="flex items-end gap-2">
             <div>
               <label className="mb-1 block text-xs text-slate-500">From</label>
@@ -1033,7 +1111,6 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
             </div>
           </div>
 
-          {/* Account */}
           {accounts.length > 1 && (
             <div>
               <label className="mb-1 block text-xs text-slate-500">eBay Account</label>
@@ -1047,7 +1124,6 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
             </div>
           )}
 
-          {/* Check-in */}
           <div>
             <label className="mb-1 block text-xs text-slate-500">Check-in</label>
             <select value={filterCheckedIn} onChange={e => setFilterCheckedIn(e.target.value)}
@@ -1111,7 +1187,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
                 setSearch(""); setTrackingScan(""); setFilterShipStatus([]); setFilterOrderStatus([]);
                 setFilterCheckedIn(""); setFilterAccountId(""); setDateFrom(""); setDateTo("");
                 setDatePreset("90");
-                setSortBy("purchaseDate"); setSortDir("desc"); setClientSortCol(null);
+                setSortBy("date"); setSortDir("desc");
                 if (trackingRef.current) trackingRef.current.value = "";
               }}
               className="rounded border border-slate-700 px-3 py-1 text-xs text-slate-400 hover:bg-slate-800"
@@ -1125,76 +1201,63 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
       {/* ── Results header ── */}
       <div className="flex items-center justify-between text-sm text-slate-400">
         <span>
-          {loading ? "Searching…" : groupBy === "items"
-            ? `${sortedItemRows.length} item${sortedItemRows.length !== 1 ? "s" : ""} across ${total} order${total !== 1 ? "s" : ""}`
-            : `${total} order${total !== 1 ? "s" : ""}`}
-          {(search || trackingScan || filterShipStatus.length || filterOrderStatus.length || filterCheckedIn || filterAccountId || effectiveDateFrom || dateTo) && " (filtered)"}
+          {loadingFirst ? "Loading…" : groupBy === "items"
+            ? `${sortedItemRows.length} item${sortedItemRows.length !== 1 ? "s" : ""} across ${loadedCount} order${loadedCount !== 1 ? "s" : ""}`
+            : `${loadedCount} order${loadedCount !== 1 ? "s" : ""}`}
+          {total > 0 && loadedCount < total ? ` (${loadedCount} of ${total} loaded…)` : ""}
+          {(search || trackingScan || filterShipStatus.length || filterOrderStatus.length || filterCheckedIn || filterAccountId || effectiveDateFrom || dateTo) && !loadingFirst ? " (filtered)" : ""}
         </span>
-        <span className="text-xs text-slate-600">{total > LIMIT ? `Showing first ${LIMIT} of ${total} — refine filters to narrow results` : ""}</span>
-      </div>
-
-      {/* ── Results table ── */}
-      <div className="rounded-lg border border-slate-800 bg-slate-900 overflow-hidden">
-        {orders.length === 0 && !loading ? (
-          <p className="p-6 text-sm text-slate-500 text-center">No orders match your filters.</p>
-        ) : groupBy === "items" ? (
-
-          /* ── Items view ── */
-          <>
-            <HeaderRow cols={itemsCols} />
-            <div className="divide-y divide-slate-800">
-              {sortedItemRows.map(row => {
-                const { order } = row;
-                const isExpanded = expanded.has(row.key);
-                return (
-                  <div key={row.key} className={`transition-colors ${isExpanded ? "" : "hover:bg-slate-800/50"}`}>
-                    <div className="flex items-center gap-3 px-4 py-3 cursor-pointer" onClick={() => toggleExpand(row.key)}>
-                      <span className="text-slate-600 text-xs w-3 flex-shrink-0">{isExpanded ? "▼" : "▶"}</span>
-                      {itemsCols.map(c => (
-                        <div key={c.key} className={colWidth[c.key] ?? "flex-shrink-0"}>
-                          {renderItemCell(c.key, row)}
-                        </div>
-                      ))}
-                      <a href={order.orderUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
-                        className="flex-shrink-0 text-xs text-slate-600 hover:text-blue-400" title="View on eBay">↗</a>
-                    </div>
-                    {isExpanded && <ExpandedDetail order={order} />}
-                  </div>
-                );
-              })}
-            </div>
-          </>
-
-        ) : (
-
-          /* ── Orders view ── */
-          <>
-            <HeaderRow cols={ordersCols} />
-            <div className="divide-y divide-slate-800">
-              {sortedOrders.map(order => {
-                const isExpanded = expanded.has(order.orderId);
-                return (
-                  <div key={order.orderId} className={`transition-colors ${isExpanded ? "" : "hover:bg-slate-800/50"}`}>
-                    <div className="flex items-center gap-3 px-4 py-3 cursor-pointer" onClick={() => toggleExpand(order.orderId)}>
-                      <span className="text-slate-600 text-xs w-3 flex-shrink-0">{isExpanded ? "▼" : "▶"}</span>
-                      {ordersCols.map(c => (
-                        <div key={c.key} className={colWidth[c.key] ?? "flex-shrink-0"}>
-                          {renderOrderCell(c.key, order)}
-                        </div>
-                      ))}
-                      <a href={order.orderUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
-                        className="flex-shrink-0 text-xs text-slate-600 hover:text-blue-400" title="View on eBay">↗</a>
-                    </div>
-                    {isExpanded && <ExpandedOrderDetail order={order} />}
-                  </div>
-                );
-              })}
-            </div>
-          </>
-
+        {loadingMore && (
+          <span className="text-xs text-blue-500 animate-pulse">Loading more…</span>
         )}
       </div>
 
+      {/* ── Results table ── */}
+      <div ref={containerRef} className="rounded-lg border border-slate-800 bg-slate-900 overflow-hidden">
+        {loadingFirst ? (
+          <p className="p-6 text-sm text-slate-500 text-center">Loading orders…</p>
+        ) : rowCount === 0 ? (
+          <p className="p-6 text-sm text-slate-500 text-center">No orders match your filters.</p>
+        ) : groupBy === "items" ? (
+          <>
+            <HeaderRow cols={itemsCols} />
+            <VList
+              ref={listRef}
+              width={containerWidth}
+              height={Math.min(rowCount * ROW_H, 700)}
+              itemCount={rowCount}
+              itemSize={itemRowHeight}
+              itemKey={getItemRowKey}
+              overscanCount={5}
+            >
+              {ItemRowRenderer}
+            </VList>
+          </>
+        ) : (
+          <>
+            <HeaderRow cols={ordersCols} />
+            <VList
+              ref={listRef}
+              width={containerWidth}
+              height={Math.min(rowCount * ROW_H, 700)}
+              itemCount={rowCount}
+              itemSize={orderRowHeight}
+              itemKey={getOrderRowKey}
+              overscanCount={5}
+            >
+              {OrderRowRenderer}
+            </VList>
+          </>
+        )}
+      </div>
+
+      {!isLoading && loadedCount > 0 && (
+        <p className="text-center text-xs text-slate-600">
+          {loadedCount === total
+            ? `All ${total} order${total !== 1 ? "s" : ""} loaded · sorts apply across full dataset`
+            : `${loadedCount} of ${total} orders loaded`}
+        </p>
+      )}
     </div>
   );
 }

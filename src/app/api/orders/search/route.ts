@@ -35,7 +35,7 @@ export async function GET(req: Request) {
   const accountId = searchParams.get("accountId") ?? "";
   const sortBy = searchParams.get("sortBy") ?? "purchaseDate";
   const sortDir = (searchParams.get("sortDir") ?? "desc") as "asc" | "desc";
-  const limit = Math.min(parseInt(searchParams.get("limit") ?? "100"), 500);
+  const limit = Math.min(parseInt(searchParams.get("limit") ?? "250"), 2000);
   const offset = parseInt(searchParams.get("offset") ?? "0");
 
   const statuses = statusParam ? statusParam.split(",").filter(Boolean) : [];
