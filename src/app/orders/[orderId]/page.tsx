@@ -334,32 +334,80 @@ export default async function OrderDetailPage({ params }: { params: { orderId: s
       {/* Quick Actions */}
       <section className="rounded-lg border border-slate-800 bg-slate-900 p-4">
         <h2 className="text-lg font-semibold">Quick Links</h2>
-        <div className="mt-3 flex flex-wrap gap-3">
-          <a
-            href={order.order_url}
-            target="_blank"
-            rel="noreferrer"
-            className="rounded bg-blue-900 px-3 py-2 text-xs font-medium text-blue-300 hover:bg-blue-800 transition-colors"
-          >
-            View Order on eBay ↗
-          </a>
-          {order.order_items.map((item) => (
-            <a
-              key={item.id}
-              href={`https://www.ebay.com/itm/${item.item_id}`}
-              target="_blank"
-              rel="noreferrer"
+        <div className="mt-3 space-y-3">
+
+          {/* eBay order actions */}
+          <div>
+            <p className="mb-2 text-xs text-slate-500">eBay order actions</p>
+            <div className="flex flex-wrap gap-2">
+              <a
+                href={order.order_url}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded bg-blue-900 px-3 py-2 text-xs font-medium text-blue-300 hover:bg-blue-800 transition-colors"
+              >
+                View Order on eBay ↗
+              </a>
+              <a
+                href={`https://order.ebay.com/ord/show?orderId=${order.order_id}`}
+                target="_blank"
+                rel="noreferrer"
+                title="Opens this order on eBay — click 'More actions' then 'Return this item' to file"
+                className="rounded bg-orange-950 border border-orange-800 px-3 py-2 text-xs font-medium text-orange-300 hover:bg-orange-900 transition-colors"
+              >
+                File Return ↗
+              </a>
+              <a
+                href={`https://order.ebay.com/ord/show?orderId=${order.order_id}`}
+                target="_blank"
+                rel="noreferrer"
+                title="Opens this order on eBay — click 'More actions' then 'I didn't receive it' to file"
+                className="rounded bg-yellow-950 border border-yellow-800 px-3 py-2 text-xs font-medium text-yellow-300 hover:bg-yellow-900 transition-colors"
+              >
+                File INR ↗
+              </a>
+            </div>
+            <p className="mt-1.5 text-[10px] text-slate-600">
+              Return &amp; INR buttons open this order on eBay — click <span className="text-slate-500">More actions</span> to file.
+            </p>
+          </div>
+
+          {/* Item links */}
+          {order.order_items.length > 0 && (
+            <div>
+              <p className="mb-2 text-xs text-slate-500">Item links</p>
+              <div className="flex flex-wrap gap-2">
+                {order.order_items.map((item) => (
+                  <a
+                    key={item.id}
+                    href={`https://www.ebay.com/itm/${item.item_id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded bg-slate-800 px-3 py-2 text-xs font-medium text-slate-300 hover:bg-slate-700 transition-colors"
+                    title={item.title}
+                  >
+                    {item.title.length > 40 ? item.title.slice(0, 40) + "…" : item.title} ↗
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Nav links */}
+          <div className="flex flex-wrap gap-2 pt-1 border-t border-slate-800">
+            <Link
+              href="/orders/search"
               className="rounded bg-slate-800 px-3 py-2 text-xs font-medium text-slate-300 hover:bg-slate-700 transition-colors"
             >
-              Item {item.item_id} ↗
-            </a>
-          ))}
-          <Link
-            href="/inventory"
-            className="rounded bg-slate-800 px-3 py-2 text-xs font-medium text-slate-300 hover:bg-slate-700 transition-colors"
-          >
-            Back to Inventory
-          </Link>
+              ← Order Search
+            </Link>
+            <Link
+              href="/inventory"
+              className="rounded bg-slate-800 px-3 py-2 text-xs font-medium text-slate-300 hover:bg-slate-700 transition-colors"
+            >
+              Inventory
+            </Link>
+          </div>
         </div>
       </section>
     </div>

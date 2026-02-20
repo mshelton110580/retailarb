@@ -806,12 +806,22 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
             <div><span className="text-slate-500">Scan </span><span className="text-slate-400">{shipment.scannedUnits}/{shipment.expectedUnits} units · {shipment.scanStatus}</span></div>
           </div>
         )}
-        <div className="flex gap-3 pt-1">
+        <div className="flex flex-wrap gap-2 pt-1">
           <Link href={`/orders/${order.orderId}`} className="rounded bg-slate-800 px-3 py-1 text-xs text-slate-300 hover:bg-slate-700 transition-colors">
             Order details →
           </Link>
           <a href={order.orderUrl} target="_blank" rel="noreferrer" className="rounded bg-slate-800 px-3 py-1 text-xs text-slate-300 hover:bg-slate-700 transition-colors">
             View on eBay ↗
+          </a>
+          <a href={`https://order.ebay.com/ord/show?orderId=${order.orderId}`} target="_blank" rel="noreferrer"
+            title="Opens this order on eBay — click 'More actions' then 'Return this item'"
+            className="rounded bg-orange-950 border border-orange-800 px-3 py-1 text-xs text-orange-300 hover:bg-orange-900 transition-colors">
+            File Return ↗
+          </a>
+          <a href={`https://order.ebay.com/ord/show?orderId=${order.orderId}`} target="_blank" rel="noreferrer"
+            title="Opens this order on eBay — click 'More actions' then 'I didn't receive it'"
+            className="rounded bg-yellow-950 border border-yellow-800 px-3 py-1 text-xs text-yellow-300 hover:bg-yellow-900 transition-colors">
+            File INR ↗
           </a>
         </div>
       </div>
@@ -892,12 +902,22 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
             <div><span className="text-slate-500">Scan </span><span className="text-slate-400">{shipment.scannedUnits}/{shipment.expectedUnits} units · {shipment.scanStatus}</span></div>
           </div>
         )}
-        <div className="flex gap-3 pt-1">
+        <div className="flex flex-wrap gap-2 pt-1">
           <Link href={`/orders/${order.orderId}`} className="rounded bg-slate-800 px-3 py-1 text-xs text-slate-300 hover:bg-slate-700 transition-colors">
             Order details →
           </Link>
           <a href={order.orderUrl} target="_blank" rel="noreferrer" className="rounded bg-slate-800 px-3 py-1 text-xs text-slate-300 hover:bg-slate-700 transition-colors">
             View on eBay ↗
+          </a>
+          <a href={`https://order.ebay.com/ord/show?orderId=${order.orderId}`} target="_blank" rel="noreferrer"
+            title="Opens this order on eBay — click 'More actions' then 'Return this item'"
+            className="rounded bg-orange-950 border border-orange-800 px-3 py-1 text-xs text-orange-300 hover:bg-orange-900 transition-colors">
+            File Return ↗
+          </a>
+          <a href={`https://order.ebay.com/ord/show?orderId=${order.orderId}`} target="_blank" rel="noreferrer"
+            title="Opens this order on eBay — click 'More actions' then 'I didn't receive it'"
+            className="rounded bg-yellow-950 border border-yellow-800 px-3 py-1 text-xs text-yellow-300 hover:bg-yellow-900 transition-colors">
+            File INR ↗
           </a>
         </div>
       </div>
