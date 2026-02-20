@@ -169,7 +169,7 @@ export default async function OrderDetailPage({ params }: { params: { orderId: s
                   {orderShipping === 0 && <div className="text-emerald-400">Free Shipping</div>}
                   {orderTax > 0 && <div>Tax: <span className="text-slate-200">${orderTax.toFixed(2)}</span></div>}
                   <div className="font-semibold text-slate-200">
-                    Order Total: ${(order.original_total ? Number(order.original_total) : totalItemSubtotal + orderShipping + orderTax).toFixed(2)}
+                    Order Total: {order.original_total != null ? `$${Number(order.original_total).toFixed(2)}` : "—"}
                   </div>
                 </div>
               </div>
