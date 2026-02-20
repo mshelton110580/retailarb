@@ -66,7 +66,9 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
               : orderLevelShipping;
 
           const taxNum = parseFloat(parseFloat(order.taxAmount).toFixed(2));
-          const originalTotal = parseFloat((subtotalNum + shippingNum).toFixed(2));
+          // original_total = subtotal + shipping + tax — set on CREATE only, never updated.
+          // Tax is included so original_total truly reflects what was paid at purchase time.
+          const originalTotal = parseFloat((subtotalNum + shippingNum + taxNum).toFixed(2));
 
           await prisma.orders.upsert({
             where: { order_id: String(order.orderId) },

@@ -70,7 +70,7 @@ export default async function OrderDetailPage({ params }: { params: { orderId: s
             </p>
           </div>
           <div>
-            <p className="text-slate-500">Original Total</p>
+            <p className="text-slate-500">Original Total <span className="text-slate-600 text-xs">(incl. tax)</span></p>
             <p className="text-slate-200">
               {order.original_total != null
                 ? `$${Number(order.original_total).toFixed(2)}`
@@ -79,11 +79,24 @@ export default async function OrderDetailPage({ params }: { params: { orderId: s
           </div>
           <div>
             <p className="text-slate-500">Current Balance</p>
-            <p className="text-slate-200">
-              {order.totals && typeof order.totals === "object" && "total" in (order.totals as any)
-                ? `$${Number((order.totals as any).total).toFixed(2)}`
-                : "N/A"}
-            </p>
+            {(() => {
+              const currentTotal = order.totals && typeof order.totals === "object" && "total" in (order.totals as any)
+                ? Number((order.totals as any).total)
+                : null;
+              const hasRefund = currentTotal != null && order.original_total != null && currentTotal < Number(order.original_total);
+              const hasTax = order.tax_amount != null && Number(order.tax_amount) > 0;
+              return (
+                <p className={hasRefund && hasTax ? "text-amber-400 font-medium" : "text-slate-200"}>
+                  {currentTotal != null ? `$${currentTotal.toFixed(2)}` : "N/A"}
+                  {hasRefund && hasTax && (
+                    <span className="ml-2 text-xs" title="This order had tax and a refund — verify the correct amount was received">⚠ tax+refund — verify</span>
+                  )}
+                  {hasRefund && !hasTax && (
+                    <span className="ml-2 text-xs text-slate-400">(refunded)</span>
+                  )}
+                </p>
+              );
+            })()}
           </div>
         </div>
       </section>
