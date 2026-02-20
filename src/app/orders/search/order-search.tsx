@@ -297,24 +297,25 @@ function ColumnPicker({
   );
 }
 
-// ── Width classes per column ────────────────────────────────────────────────
+// ── Default column widths (px) — "item" is flex-1 and has no fixed width ────
 
-const colWidth: Partial<Record<ColKey, string>> = {
-  orderId:    "w-28 flex-shrink-0",
-  date:       "w-24 flex-shrink-0",
-  account:    "w-24 flex-shrink-0",
-  item:       "flex-1 min-w-0",
-  itemId:     "w-28 flex-shrink-0",
-  qty:        "w-12 flex-shrink-0 text-right",
-  price:      "w-16 flex-shrink-0 text-right",
-  total:      "w-20 flex-shrink-0 text-right",
-  refund:     "w-36 flex-shrink-0",
-  shipStatus: "w-28 flex-shrink-0",
-  checkedIn:  "w-20 flex-shrink-0",
-  returnCase: "w-20 flex-shrink-0",
-  inrCase:    "w-20 flex-shrink-0",
-  escalated:  "w-24 flex-shrink-0",
+const DEFAULT_COL_WIDTHS: Partial<Record<ColKey, number>> = {
+  orderId:    112,
+  date:       96,
+  account:    96,
+  itemId:     112,
+  qty:        48,
+  price:      64,
+  total:      80,
+  refund:     144,
+  shipStatus: 112,
+  checkedIn:  80,
+  returnCase: 80,
+  inrCase:    80,
+  escalated:  96,
 };
+
+const MIN_COL_WIDTH = 40;
 
 // ── Persistence helpers ──────────────────────────────────────────────────────
 
@@ -327,6 +328,7 @@ type CaseFilter = "needsReturn" | "hasOpenReturn" | "hasClosedReturn" | "hasOpen
 type SavedFilters = {
   groupBy: GroupBy;
   visibleCols: ColKey[];
+  colWidths: Partial<Record<ColKey, number>>;
   sortBy: ColKey;
   sortDir: "asc" | "desc";
   search: string;
@@ -451,6 +453,11 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   const [visibleCols, setVisibleCols] = useState<Set<ColKey>>(
     saved.visibleCols ? new Set(saved.visibleCols) : DEFAULT_ON
   );
+  const [colWidths, setColWidths] = useState<Partial<Record<ColKey, number>>>(() => ({
+    ...DEFAULT_COL_WIDTHS,
+    ...(saved.colWidths ?? {}),
+  }));
+  const resizeRef = useRef<{ col: ColKey; startX: number; startW: number } | null>(null);
 
   // Single unified sort (always client-side now — all data is in memory)
   const [sortBy, setSortBy] = useState<ColKey>(saved.sortBy ?? "date");
@@ -548,14 +555,14 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   useEffect(() => {
     try {
       const toSave: SavedFilters = {
-        groupBy, visibleCols: Array.from(visibleCols) as ColKey[],
+        groupBy, visibleCols: Array.from(visibleCols) as ColKey[], colWidths,
         sortBy, sortDir,
         search, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, filterCase,
         datePreset, dateFrom, dateTo,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
     } catch { /* ignore */ }
-  }, [groupBy, visibleCols, sortBy, sortDir, search, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, filterCase, datePreset, dateFrom, dateTo]);
+  }, [groupBy, visibleCols, colWidths, sortBy, sortDir, search, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, filterCase, datePreset, dateFrom, dateTo]);
 
   // ── Debounced refetch on filter change ────────────────────────────────────
 
@@ -657,6 +664,35 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   }
   function handleTrackingKey(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter") setTrackingScan((e.target as HTMLInputElement).value.trim());
+  }
+
+  // ── Column resize ─────────────────────────────────────────────────────────
+
+  function getCellStyle(key: ColKey): React.CSSProperties {
+    if (key === "item") return { flex: 1, minWidth: 0, overflow: "hidden" };
+    const w = colWidths[key] ?? DEFAULT_COL_WIDTHS[key] ?? 80;
+    return { width: w, flexShrink: 0, overflow: "hidden" };
+  }
+
+  function startResize(e: React.MouseEvent, col: ColKey) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startW = colWidths[col] ?? DEFAULT_COL_WIDTHS[col] ?? 80;
+    resizeRef.current = { col, startX: e.clientX, startW };
+
+    function onMove(ev: MouseEvent) {
+      if (!resizeRef.current) return;
+      const delta = ev.clientX - resizeRef.current.startX;
+      const newW = Math.max(MIN_COL_WIDTH, resizeRef.current.startW + delta);
+      setColWidths(prev => ({ ...prev, [resizeRef.current!.col]: newW }));
+    }
+    function onUp() {
+      resizeRef.current = null;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
   }
 
   const multiAccount = accounts.length > 1;
@@ -1024,19 +1060,39 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
 
   function HeaderRow({ cols }: { cols: ColDef[] }) {
     return (
-      <div className="flex items-center gap-3 px-4 py-2 border-b border-slate-700 bg-slate-950 h-9">
+      <div className="flex items-center gap-3 px-4 border-b border-slate-700 bg-slate-950 h-9 select-none">
         <span className="w-3 flex-shrink-0" />
         {cols.map(c => (
-          <button
+          <div
             key={c.key}
-            onClick={() => handleColSort(c)}
-            className={`${colWidth[c.key] ?? "flex-shrink-0"} flex items-center text-left text-[10px] font-semibold uppercase tracking-wider transition-colors hover:text-slate-200 ${
-              sortBy === c.key ? "text-blue-400" : "text-slate-500"
-            }`}
+            style={{ ...getCellStyle(c.key), position: "relative" }}
+            className="flex items-center"
           >
-            <span className="truncate">{c.label}</span>
-            {getSortIcon(c)}
-          </button>
+            <button
+              onClick={() => handleColSort(c)}
+              className={`flex items-center text-left text-[10px] font-semibold uppercase tracking-wider transition-colors hover:text-slate-200 truncate w-full ${
+                sortBy === c.key ? "text-blue-400" : "text-slate-500"
+              }`}
+            >
+              <span className="truncate">{c.label}</span>
+              {getSortIcon(c)}
+            </button>
+            {c.key !== "item" && (
+              <span
+                onMouseDown={e => startResize(e, c.key)}
+                onDoubleClick={() => setColWidths(prev => {
+                  const next = { ...prev };
+                  delete next[c.key];
+                  return next;
+                })}
+                title="Drag to resize · double-click to reset"
+                className="absolute right-0 top-0 h-full w-2 cursor-col-resize flex items-center justify-center group"
+                style={{ userSelect: "none" }}
+              >
+                <span className="w-px h-4 bg-slate-700 group-hover:bg-blue-500 transition-colors" />
+              </span>
+            )}
+          </div>
         ))}
         <span className="flex-shrink-0 w-3" />
       </div>
@@ -1291,6 +1347,13 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
             >
               Clear filters
             </button>
+            <button
+              onClick={() => setColWidths({ ...DEFAULT_COL_WIDTHS })}
+              className="rounded border border-slate-700 px-3 py-1 text-xs text-slate-400 hover:bg-slate-800"
+              title="Reset all column widths to defaults"
+            >
+              Reset widths
+            </button>
           </div>
         </div>
       </div>
@@ -1334,7 +1397,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
                     <div className="flex items-center gap-3 px-4 h-12 cursor-pointer" onClick={() => toggleExpand(row.key)}>
                       <span className="text-slate-600 text-xs w-3 flex-shrink-0">{isExpanded ? "▼" : "▶"}</span>
                       {itemsCols.map(c => (
-                        <div key={c.key} className={colWidth[c.key] ?? "flex-shrink-0"}>
+                        <div key={c.key} style={getCellStyle(c.key)}>
                           {renderItemCell(c.key, row)}
                         </div>
                       ))}
@@ -1358,7 +1421,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
                     <div className="flex items-center gap-3 px-4 h-12 cursor-pointer" onClick={() => toggleExpand(order.orderId)}>
                       <span className="text-slate-600 text-xs w-3 flex-shrink-0">{isExpanded ? "▼" : "▶"}</span>
                       {ordersCols.map(c => (
-                        <div key={c.key} className={colWidth[c.key] ?? "flex-shrink-0"}>
+                        <div key={c.key} style={getCellStyle(c.key)}>
                           {renderOrderCell(c.key, order)}
                         </div>
                       ))}
