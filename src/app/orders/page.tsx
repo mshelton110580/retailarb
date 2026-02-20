@@ -96,10 +96,17 @@ export default async function OrdersPage({
                         </a>
                         <span className="text-slate-500">x{item.qty}</span>
                         <span className="text-slate-500">
-                          Total: $
-                          {order.totals && typeof order.totals === "object" && "total" in (order.totals as any)
-                            ? Number((order.totals as any).total).toFixed(2)
-                            : "0.00"}
+                          {(() => {
+                            const unitPrice = Number(item.transaction_price);
+                            const shipping = item.shipping_cost ? Number(item.shipping_cost) : 0;
+                            const subtotal = unitPrice * item.qty;
+                            const lineTotal = subtotal + shipping;
+                            const parts: string[] = [];
+                            if (item.qty > 1) parts.push(`$${unitPrice.toFixed(2)} × ${item.qty}`);
+                            else parts.push(`$${unitPrice.toFixed(2)}`);
+                            if (shipping > 0) parts.push(`+$${shipping.toFixed(2)} ship`);
+                            return `${parts.join(" ")} = $${lineTotal.toFixed(2)}`;
+                          })()}
                         </span>
                         <a
                           href={`https://www.ebay.com/itm/${item.item_id}`}

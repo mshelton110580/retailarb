@@ -50,15 +50,11 @@ function getReturnRefundType(ret: {
   ebay_state: string | null;
   escalated: boolean;
   orderRemainingBalance: number | null;
+  orderOriginalTotal: number | null;
 }): "full" | "partial" | "none" | "escalated" | "open" {
   const actual = ret.actual_refund !== null ? Number(ret.actual_refund) : null;
   const estimated = ret.estimated_refund !== null ? Number(ret.estimated_refund) : null;
   const isEsc = ret.escalated || ret.ebay_status === "ESCALATED" || ret.ebay_state === "RETURN_ESCALATED" || ret.ebay_state === "ESCALATED";
-
-  // Explicit partial refund status — closed, partial
-  if (ret.ebay_status === "LESS_THAN_A_FULL_REFUND_ISSUED") {
-    return "partial";
-  }
 
   // Still in-flight — classify as open or escalated
   if (ret.ebay_state != null && OPEN_STATES.has(ret.ebay_state)) {
@@ -68,7 +64,11 @@ function getReturnRefundType(ret: {
   // Terminal state (CLOSED, REFUND_ISSUED, RETURN_CLOSED, null, unknown, etc.)
   // Classify by actual refund first
   if (actual !== null && actual > 0) {
-    if (estimated !== null && estimated > 0 && actual < estimated) {
+    // Explicit partial status or actual amount is less than expected
+    if (
+      ret.ebay_status === "LESS_THAN_A_FULL_REFUND_ISSUED" ||
+      (estimated !== null && estimated > 0 && actual < estimated)
+    ) {
       return "partial";
     }
     return "full";
@@ -78,9 +78,16 @@ function getReturnRefundType(ret: {
   // (refund was issued through case resolution, not directly on the return record)
   if (isEsc) {
     const remaining = ret.orderRemainingBalance;
-    if (remaining !== null) {
-      return remaining === 0 ? "full" : "partial";
+    const origTotalNum = ret.orderOriginalTotal;
+    if (remaining !== null && origTotalNum !== null && origTotalNum > 0) {
+      // Only classify as full/partial if a refund actually occurred
+      // (remaining < origTotal means some refund happened)
+      if (remaining === 0) return "full";
+      if (remaining < origTotalNum) return "partial";
+      // remaining >= origTotal means no refund was processed
+      return "none";
     }
+    if (remaining !== null && remaining === 0) return "full";
     return "escalated";
   }
 
@@ -114,10 +121,11 @@ export default async function ReturnsPage({
   const enrichedReturns = returns.map((ret) => {
     const totals = ret.order?.totals as { total?: string } | null | undefined;
     const orderRemainingBalance = totals?.total != null ? Number(totals.total) : null;
+    const orderOriginalTotal = ret.order?.original_total != null ? Number(ret.order.original_total) : null;
     return {
       ...ret,
       orderRemainingBalance,
-      refundType: getReturnRefundType({ ...ret, orderRemainingBalance }),
+      refundType: getReturnRefundType({ ...ret, orderRemainingBalance, orderOriginalTotal }),
     };
   });
 
