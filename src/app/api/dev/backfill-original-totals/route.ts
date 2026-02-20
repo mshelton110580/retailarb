@@ -54,11 +54,10 @@ export async function POST() {
       });
 
       for (const order of uniqueOrders) {
-        const subtotalNum = parseFloat(order.subtotal);
+        // original_total = Total - AdjustmentAmount (AdjustmentAmount is negative for refunds)
+        // Subtotal = items only (no shipping) — do NOT use
         const adjustmentNum = parseFloat(order.adjustmentAmount);
-        const originalTotal = subtotalNum > 0
-          ? subtotalNum
-          : parseFloat((parseFloat(order.total) - adjustmentNum).toFixed(2));
+        const originalTotal = parseFloat((parseFloat(order.total) - adjustmentNum).toFixed(2));
 
         const existing = await prisma.orders.findUnique({
           where: { order_id: order.orderId },
