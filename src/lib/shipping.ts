@@ -1,5 +1,7 @@
 // Default number of days after purchase to consider an order overdue if no tracking
 const DEFAULT_EXPECTED_TRANSIT_DAYS = 7;
+// When an order has tracking but no delivery window, consider it overdue after this many days from shipment/purchase
+const DEFAULT_TRACKED_OVERDUE_DAYS = 21;
 
 export function deriveShippingStatus(input: {
   actualDelivery?: string | null;
@@ -35,12 +37,26 @@ export function deriveShippingStatus(input: {
     expectedDate.setDate(expectedDate.getDate() + DEFAULT_EXPECTED_TRANSIT_DAYS);
   }
 
-  // If we have tracking, check late/not_delivered based on expected date
+  // If we have tracking, check late/not_delivered based on expected date.
+  // If no delivery window was provided by eBay, fall back to shipped/purchase date + overdue threshold
+  // so orders with tracking but no EDD don't stay stuck at "shipped" forever.
   if (input.hasTracking) {
-    if (expectedDate) {
-      const lateCutoff = new Date(expectedDate);
+    const trackingExpected = expectedDate ?? (() => {
+      const base = input.shippedTime
+        ? new Date(input.shippedTime)
+        : input.purchaseDate
+          ? new Date(input.purchaseDate)
+          : null;
+      if (!base) return null;
+      const d = new Date(base);
+      d.setDate(d.getDate() + DEFAULT_TRACKED_OVERDUE_DAYS);
+      return d;
+    })();
+
+    if (trackingExpected) {
+      const lateCutoff = new Date(trackingExpected);
       lateCutoff.setDate(lateCutoff.getDate() + 3);
-      const notDeliveredCutoff = new Date(expectedDate);
+      const notDeliveredCutoff = new Date(trackingExpected);
       notDeliveredCutoff.setDate(notDeliveredCutoff.getDate() + 5);
       if (now > notDeliveredCutoff) {
         return "not_delivered";

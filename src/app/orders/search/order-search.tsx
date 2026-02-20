@@ -323,7 +323,7 @@ const STORAGE_KEY = "arbdesk_search_filters";
 
 type DatePreset = "30" | "60" | "90" | "all";
 
-type CaseFilter = "needsReturn" | "hasOpenReturn" | "hasClosedReturn" | "hasOpenInr" | "hasClosedInr" | "needsInr" | "anyRefund" | "fullRefund" | "partialRefund";
+type CaseFilter = "needsReturn" | "hasOpenReturn" | "hasClosedReturn" | "hasOpenInr" | "hasClosedInr" | "needsInr" | "anyRefund" | "fullRefund" | "partialRefund" | "noRefund";
 
 type SavedFilters = {
   groupBy: GroupBy;
@@ -344,7 +344,7 @@ type SavedFilters = {
 
 const VALID_SHIP_STATUSES = new Set(SHIP_STATUSES.map(s => s.value));
 const VALID_ORDER_STATUSES = new Set(ORDER_STATUSES);
-const VALID_CASE_FILTERS = new Set<CaseFilter>(["needsReturn", "hasOpenReturn", "hasClosedReturn", "hasOpenInr", "hasClosedInr", "needsInr", "anyRefund", "fullRefund", "partialRefund"]);
+const VALID_CASE_FILTERS = new Set<CaseFilter>(["needsReturn", "hasOpenReturn", "hasClosedReturn", "hasOpenInr", "hasClosedInr", "needsInr", "anyRefund", "fullRefund", "partialRefund", "noRefund"]);
 
 function loadSaved(): Partial<SavedFilters> {
   if (typeof window === "undefined") return {};
@@ -413,6 +413,7 @@ function matchesCaseFilter(order: Order, filters: CaseFilter[]): boolean {
       case "anyRefund":     return order.hasRefund;
       case "fullRefund":    return isFullRefund(order);
       case "partialRefund": return isPartialRefund(order);
+      case "noRefund":      return !order.hasRefund;
     }
   });
 }
@@ -1105,7 +1106,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
     const counts: Record<CaseFilter, number> = {
       needsReturn: 0, hasOpenReturn: 0, hasClosedReturn: 0,
       hasOpenInr: 0, hasClosedInr: 0, needsInr: 0,
-      anyRefund: 0, fullRefund: 0, partialRefund: 0,
+      anyRefund: 0, fullRefund: 0, partialRefund: 0, noRefund: 0,
     };
     for (const o of orders) {
       if (o.needsReturn && !o.returnCase) counts.needsReturn++;
@@ -1124,6 +1125,8 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
         counts.anyRefund++;
         if (isFullRefund(o)) counts.fullRefund++;
         else counts.partialRefund++;
+      } else {
+        counts.noRefund++;
       }
     }
     return counts;
@@ -1296,6 +1299,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
           <p className="mb-1.5 text-xs text-slate-500">Refunds</p>
           <div className="flex flex-wrap gap-1.5">
             {([
+              { value: "noRefund"      as CaseFilter, label: "No Refund",      activeClass: "bg-slate-600 text-slate-200" },
               { value: "anyRefund"     as CaseFilter, label: "Any Refund",     activeClass: "bg-amber-950 border border-amber-800 text-amber-300" },
               { value: "fullRefund"    as CaseFilter, label: "Full Refund",    activeClass: "bg-red-950 border border-red-800 text-red-300" },
               { value: "partialRefund" as CaseFilter, label: "Partial Refund", activeClass: "bg-amber-900 text-amber-200" },
