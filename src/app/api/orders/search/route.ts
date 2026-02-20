@@ -217,6 +217,33 @@ export async function GET(req: Request) {
             }
           }
         },
+        received_units: {
+          select: { inventory_state: true },
+        },
+        returns: {
+          select: {
+            id: true,
+            ebay_return_id: true,
+            ebay_state: true,
+            ebay_status: true,
+            escalated: true,
+            refund_amount: true,
+          },
+          take: 1,
+          orderBy: { created_at: "desc" },
+        },
+        inr_cases: {
+          select: {
+            id: true,
+            ebay_inquiry_id: true,
+            ebay_status: true,
+            escalated_to_case: true,
+            case_id: true,
+            claim_amount: true,
+          },
+          take: 1,
+          orderBy: { created_at: "desc" },
+        },
       }
     }),
     prisma.orders.count({ where }),
@@ -228,24 +255,21 @@ export async function GET(req: Request) {
       const currentTotal = o.totals && typeof o.totals === "object" && "total" in (o.totals as any)
         ? Number((o.totals as any).total)
         : null;
-      const subtotalNum = o.subtotal ? Number(o.subtotal) : 0;
-      const shippingNum = o.shipping_cost ? Number(o.shipping_cost) : 0;
-      const taxNum = o.tax_amount ? Number(o.tax_amount) : 0;
-      // Fall back to subtotal + shipping + tax when original_total is missing
-      const originalTotal = o.original_total
-        ? Number(o.original_total)
-        : parseFloat((subtotalNum + shippingNum + taxNum).toFixed(2)) || null;
+      const originalTotal = o.original_total ? Number(o.original_total) : null;
       const hasRefund = currentTotal != null && originalTotal != null && currentTotal < originalTotal;
+      // Matches inventory page logic: needs return if any received unit has inventory_state === "to_be_returned"
+      const needsReturn = o.received_units.some(u => u.inventory_state === "to_be_returned");
       return {
         orderId: o.order_id,
         purchaseDate: o.purchase_date.toISOString(),
         orderStatus: o.order_status,
         originalTotal,
-        subtotal: subtotalNum || null,
-        shippingCost: shippingNum || null,
-        taxAmount: taxNum || null,
+        subtotal: o.subtotal ? Number(o.subtotal) : null,
+        shippingCost: o.shipping_cost ? Number(o.shipping_cost) : null,
+        taxAmount: o.tax_amount ? Number(o.tax_amount) : null,
         currentTotal,
-        hasRefund: hasRefund,
+        hasRefund,
+        needsReturn,
         shipToCity: o.ship_to_city,
         shipToState: o.ship_to_state,
         shipToPostal: o.ship_to_postal,
@@ -271,6 +295,33 @@ export async function GET(req: Request) {
             carrier: t.carrier,
           })),
         } : null,
+        returnCase: (() => {
+          const r = o.returns[0];
+          if (!r) return null;
+          return {
+            id: r.id,
+            ebayReturnId: r.ebay_return_id,
+            state: r.ebay_state,
+            status: r.ebay_status,
+            escalated: r.escalated,
+            refundAmount: r.refund_amount ? Number(r.refund_amount) : null,
+            url: `https://www.ebay.com/rt/ReturnDetails?returnId=${r.ebay_return_id}`,
+          };
+        })(),
+        inrCase: (() => {
+          const c = o.inr_cases[0];
+          if (!c) return null;
+          const linkId = c.escalated_to_case && c.case_id ? c.case_id : c.ebay_inquiry_id;
+          return {
+            id: c.id,
+            ebayInquiryId: c.ebay_inquiry_id,
+            status: c.ebay_status,
+            escalatedToCase: c.escalated_to_case,
+            caseId: c.case_id,
+            claimAmount: c.claim_amount ? Number(c.claim_amount) : null,
+            url: `https://www.ebay.com/ItemNotReceived/${linkId}`,
+          };
+        })(),
       };
     }),
     total,
