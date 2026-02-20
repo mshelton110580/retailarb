@@ -82,6 +82,7 @@ type ColKey =
   | "qty"
   | "price"
   | "total"
+  | "refund"
   | "shipStatus"
   | "checkedIn"
   | "returnCase"
@@ -105,6 +106,7 @@ const ALL_COLS: ColDef[] = [
   { key: "qty",        label: "Qty",          defaultOn: true,  itemsOnly: true, sortValue: (_o, row) => row?.qty ?? 0 },
   { key: "price",      label: "Price",        defaultOn: true,  itemsOnly: true, sortValue: (_o, row) => row?.price ?? 0 },
   { key: "total",      label: "Order Total",  defaultOn: true,  sortValue: o => o.originalTotal ?? 0 },
+  { key: "refund",     label: "Refund",       defaultOn: true,  sortValue: o => o.hasRefund ? (o.currentTotal != null && o.currentTotal <= 0 ? 2 : 1) : 0 },
   { key: "shipStatus", label: "Ship Status",  defaultOn: true,  sortValue: o => o.shipment?.derivedStatus ?? "" },
   { key: "checkedIn",  label: "Check-in",     defaultOn: true,  sortValue: o => o.shipment?.checkedInAt ? 1 : 0 },
   { key: "returnCase", label: "Return",       defaultOn: true,  sortValue: o => o.returnCase ? (o.returnCase.escalated ? 2 : 1) : 0 },
@@ -182,6 +184,37 @@ function InrBadge({ c }: { c: InrCase }) {
       className={`inline-block rounded px-2 py-0.5 text-[10px] font-medium hover:opacity-80 ${color}`}>
       {c.escalatedToCase ? "⚠ Esc INR" : "INR"} ↗
     </a>
+  );
+}
+
+function RefundBadge({ order }: { order: Order }) {
+  if (!order.hasRefund) return <span className="text-xs text-slate-600">—</span>;
+  const full = isFullRefund(order);
+  if (full) {
+    return (
+      <span className="inline-flex flex-col">
+        <span className="inline-block rounded px-2 py-0.5 text-[10px] font-medium bg-red-950 border border-red-800 text-red-300">
+          Full Refund
+        </span>
+        {order.originalTotal != null && (
+          <span className="text-[10px] text-red-400 mt-0.5">{fmt$(order.originalTotal)}</span>
+        )}
+      </span>
+    );
+  }
+  // partial
+  const refundAmt = order.originalTotal != null && order.currentTotal != null
+    ? order.originalTotal - order.currentTotal
+    : null;
+  return (
+    <span className="inline-flex flex-col">
+      <span className="inline-block rounded px-2 py-0.5 text-[10px] font-medium bg-amber-950 border border-amber-800 text-amber-300">
+        Partial Refund
+      </span>
+      {refundAmt != null && order.originalTotal != null && (
+        <span className="text-[10px] text-amber-400 mt-0.5">{fmt$(refundAmt)} / {fmt$(order.originalTotal)}</span>
+      )}
+    </span>
   );
 }
 
@@ -275,6 +308,7 @@ const colWidth: Partial<Record<ColKey, string>> = {
   qty:        "w-12 flex-shrink-0 text-right",
   price:      "w-16 flex-shrink-0 text-right",
   total:      "w-20 flex-shrink-0 text-right",
+  refund:     "w-36 flex-shrink-0",
   shipStatus: "w-28 flex-shrink-0",
   checkedIn:  "w-20 flex-shrink-0",
   returnCase: "w-20 flex-shrink-0",
@@ -288,7 +322,7 @@ const STORAGE_KEY = "arbdesk_search_filters";
 
 type DatePreset = "30" | "60" | "90" | "all";
 
-type CaseFilter = "needsReturn" | "hasOpenReturn" | "hasClosedReturn" | "hasOpenInr" | "hasClosedInr" | "needsInr";
+type CaseFilter = "needsReturn" | "hasOpenReturn" | "hasClosedReturn" | "hasOpenInr" | "hasClosedInr" | "needsInr" | "anyRefund" | "fullRefund" | "partialRefund";
 
 type SavedFilters = {
   groupBy: GroupBy;
@@ -308,7 +342,7 @@ type SavedFilters = {
 
 const VALID_SHIP_STATUSES = new Set(SHIP_STATUSES.map(s => s.value));
 const VALID_ORDER_STATUSES = new Set(ORDER_STATUSES);
-const VALID_CASE_FILTERS = new Set<CaseFilter>(["needsReturn", "hasOpenReturn", "hasClosedReturn", "hasOpenInr", "hasClosedInr", "needsInr"]);
+const VALID_CASE_FILTERS = new Set<CaseFilter>(["needsReturn", "hasOpenReturn", "hasClosedReturn", "hasOpenInr", "hasClosedInr", "needsInr", "anyRefund", "fullRefund", "partialRefund"]);
 
 function loadSaved(): Partial<SavedFilters> {
   if (typeof window === "undefined") return {};
@@ -347,6 +381,14 @@ function isInrClosed(c: InrCase): boolean {
   return c.status === "CLOSED" || c.status === "CS_CLOSED";
 }
 
+function isFullRefund(o: Order): boolean {
+  return o.hasRefund && o.currentTotal != null && o.currentTotal <= 0;
+}
+
+function isPartialRefund(o: Order): boolean {
+  return o.hasRefund && o.currentTotal != null && o.currentTotal > 0;
+}
+
 // ── Case filter predicate ─────────────────────────────────────────────────────
 
 function matchesCaseFilter(order: Order, filters: CaseFilter[]): boolean {
@@ -366,6 +408,9 @@ function matchesCaseFilter(order: Order, filters: CaseFilter[]): boolean {
           && order.orderStatus !== "Cancelled"
           && !order.hasRefund;
       }
+      case "anyRefund":     return order.hasRefund;
+      case "fullRefund":    return isFullRefund(order);
+      case "partialRefund": return isPartialRefund(order);
     }
   });
 }
@@ -669,9 +714,11 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
       case "total":
         return (
           <span className={`text-xs ${order.hasRefund ? "text-amber-400" : "text-slate-400"}`}>
-            {fmt$(order.originalTotal)}{order.hasRefund ? " ⚠" : ""}
+            {fmt$(order.originalTotal)}
           </span>
         );
+      case "refund":
+        return <RefundBadge order={order} />;
       case "shipStatus":
         return shipment
           ? <span className={`inline-block rounded px-2 py-0.5 text-[10px] font-medium ${shipStatusColor[shipment.derivedStatus] ?? "bg-slate-700 text-slate-300"}`}>
@@ -746,9 +793,11 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
       case "total":
         return (
           <span className={`text-xs font-medium ${order.hasRefund ? "text-amber-400" : "text-slate-200"}`}>
-            {fmt$(order.originalTotal)}{order.hasRefund ? " ⚠" : ""}
+            {fmt$(order.originalTotal)}
           </span>
         );
+      case "refund":
+        return <RefundBadge order={order} />;
       case "shipStatus":
         return shipment
           ? <span className={`inline-block rounded px-2 py-0.5 text-[10px] font-medium ${shipStatusColor[shipment.derivedStatus] ?? "bg-slate-700 text-slate-300"}`}>
@@ -793,6 +842,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
         return <EscalatedBadge order={order} />;
       case "itemId": case "qty": case "price": return null;
       default: return null;
+
     }
   }
 
@@ -999,6 +1049,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
     const counts: Record<CaseFilter, number> = {
       needsReturn: 0, hasOpenReturn: 0, hasClosedReturn: 0,
       hasOpenInr: 0, hasClosedInr: 0, needsInr: 0,
+      anyRefund: 0, fullRefund: 0, partialRefund: 0,
     };
     for (const o of orders) {
       if (o.needsReturn && !o.returnCase) counts.needsReturn++;
@@ -1013,6 +1064,11 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
       const s = o.shipment?.derivedStatus;
       if ((s === "not_received" || s === "not_delivered") && !o.inrCase
           && o.orderStatus !== "Cancelled" && !o.hasRefund) counts.needsInr++;
+      if (o.hasRefund) {
+        counts.anyRefund++;
+        if (isFullRefund(o)) counts.fullRefund++;
+        else counts.partialRefund++;
+      }
     }
     return counts;
   }, [orders]);
@@ -1179,7 +1235,36 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
           </div>
         </div>
 
-        {/* Row 6: Group by + columns + clear */}
+        {/* Row 6: Refund chips */}
+        <div>
+          <p className="mb-1.5 text-xs text-slate-500">Refunds</p>
+          <div className="flex flex-wrap gap-1.5">
+            {([
+              { value: "anyRefund"     as CaseFilter, label: "Any Refund",     activeClass: "bg-amber-950 border border-amber-800 text-amber-300" },
+              { value: "fullRefund"    as CaseFilter, label: "Full Refund",    activeClass: "bg-red-950 border border-red-800 text-red-300" },
+              { value: "partialRefund" as CaseFilter, label: "Partial Refund", activeClass: "bg-amber-900 text-amber-200" },
+            ]).map(chip => {
+              const count = caseFilterCounts[chip.value];
+              return (
+                <button key={chip.value} onClick={() => toggleCaseFilter(chip.value)}
+                  className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                    filterCase.includes(chip.value) ? chip.activeClass : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                  }`}>
+                  {chip.label}
+                  {count > 0 && (
+                    <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                      filterCase.includes(chip.value) ? "bg-black/30 text-current" : "bg-slate-700 text-slate-300"
+                    }`}>
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Row 7: Group by + columns + clear */}
         <div className="flex items-center justify-between gap-3 flex-wrap border-t border-slate-800 pt-3">
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-500">Group by:</span>
