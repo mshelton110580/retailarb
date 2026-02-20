@@ -15,24 +15,33 @@ type FilterType =
   | "closed_no_refund"
   | "escalated";
 
-// States that indicate the return is still active (not closed)
-const CLOSED_STATES = ["CLOSED"];
+// States that indicate the return is still active / in-flight
+const OPEN_STATES = new Set([
+  "RETURN_REQUESTED",
+  "RETURN_STARTED",
+  "ITEM_READY_TO_SHIP",
+  "READY_FOR_SHIPPING",
+  "RETURN_SHIPPED",
+  "ITEM_SHIPPED",
+  "RETURN_DELIVERED",
+  "ITEM_DELIVERED",
+  "RETURN_ESCALATED",
+  "ESCALATED",
+  "ACTIVE",
+  "PENDING",
+]);
 
 /**
  * Determine the refund classification for a return.
  *
- * For non-escalated closed returns, uses actual_refund vs estimated_refund:
- *   - actual_refund = estimated_refund → Full Refund
- *   - 0 < actual_refund < estimated_refund → Partial Refund
- *   - actual_refund is null/0 → No Refund
+ * A return is "open" only if its state is a known in-flight state.
+ * Everything else (CLOSED, REFUND_ISSUED, RETURN_CLOSED, null, unknown) is
+ * treated as terminal and classified by refund amounts.
  *
- * For escalated returns with no actual_refund, use order totals.total (remaining balance):
- *   - totals.total == 0 → Full Refund (we paid nothing net)
- *   - totals.total > 0 → Partial Refund (we still paid some amount)
- *   - totals not available → Escalated (can't determine)
- *
- * Special statuses:
- *   - LESS_THAN_A_FULL_REFUND_ISSUED → Partial Refund
+ * For non-escalated closed returns: actual_refund vs estimated_refund.
+ * For escalated closed returns with no actual_refund: order remaining balance.
+ *   - remaining == 0 → Full Refund
+ *   - remaining > 0  → Partial Refund
  */
 function getReturnRefundType(ret: {
   actual_refund: unknown;
@@ -44,20 +53,20 @@ function getReturnRefundType(ret: {
 }): "full" | "partial" | "none" | "escalated" | "open" {
   const actual = ret.actual_refund !== null ? Number(ret.actual_refund) : null;
   const estimated = ret.estimated_refund !== null ? Number(ret.estimated_refund) : null;
-  const isEsc = ret.escalated || ret.ebay_status === "ESCALATED";
+  const isEsc = ret.escalated || ret.ebay_status === "ESCALATED" || ret.ebay_state === "RETURN_ESCALATED" || ret.ebay_state === "ESCALATED";
 
-  // If the status explicitly says partial refund
+  // Explicit partial refund status — closed, partial
   if (ret.ebay_status === "LESS_THAN_A_FULL_REFUND_ISSUED") {
     return "partial";
   }
 
-  // If still open/active (not closed state)
-  if (ret.ebay_state != null && !CLOSED_STATES.includes(ret.ebay_state)) {
-    if (isEsc) return "escalated";
-    return "open";
+  // Still in-flight — classify as open or escalated
+  if (ret.ebay_state != null && OPEN_STATES.has(ret.ebay_state)) {
+    return isEsc ? "escalated" : "open";
   }
 
-  // Closed returns — classify by actual refund first
+  // Terminal state (CLOSED, REFUND_ISSUED, RETURN_CLOSED, null, unknown, etc.)
+  // Classify by actual refund first
   if (actual !== null && actual > 0) {
     if (estimated !== null && estimated > 0 && actual < estimated) {
       return "partial";
@@ -65,15 +74,13 @@ function getReturnRefundType(ret: {
     return "full";
   }
 
-  // No actual_refund — for escalated returns use order totals.total (remaining balance after refunds)
-  // totals.total == 0 means we got everything back (full refund)
-  // totals.total > 0 means we still paid some amount (partial refund)
+  // No actual_refund — for escalated returns use order remaining balance
+  // (refund was issued through case resolution, not directly on the return record)
   if (isEsc) {
     const remaining = ret.orderRemainingBalance;
     if (remaining !== null) {
       return remaining === 0 ? "full" : "partial";
     }
-    // No order data — indeterminate
     return "escalated";
   }
 
