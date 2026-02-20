@@ -165,6 +165,17 @@ function parseOrdersFromResponse(ordersRaw: any): GetOrdersResult["orders"] {
       ? orderShippingCostSum.toFixed(2)
       : (extractValue(svcSelectedRaw?.ShippingServiceCost) ?? "0");
 
+    // Temporary: log tax-related fields for one known taxed order
+    if (String(order?.OrderID) === "16-13938-24417") {
+      const taxKeys = ["Tax", "Taxes", "SalesTax", "TaxAmount", "TotalTax", "ExternalTransaction", "AdjustmentAmount", "Total", "Subtotal", "BuyerCheckoutMessage"];
+      const taxData: Record<string, any> = {};
+      for (const k of taxKeys) { if (order?.[k] !== undefined) taxData[k] = order[k]; }
+      console.warn("[Tax DEBUG] 16-13938-24417 tax fields:", JSON.stringify(taxData));
+      // Also log transaction-level tax
+      for (const tx of safeArray(order?.TransactionArray?.Transaction)) {
+        console.warn("[Tax DEBUG] Transaction:", JSON.stringify({ id: tx?.TransactionID, tax: tx?.Taxes, salestax: tx?.SalesTax, total: tx?.TransactionPrice, actualTax: tx?.ActualTaxAmount }));
+      }
+    }
 
     return {
       orderId: order?.OrderID ?? "",
