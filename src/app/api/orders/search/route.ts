@@ -228,17 +228,24 @@ export async function GET(req: Request) {
       const currentTotal = o.totals && typeof o.totals === "object" && "total" in (o.totals as any)
         ? Number((o.totals as any).total)
         : null;
-      const hasRefund = currentTotal != null && o.original_total != null && currentTotal < Number(o.original_total);
+      const subtotalNum = o.subtotal ? Number(o.subtotal) : 0;
+      const shippingNum = o.shipping_cost ? Number(o.shipping_cost) : 0;
+      const taxNum = o.tax_amount ? Number(o.tax_amount) : 0;
+      // Fall back to subtotal + shipping + tax when original_total is missing
+      const originalTotal = o.original_total
+        ? Number(o.original_total)
+        : parseFloat((subtotalNum + shippingNum + taxNum).toFixed(2)) || null;
+      const hasRefund = currentTotal != null && originalTotal != null && currentTotal < originalTotal;
       return {
         orderId: o.order_id,
         purchaseDate: o.purchase_date.toISOString(),
         orderStatus: o.order_status,
-        originalTotal: o.original_total ? Number(o.original_total) : null,
-        subtotal: o.subtotal ? Number(o.subtotal) : null,
-        shippingCost: o.shipping_cost ? Number(o.shipping_cost) : null,
-        taxAmount: o.tax_amount ? Number(o.tax_amount) : null,
+        originalTotal,
+        subtotal: subtotalNum || null,
+        shippingCost: shippingNum || null,
+        taxAmount: taxNum || null,
         currentTotal,
-        hasRefund,
+        hasRefund: hasRefund,
         shipToCity: o.ship_to_city,
         shipToState: o.ship_to_state,
         shipToPostal: o.ship_to_postal,
