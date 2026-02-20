@@ -137,7 +137,7 @@ export default async function OrdersPage({
                       Order total: <span className="text-slate-300 font-medium">
                         ${(order.original_total ? Number(order.original_total) : totalItemSubtotal + orderShipping + orderTax).toFixed(2)}
                       </span>
-                      {Number(order.totals?.total ?? order.original_total ?? 0) < Number(order.original_total ?? 0) && (
+                      {Number((order.totals as any)?.total ?? order.original_total ?? 0) < Number(order.original_total ?? 0) && (
                         <span className="ml-2 text-amber-400" title="Refund detected — original total may differ from amount actually received">⚠ refund</span>
                       )}
                     </div>
