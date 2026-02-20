@@ -70,15 +70,22 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
           }
           const originalTotal = parseFloat((subtotalNum + shippingNum).toFixed(2));
 
-          // Check if we need to backfill shipping_cost / original_total for an existing record
-          // that was previously stored with shipping_cost=0 (incomplete data from earlier sync)
+          // Check if we need to backfill shipping_cost / original_total for an existing record.
+          // NULL means "not yet populated" (from a sync before these columns existed).
+          // 0 means "confirmed free shipping" — do NOT overwrite it.
+          // Only backfill when the stored value is NULL and we now have a positive value.
           const existingOrder = await prisma.orders.findUnique({
             where: { order_id: String(order.orderId) },
             select: { shipping_cost: true, original_total: true, subtotal: true }
           });
+          // Also backfill when stored=0 but our new three-tier logic now finds a positive value.
+          // If the old sync stored 0 because it couldn't find shipping, and we now can, update it.
+          // If the new sync also returns 0, treat it as confirmed free shipping — leave it alone.
+          const storedShipping = existingOrder?.shipping_cost !== null && existingOrder?.shipping_cost !== undefined
+            ? Number(existingOrder.shipping_cost) : null;
           const needsShippingBackfill = existingOrder &&
             shippingNum > 0 &&
-            (existingOrder.shipping_cost === null || Number(existingOrder.shipping_cost) === 0);
+            (storedShipping === null || storedShipping === 0);
 
           await prisma.orders.upsert({
             where: { order_id: String(order.orderId) },
