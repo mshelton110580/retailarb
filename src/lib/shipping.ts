@@ -1,7 +1,7 @@
 // Default number of days after purchase to consider an order overdue if no tracking
 const DEFAULT_EXPECTED_TRANSIT_DAYS = 7;
 // When an order has tracking but no delivery window, consider it overdue after this many days from shipment/purchase
-const DEFAULT_TRACKED_OVERDUE_DAYS = 21;
+const DEFAULT_TRACKED_OVERDUE_DAYS = 10;
 
 export function deriveShippingStatus(input: {
   actualDelivery?: string | null;
