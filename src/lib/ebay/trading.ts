@@ -31,6 +31,7 @@ export type GetOrdersResult = {
       quantity: number;
       transactionPrice: string;
       shippingServiceCost?: string;
+      actualShippingCost?: string;
     }>;
     shipments: Array<{
       carrier?: string;
@@ -91,7 +92,8 @@ function parseOrdersFromResponse(ordersRaw: any): GetOrdersResult["orders"] {
         title: transaction?.Item?.Title ?? "",
         quantity: Number(transaction?.QuantityPurchased ?? 0),
         transactionPrice: extractValue(transaction?.TransactionPrice) ?? "0",
-        shippingServiceCost: extractValue(transaction?.ShippingServiceSelected?.ShippingServiceCost)
+        shippingServiceCost: extractValue(transaction?.ShippingServiceSelected?.ShippingServiceCost),
+        actualShippingCost: extractValue(transaction?.ActualShippingCost),
       };
     });
 

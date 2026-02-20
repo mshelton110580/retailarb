@@ -38,25 +38,27 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
 
         for (const order of result.orders) {
           // Upsert the order.
-          // original_total = what was originally paid = Subtotal (items) + ShippingServiceCost.
-          //   Subtotal and ShippingServiceCost are fixed at purchase time and never change,
-          //   even after refunds. Total decreases as refunds are issued, so it cannot be used.
-          //   Fallback: if ShippingServiceCost is missing (e.g. multi-item bundled shipping),
-          //   take max(Subtotal, Total) — Total only goes down with refunds so the larger value
-          //   is always closer to the true original.
+          // subtotal = eBay Subtotal (items only) — immutable, never changes after purchase.
+          // shipping_cost: prefer sum of ActualShippingCost across transactions (set at checkout,
+          //   reliable for both single and multi-item orders). Fall back to order-level
+          //   ShippingServiceCost if no transaction-level values are present.
+          // original_total = subtotal + shipping_cost — set on CREATE only, never overwritten.
           // totals.total is always updated to the current (possibly post-refund) value.
           const subtotalNum = parseFloat(order.subtotal);
-          const shippingNum = parseFloat(order.shippingCost);
-          const subtotalPlusShipping = parseFloat((subtotalNum + shippingNum).toFixed(2));
-          const totalNum = parseFloat(order.total);
-          const originalTotal = Math.max(subtotalPlusShipping, totalNum);
+          const txShippingSum = order.transactions.reduce(
+            (sum, tx) => sum + (tx.actualShippingCost ? parseFloat(tx.actualShippingCost) : 0), 0
+          );
+          const shippingNum = txShippingSum > 0
+            ? parseFloat(txShippingSum.toFixed(2))
+            : parseFloat(order.shippingCost);
+          const originalTotal = parseFloat((subtotalNum + shippingNum).toFixed(2));
 
           await prisma.orders.upsert({
             where: { order_id: String(order.orderId) },
             update: {
               order_status: order.orderStatus,
               totals: { total: order.total },
-              // Do NOT update original_total — it is set once on creation and kept immutable
+              // Do NOT update original_total, subtotal, or shipping_cost — all immutable
               ship_to_city: order.shippingAddress?.city ?? null,
               ship_to_state: order.shippingAddress?.state ?? null,
               ship_to_postal: order.shippingAddress?.postalCode ?? null,
@@ -67,6 +69,8 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
               purchase_date: new Date(order.createdTime),
               order_status: order.orderStatus,
               totals: { total: order.total },
+              subtotal: subtotalNum,
+              shipping_cost: shippingNum,
               original_total: originalTotal,
               ship_to_city: order.shippingAddress?.city ?? null,
               ship_to_state: order.shippingAddress?.state ?? null,

@@ -82,20 +82,12 @@ export default async function OrdersPage({
                 </div>
                 {/* Item list with eBay links */}
                 {order.order_items?.length > 0 && (() => {
-                  // Derive total shipping for this order:
-                  // original_total includes shipping; subtract all item subtotals to get shipping remainder
-                  const origTotal = order.original_total ? Number(order.original_total) : null;
-                  const itemsSubtotal = order.order_items.reduce(
+                  // Order-level shipping cost (stored immutably on first sync from ShippingServiceCost)
+                  // May be 0 for some multi-item orders where eBay doesn't report it at order level.
+                  const orderShipping = order.shipping_cost ? Number(order.shipping_cost) : 0;
+                  const totalItemSubtotal = order.order_items.reduce(
                     (sum, i) => sum + Number(i.transaction_price) * i.qty, 0
                   );
-                  // Total shipping across all items (may already be stored per-item, or derived from order total)
-                  const perItemShippingSum = order.order_items.reduce(
-                    (sum, i) => sum + (i.shipping_cost ? Number(i.shipping_cost) : 0), 0
-                  );
-                  const orderShipping = perItemShippingSum > 0
-                    ? perItemShippingSum
-                    : origTotal != null ? parseFloat((origTotal - itemsSubtotal).toFixed(2)) : 0;
-                  const totalItemSubtotal = itemsSubtotal; // used for proportional allocation
 
                   return (
                   <div className="mt-2 space-y-1">
