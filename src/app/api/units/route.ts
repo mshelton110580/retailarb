@@ -125,6 +125,7 @@ export async function GET(req: Request) {
         category: { select: { id: true, category_name: true } },
         listing: { select: { title: true } },
         order_item: { select: { title: true } },
+        images: { select: { id: true, image_path: true } },
         order: {
           select: {
             order_id: true,
@@ -154,7 +155,8 @@ export async function GET(req: Request) {
       title: u.listing?.title ?? u.order_item?.title ?? "Unknown",
       trackingNumbers: u.order?.shipments?.flatMap(s =>
         s.tracking_numbers.map(t => t.tracking_number)
-      ) ?? []
+      ) ?? [],
+      images: u.images.map(i => ({ id: i.id, url: `/uploads/${i.image_path}` }))
     })),
     total,
     limit,

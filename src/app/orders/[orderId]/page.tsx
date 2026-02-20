@@ -12,7 +12,10 @@ export default async function OrderDetailPage({ params }: { params: { orderId: s
       returns: true,
       inr_cases: true,
       received_units: {
-        include: { listing: { select: { title: true } } },
+        include: {
+          listing: { select: { title: true } },
+          images: { select: { id: true, image_path: true } }
+        },
         orderBy: { unit_index: "asc" }
       }
     }
@@ -235,21 +238,37 @@ export default async function OrderDetailPage({ params }: { params: { orderId: s
           <h2 className="text-lg font-semibold">Received Units</h2>
           <div className="mt-3 space-y-2">
             {order.received_units.map((unit) => (
-              <div key={unit.id} className="flex items-center gap-3 rounded border border-slate-800 p-2 text-sm">
-                <span className="text-slate-500">#{unit.unit_index}</span>
-                <a
-                  href={`https://www.ebay.com/itm/${unit.item_id}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-blue-400 hover:text-blue-300 hover:underline truncate max-w-[350px]"
-                >
-                  {unit.listing?.title ?? `Item ${unit.item_id}`}
-                </a>
-                <span className={`rounded px-1.5 py-0.5 text-xs ${conditionColors[unit.condition_status] ?? "bg-slate-700 text-slate-300"}`}>
-                  {unit.condition_status.replace(/_/g, " ")}
-                </span>
-                <span className="text-xs text-slate-500">{unit.received_at.toISOString().slice(0, 10)}</span>
-                {unit.notes && <span className="text-xs text-slate-500 italic">({unit.notes})</span>}
+              <div key={unit.id} className="rounded border border-slate-800 p-2 text-sm">
+                <div className="flex items-center gap-3">
+                  <span className="text-slate-500">#{unit.unit_index}</span>
+                  <a
+                    href={`https://www.ebay.com/itm/${unit.item_id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-blue-400 hover:text-blue-300 hover:underline truncate max-w-[350px]"
+                  >
+                    {unit.listing?.title ?? `Item ${unit.item_id}`}
+                  </a>
+                  <span className={`rounded px-1.5 py-0.5 text-xs ${conditionColors[unit.condition_status] ?? "bg-slate-700 text-slate-300"}`}>
+                    {unit.condition_status.replace(/_/g, " ")}
+                  </span>
+                  <span className="text-xs text-slate-500">{unit.received_at.toISOString().slice(0, 10)}</span>
+                  {unit.notes && <span className="text-xs text-slate-500 italic">({unit.notes})</span>}
+                </div>
+                {unit.images.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {unit.images.map((img) => (
+                      <a key={img.id} href={`/uploads/${img.image_path}`} target="_blank" rel="noreferrer">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={`/uploads/${img.image_path}`}
+                          alt="Unit photo"
+                          className="h-16 w-16 rounded border border-slate-700 object-cover hover:opacity-80 transition-opacity"
+                        />
+                      </a>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>

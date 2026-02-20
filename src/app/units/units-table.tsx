@@ -16,6 +16,7 @@ type Unit = {
   category: { id: string; name: string } | null;
   title: string;
   trackingNumbers: string[];
+  images: Array<{ id: string; url: string }>;
 };
 
 const STATES = [
@@ -50,6 +51,7 @@ const ALL_COLUMNS = [
   { key: "state",    label: "State",     sortable: true,  defaultWidth: 110 },
   { key: "received", label: "Received",  sortable: true,  defaultWidth: 100 },
   { key: "notes",    label: "Notes",     sortable: false, defaultWidth: 160 },
+  { key: "photos",   label: "Photos",    sortable: false, defaultWidth: 120 },
 ] as const;
 
 type ColKey = (typeof ALL_COLUMNS)[number]["key"];
@@ -348,6 +350,26 @@ export default function UnitsTable({ categories }: { categories: Category[] }) {
         return unit.notes
           ? <span className="text-xs text-slate-400 truncate block" title={unit.notes}>{unit.notes}</span>
           : <span className="text-xs text-slate-700">—</span>;
+      case "photos":
+        return unit.images?.length > 0 ? (
+          <div className="flex flex-wrap gap-1">
+            {unit.images.slice(0, 3).map((img) => (
+              <a key={img.id} href={img.url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={img.url}
+                  alt="Unit photo"
+                  className="h-10 w-10 rounded border border-slate-700 object-cover hover:opacity-80 transition-opacity"
+                />
+              </a>
+            ))}
+            {unit.images.length > 3 && (
+              <span className="flex h-10 w-10 items-center justify-center rounded border border-slate-700 text-xs text-slate-500">
+                +{unit.images.length - 3}
+              </span>
+            )}
+          </div>
+        ) : <span className="text-xs text-slate-700">—</span>;
     }
   }
 

@@ -97,7 +97,7 @@ export default async function InventoryPage({
 
   // Fetch received units with condition and notes
   const receivedUnits = await prisma.received_units.findMany({
-    select: { order_id: true, item_id: true, condition_status: true, inventory_state: true, notes: true, received_at: true }
+    select: { order_id: true, item_id: true, condition_status: true, inventory_state: true, notes: true, received_at: true, images: { select: { id: true, image_path: true } } }
   });
 
   // Get all order IDs from shipments for return/INR lookups
@@ -798,15 +798,31 @@ export default async function InventoryPage({
                             unit.inventory_state === 'returned' ? 'text-slate-400' :
                             'text-slate-300';
                           return (
-                            <div key={idx} className="flex items-center gap-2 text-xs">
-                              <span className="text-slate-500">Unit {idx + 1}:</span>
-                              <span className={`font-medium ${condColor}`}>{unit.condition_status}</span>
-                              {unit.notes && (
-                                <span className="text-slate-400 italic">— {unit.notes}</span>
+                            <div key={idx} className="space-y-1">
+                              <div className="flex items-center gap-2 text-xs">
+                                <span className="text-slate-500">Unit {idx + 1}:</span>
+                                <span className={`font-medium ${condColor}`}>{unit.condition_status}</span>
+                                {unit.notes && (
+                                  <span className="text-slate-400 italic">— {unit.notes}</span>
+                                )}
+                                <span className="ml-auto text-slate-600">
+                                  {unit.received_at ? new Date(unit.received_at).toISOString().slice(0, 10) : ''}
+                                </span>
+                              </div>
+                              {(unit as any).images?.length > 0 && (
+                                <div className="flex flex-wrap gap-1 pl-14">
+                                  {(unit as any).images.map((img: { id: string; image_path: string }) => (
+                                    <a key={img.id} href={`/uploads/${img.image_path}`} target="_blank" rel="noreferrer">
+                                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                                      <img
+                                        src={`/uploads/${img.image_path}`}
+                                        alt="Unit photo"
+                                        className="h-12 w-12 rounded border border-slate-700 object-cover hover:opacity-80 transition-opacity"
+                                      />
+                                    </a>
+                                  ))}
+                                </div>
                               )}
-                              <span className="ml-auto text-slate-600">
-                                {unit.received_at ? new Date(unit.received_at).toISOString().slice(0, 10) : ''}
-                              </span>
                             </div>
                           );
                         })}
