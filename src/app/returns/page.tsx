@@ -109,6 +109,7 @@ export default async function ReturnsPage({
     const orderRemainingBalance = totals?.total != null ? Number(totals.total) : null;
     return {
       ...ret,
+      orderRemainingBalance,
       refundType: getReturnRefundType({ ...ret, orderRemainingBalance }),
     };
   });
@@ -302,12 +303,25 @@ export default async function ReturnsPage({
                           );
                         })()}
                         {ret.refundType === "partial" && (() => {
-                          const refundAmt = ret.actual_refund
-                            ? Number(ret.actual_refund)
-                            : ret.refund_amount
-                              ? Number(ret.refund_amount)
-                              : null;
-                          const totalPaid = ret.estimated_refund ? Number(ret.estimated_refund) : null;
+                          const isEsc = ret.escalated || ret.ebay_status === "ESCALATED";
+                          let refundAmt: number | null = null;
+                          let totalPaid: number | null = null;
+
+                          if (isEsc && ret.actual_refund == null) {
+                            // Escalated partial: refund = original_total - remaining balance
+                            // original_total is on the order; orderRemainingBalance is totals.total
+                            const origTotal = ret.order?.original_total != null ? Number(ret.order.original_total) : null;
+                            const remaining = ret.orderRemainingBalance;
+                            if (origTotal !== null && remaining !== null) {
+                              refundAmt = parseFloat((origTotal - remaining).toFixed(2));
+                              totalPaid = origTotal;
+                            }
+                          } else {
+                            // Non-escalated: use actual_refund vs estimated_refund
+                            refundAmt = ret.actual_refund ? Number(ret.actual_refund) : null;
+                            totalPaid = ret.estimated_refund ? Number(ret.estimated_refund) : null;
+                          }
+
                           return (
                             <span className="rounded bg-orange-900 px-2 py-0.5 text-xs text-orange-300">
                               Partial Refund{refundAmt !== null ? `: $${refundAmt.toFixed(2)}` : ""}
