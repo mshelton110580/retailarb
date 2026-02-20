@@ -77,12 +77,19 @@ export async function GET() {
   const auth = await requireRole(["ADMIN"]);
   if (!auth.ok) return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
 
-  const [total, withOriginal, byState] = await Promise.all([
+  const [total, withOriginal, byState, accounts] = await Promise.all([
     prisma.orders.count(),
     prisma.orders.count({ where: { original_total: { not: null } } }),
     prisma.orders.groupBy({
       by: ["scrape_state"],
       _count: { scrape_state: true }
+    }),
+    prisma.ebay_accounts.findMany({
+      select: {
+        id: true,
+        ebay_username: true,
+        playwright_state: true
+      }
     })
   ]);
 
@@ -91,10 +98,17 @@ export async function GET() {
     stateMap[row.scrape_state ?? "null"] = row._count.scrape_state;
   }
 
+  const sessionStatus = accounts.map(a => ({
+    id: a.id,
+    username: a.ebay_username,
+    hasSession: !!(a.playwright_state && a.playwright_state.length > 10)
+  }));
+
   return NextResponse.json({
     total,
     withOriginal,
     needsScrape: total - withOriginal,
-    states: stateMap
+    states: stateMap,
+    sessionStatus
   });
 }

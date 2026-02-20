@@ -49,6 +49,41 @@ export async function DELETE(req: Request) {
   return NextResponse.json({ ok: true });
 }
 
+/**
+ * PATCH /api/ebay-accounts?id=<accountId>
+ *
+ * Saves a Playwright storageState JSON for the given account.
+ * Used by the local session-capture script to persist a browser session
+ * so the headless worker can scrape eBay order pages.
+ */
+export async function PATCH(req: Request) {
+  const auth = await requireRole(["ADMIN"]);
+  if (!auth.ok) return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+
+  const { searchParams } = new URL(req.url);
+  const id = searchParams.get("id");
+  if (!id) return NextResponse.json({ error: "Missing account id" }, { status: 400 });
+
+  const body = await req.json().catch(() => null);
+  if (!body?.playwright_state || typeof body.playwright_state !== "string") {
+    return NextResponse.json({ error: "playwright_state string required" }, { status: 400 });
+  }
+
+  // Validate it's valid JSON (storageState format)
+  try {
+    JSON.parse(body.playwright_state);
+  } catch {
+    return NextResponse.json({ error: "playwright_state must be valid JSON" }, { status: 400 });
+  }
+
+  await prisma.ebay_accounts.update({
+    where: { id },
+    data: { playwright_state: body.playwright_state }
+  });
+
+  return NextResponse.json({ ok: true });
+}
+
 export async function POST(req: Request) {
   const auth = await requireRole(["ADMIN"]);
   if (!auth.ok || !auth.session?.user) {
