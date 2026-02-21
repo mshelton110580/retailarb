@@ -173,6 +173,20 @@ export default function LotReconciliation({ shipmentId, onDone }: { shipmentId: 
   const isReviewed = shipment.reconciliationStatus === "reviewed" || shipment.reconciliationStatus === "overridden";
   const hasEdits = Object.keys(unitEdits).length > 0;
 
+  // Group units into per-lot buckets when qty > 1
+  // e.g. qty=2, lotSize=6 → [[unit1..unit6], [unit7..unit12]]
+  const lotGroups: LotUnit[][] = (() => {
+    if (!shipment.isLot || shipment.orderQty <= 1 || !shipment.lotSize) return [units];
+    const groups: LotUnit[][] = [];
+    for (let i = 0; i < shipment.orderQty; i++) {
+      groups.push(units.slice(i * shipment.lotSize, (i + 1) * shipment.lotSize));
+    }
+    // Any overflow units (shouldn't happen normally) go in a final group
+    const overflow = units.slice(shipment.orderQty * shipment.lotSize);
+    if (overflow.length > 0) groups.push(overflow);
+    return groups;
+  })();
+
   return (
     <div className="space-y-4">
       {imageUploadUnit && (
@@ -203,9 +217,10 @@ export default function LotReconciliation({ shipmentId, onDone }: { shipmentId: 
               )}
             </div>
             <p className="text-xs text-slate-400 mt-1">
-              qty: {shipment.orderQty} · scanned: {shipment.scannedUnits}
-              {shipment.lotSize ? ` · ${shipment.lotSize} per lot` : ""}
-              {shipment.expectedTotal ? ` · expected: ${shipment.expectedTotal}` : ""}
+              {shipment.isLot && shipment.orderQty > 1 && shipment.lotSize
+                ? `${shipment.orderQty} lots × ${shipment.lotSize} units = ${shipment.orderQty * shipment.lotSize} expected · scanned: ${shipment.scannedUnits}`
+                : `qty: ${shipment.orderQty} · scanned: ${shipment.scannedUnits}${shipment.lotSize ? ` · ${shipment.lotSize} per lot` : ""}${shipment.expectedTotal ? ` · expected: ${shipment.expectedTotal}` : ""}`
+              }
             </p>
             {shipment.missingUnits > 0 && (
               <p className="text-xs text-amber-400 mt-0.5">
@@ -236,7 +251,7 @@ export default function LotReconciliation({ shipmentId, onDone }: { shipmentId: 
         </div>
       )}
 
-      {/* Unit table */}
+      {/* Unit table — grouped by lot when qty > 1 */}
       <div className="rounded-lg border border-slate-800 overflow-hidden">
         <table className="w-full text-xs">
           <thead className="border-b border-slate-800 bg-slate-900">
@@ -250,77 +265,89 @@ export default function LotReconciliation({ shipmentId, onDone }: { shipmentId: 
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800 bg-slate-900/50">
-            {units.map((unit) => {
-              const cond = getUnitValue(unit, "condition") as string;
-              const state = getUnitValue(unit, "inventoryState") as string;
-              const isEdited = !!unitEdits[unit.id];
+            {lotGroups.map((groupUnits, groupIdx) => (
+              <>
+                {lotGroups.length > 1 && (
+                  <tr key={`group-header-${groupIdx}`} className="bg-fuchsia-900/20 border-t border-fuchsia-800/40">
+                    <td colSpan={6} className="px-3 py-1.5 text-xs font-semibold text-fuchsia-400">
+                      Lot {groupIdx + 1} of {lotGroups.length}
+                      <span className="ml-2 text-fuchsia-600 font-normal">({groupUnits.length} unit{groupUnits.length !== 1 ? "s" : ""})</span>
+                    </td>
+                  </tr>
+                )}
+                {groupUnits.map((unit) => {
+                  const cond = getUnitValue(unit, "condition") as string;
+                  const state = getUnitValue(unit, "inventoryState") as string;
+                  const isEdited = !!unitEdits[unit.id];
 
-              return (
-                <tr key={unit.id} className={`transition-colors ${isEdited ? "bg-blue-900/10" : ""}`}>
-                  <td className="px-3 py-2 text-slate-500 font-mono">{unit.unitIndex}</td>
-                  <td className="px-3 py-2">
-                    <p className="text-slate-300 truncate max-w-[200px]" title={unit.title}>{unit.title}</p>
-                    {unit.notes && <p className="text-slate-500 italic truncate">{unit.notes}</p>}
-                  </td>
-                  <td className="px-3 py-2">
-                    <select
-                      value={cond}
-                      onChange={(e) => editUnit(unit.id, "condition", e.target.value)}
-                      className={`w-full rounded px-1.5 py-0.5 text-xs border-0 capitalize cursor-pointer ${conditionColor(cond)}`}
-                    >
-                      {CONDITIONS.map((c) => (
-                        <option key={c} value={c} className="bg-slate-800 text-slate-200 capitalize">{c}</option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="px-3 py-2">
-                    <select
-                      value={state}
-                      onChange={(e) => editUnit(unit.id, "inventoryState", e.target.value)}
-                      className={`w-full rounded px-1.5 py-0.5 text-xs border-0 cursor-pointer bg-slate-800 ${stateColor(state)}`}
-                    >
-                      {STATES.map((s) => (
-                        <option key={s.value} value={s.value} className="bg-slate-800 text-slate-200">{s.label}</option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="px-3 py-2">
-                    {unit.category ? (
-                      <span className="text-indigo-300 truncate block max-w-[120px]" title={unit.category.name}>
-                        {unit.category.name}
-                      </span>
-                    ) : (
-                      <span className="text-slate-600 italic">—</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2">
-                    {unit.isNonGood ? (
-                      <div className="flex items-center gap-1.5">
-                        {unit.imageCount > 0 ? (
-                          <span className="text-green-400">✓ {unit.imageCount}</span>
-                        ) : (
-                          <span className="text-red-400">⚠ 0</span>
-                        )}
-                        <button
-                          onClick={() => setImageUploadUnit({ unitId: unit.id, unitIndex: unit.unitIndex, title: unit.title })}
-                          className="rounded border border-slate-600 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-slate-700"
+                  return (
+                    <tr key={unit.id} className={`transition-colors ${isEdited ? "bg-blue-900/10" : ""}`}>
+                      <td className="px-3 py-2 text-slate-500 font-mono">{unit.unitIndex}</td>
+                      <td className="px-3 py-2">
+                        <p className="text-slate-300 truncate max-w-[200px]" title={unit.title}>{unit.title}</p>
+                        {unit.notes && <p className="text-slate-500 italic truncate">{unit.notes}</p>}
+                      </td>
+                      <td className="px-3 py-2">
+                        <select
+                          value={cond}
+                          onChange={(e) => editUnit(unit.id, "condition", e.target.value)}
+                          className={`w-full rounded px-1.5 py-0.5 text-xs border-0 capitalize cursor-pointer ${conditionColor(cond)}`}
                         >
-                          + Add
-                        </button>
-                        {unit.images.slice(0, 2).map((img) => (
-                          <a key={img.id} href={img.url} target="_blank" rel="noreferrer">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={img.url} alt="" className="w-7 h-7 rounded object-cover ring-1 ring-slate-600" />
-                          </a>
-                        ))}
-                      </div>
-                    ) : (
-                      <span className="text-slate-600 text-[10px]">N/A</span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
+                          {CONDITIONS.map((c) => (
+                            <option key={c} value={c} className="bg-slate-800 text-slate-200 capitalize">{c}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-3 py-2">
+                        <select
+                          value={state}
+                          onChange={(e) => editUnit(unit.id, "inventoryState", e.target.value)}
+                          className={`w-full rounded px-1.5 py-0.5 text-xs border-0 cursor-pointer bg-slate-800 ${stateColor(state)}`}
+                        >
+                          {STATES.map((s) => (
+                            <option key={s.value} value={s.value} className="bg-slate-800 text-slate-200">{s.label}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-3 py-2">
+                        {unit.category ? (
+                          <span className="text-indigo-300 truncate block max-w-[120px]" title={unit.category.name}>
+                            {unit.category.name}
+                          </span>
+                        ) : (
+                          <span className="text-slate-600 italic">—</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
+                        {unit.isNonGood ? (
+                          <div className="flex items-center gap-1.5">
+                            {unit.imageCount > 0 ? (
+                              <span className="text-green-400">✓ {unit.imageCount}</span>
+                            ) : (
+                              <span className="text-red-400">⚠ 0</span>
+                            )}
+                            <button
+                              onClick={() => setImageUploadUnit({ unitId: unit.id, unitIndex: unit.unitIndex, title: unit.title })}
+                              className="rounded border border-slate-600 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-slate-700"
+                            >
+                              + Add
+                            </button>
+                            {unit.images.slice(0, 2).map((img) => (
+                              <a key={img.id} href={img.url} target="_blank" rel="noreferrer">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={img.url} alt="" className="w-7 h-7 rounded object-cover ring-1 ring-slate-600" />
+                              </a>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-slate-600 text-[10px]">N/A</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </>
+            ))}
           </tbody>
         </table>
       </div>
