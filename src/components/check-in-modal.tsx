@@ -338,15 +338,16 @@ export default function CheckInModal({
       <div className="w-full max-w-md rounded-xl border border-slate-700 bg-slate-900 shadow-2xl overflow-hidden">
 
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
-          <div>
-            <h3 className="text-sm font-semibold text-slate-200">{headerTitle}</h3>
-            <p className="text-xs text-slate-500 truncate max-w-[280px]" title={itemTitle}>
-              {orderId} · {itemTitle}
-            </p>
+        <div className="flex items-start justify-between px-4 py-3 border-b border-slate-800 gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold text-slate-200">{headerTitle}</h3>
+              <span className="text-xs text-slate-600">{orderId}</span>
+            </div>
+            <p className="text-xs text-slate-400 mt-0.5 leading-snug">{itemTitle}</p>
           </div>
           {step !== "scanning" && (
-            <button onClick={onClose} className="rounded border border-slate-700 px-2.5 py-1 text-xs text-slate-400 hover:bg-slate-800">
+            <button onClick={onClose} className="flex-shrink-0 rounded border border-slate-700 px-2.5 py-1 text-xs text-slate-400 hover:bg-slate-800">
               Cancel
             </button>
           )}
