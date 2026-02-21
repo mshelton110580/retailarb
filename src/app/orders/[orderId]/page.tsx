@@ -364,7 +364,7 @@ export default async function OrderDetailPage({ params }: { params: { orderId: s
                     ? `https://www.ebay.com/rtn/Return/ReturnViewSelectedItem?itemId=${item.item_id}&transactionId=${item.transaction_id}`
                     : `https://order.ebay.com/ord/show?orderId=${order.order_id}`;
                   const inrUrl = item.transaction_id
-                    ? `https://www.ebay.com/rtn/INR/INRPurchaseHistory?itemId=${item.item_id}&transactionId=${item.transaction_id}`
+                    ? `https://www.ebay.com/ItemNotReceived/CreateRequest?itemId=${item.item_id}&transactionId=${item.transaction_id}`
                     : `https://order.ebay.com/ord/show?orderId=${order.order_id}`;
                   return (
                     <div key={item.id} className="flex flex-wrap items-center gap-2">

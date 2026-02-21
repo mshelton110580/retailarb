@@ -170,7 +170,7 @@ function buildReturnUrl(orderId: string, items: OrderItem[]): string {
 function buildInrUrl(orderId: string, items: OrderItem[]): string {
   const first = items[0];
   if (first?.transactionId) {
-    return `https://www.ebay.com/rtn/INR/INRPurchaseHistory?itemId=${first.itemId}&transactionId=${first.transactionId}`;
+    return `https://www.ebay.com/ItemNotReceived/CreateRequest?itemId=${first.itemId}&transactionId=${first.transactionId}`;
   }
   return `https://order.ebay.com/ord/show?orderId=${orderId}`;
 }
