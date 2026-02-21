@@ -321,7 +321,7 @@ function ColumnPicker({
 // ── Default column widths (px) — "item" is flex-1 and has no fixed width ────
 
 const DEFAULT_COL_WIDTHS: Partial<Record<ColKey, number>> = {
-  orderId:    112,
+  orderId:    160,
   date:       96,
   account:    96,
   itemId:     112,
@@ -761,7 +761,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
         return (
           <Link href={`/orders/${order.orderId}`} className="text-[10px] font-mono text-blue-400 hover:underline"
             onClick={e => e.stopPropagation()} title={order.orderId}>
-            {order.orderId.slice(-8)}
+            {order.orderId}
           </Link>
         );
       case "date":
