@@ -816,6 +816,7 @@ export default async function InventoryPage({
                             unit.inventory_state === 'to_be_returned' ? 'text-red-400' :
                             unit.inventory_state === 'parts_repair' ? 'text-orange-400' :
                             unit.inventory_state === 'returned' ? 'text-slate-400' :
+                            unit.inventory_state === 'missing' ? 'text-orange-400' :
                             'text-slate-300';
                           return (
                             <div key={idx} className="space-y-1">

@@ -211,11 +211,14 @@ export async function POST(req: Request) {
         } else if (isClosed) {
           // Closed return, no return tracking — we kept the item
           if (existingReturn.refund_issued_date || existingReturn.actual_refund) {
-            inventoryState = isBadCondition ? "parts_repair" : "on_hand";
+            // Got a refund and kept it — parts_repair means "compensated, can scrap/part out"
+            inventoryState = "parts_repair";
+          } else {
+            // Closed with no refund and no shipping — still needs action
+            inventoryState = "to_be_returned";
           }
-          // Closed with no refund and no shipping — leave as condition-based state
         } else {
-          // Open return, not yet shipped — need to send back
+          // Open return filed, not yet shipped — need to send back
           inventoryState = "to_be_returned";
         }
       }

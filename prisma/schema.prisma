@@ -213,7 +213,7 @@ model received_units {
   order_item_id      String?
   unit_index         Int
   condition_status   String
-  inventory_state    String @default("on_hand")  // on_hand, to_be_returned, parts_repair, returned
+  inventory_state    String @default("on_hand")  // on_hand, to_be_returned, parts_repair, returned, missing
   category_id        String?
   received_at        DateTime @default(now())
   scanned_by_user_id String

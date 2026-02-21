@@ -12,7 +12,7 @@ const schema = z.object({
  * POST /api/reconciliation/[shipmentId]/add-unit
  *
  * Adds one or more "missing" units to a lot.  Each added unit is created with
- * condition_status = "missing" and inventory_state = "parts_repair" so they
+ * condition_status = "missing" and inventory_state = "missing" so they
  * appear in the unit table and can be edited during reconciliation.
  *
  * Also increments shipment.scanned_units and resets reconciliation_status to
@@ -62,7 +62,7 @@ export async function POST(
         order_item_id: targetItem.id,
         unit_index: newUnitIndex,
         condition_status: "missing",
-        inventory_state: "parts_repair",
+        inventory_state: "missing",
         scanned_by_user_id: auth.session!.user!.id,
         notes: notes?.trim() || "Added as missing unit during lot reconciliation",
       },

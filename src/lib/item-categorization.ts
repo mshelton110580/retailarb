@@ -471,6 +471,13 @@ export async function findOrCreateCategory(
 
 /**
  * Compute inventory state based on condition status and return status.
+ *
+ * States:
+ *   on_hand        — good condition, no return issue, physically on-hand
+ *   to_be_returned — bad condition (needs return filed) OR open return filed not yet shipped
+ *   parts_repair   — closed return + refund received, item kept (compensated, can part/scrap)
+ *   returned       — physically shipped or delivered back to seller
+ *   missing        — unit was never physically received (lot short-ship); set only by add-unit
  */
 export function computeInventoryState(
   conditionStatus: string,
@@ -482,19 +489,20 @@ export function computeInventoryState(
     return "returned";
   }
 
+  // Closed return with refund received — we kept the item and were compensated
   if (hasRefundWithoutReturn) {
     return "parts_repair";
   }
 
+  // Open return filed, or bad condition with no return yet — needs return action
   if (hasReturnFiled) {
     return "to_be_returned";
   }
 
-  // Anything that isn't a known-good condition goes to parts/repair
-  // (to_be_returned only applies when there is an actual return filed)
   const goodConditions = new Set(["good", "new", "like_new", "acceptable", "excellent"]);
   if (!goodConditions.has(conditionStatus?.toLowerCase() ?? "")) {
-    return "parts_repair";
+    // Bad condition, no return filed yet — flag for return action
+    return "to_be_returned";
   }
 
   return "on_hand";

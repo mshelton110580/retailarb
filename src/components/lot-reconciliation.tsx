@@ -45,6 +45,7 @@ const STATES = [
   { value: "to_be_returned", label: "To Return" },
   { value: "parts_repair", label: "Parts/Repair" },
   { value: "returned", label: "Returned" },
+  { value: "missing", label: "Missing" },
 ];
 const CONDITIONS = [
   "good", "new", "like_new", "acceptable", "excellent",
@@ -62,6 +63,7 @@ function stateColor(s: string) {
   if (s === "on_hand") return "text-green-400";
   if (s === "to_be_returned") return "text-yellow-400";
   if (s === "parts_repair") return "text-red-400";
+  if (s === "missing") return "text-orange-400";
   return "text-slate-500";
 }
 

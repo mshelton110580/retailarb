@@ -35,7 +35,7 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "unitIds required" }, { status: 400 });
   }
 
-  const VALID_STATES = ["on_hand", "to_be_returned", "parts_repair", "returned"];
+  const VALID_STATES = ["on_hand", "to_be_returned", "parts_repair", "returned", "missing"];
 
   const data: Record<string, any> = {};
 

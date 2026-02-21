@@ -25,6 +25,7 @@ type ProductRowProps = {
     toBeReturned: number;
     partsRepair: number;
     returned: number;
+    missing: number;
     totalValue: number;
     onHandValue: number;
     toBeReturnedValue: number;
@@ -43,6 +44,8 @@ function formatInventoryState(state: string): string {
       return "Parts/Repair";
     case "returned":
       return "Returned";
+    case "missing":
+      return "Missing";
     default:
       return state;
   }
@@ -58,6 +61,8 @@ function getStateColor(state: string): string {
       return "text-red-400";
     case "returned":
       return "text-slate-400";
+    case "missing":
+      return "text-orange-400";
     default:
       return "text-slate-400";
   }
