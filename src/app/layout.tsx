@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import Link from "next/link";
+import SignOutButton from "@/components/sign-out-button";
 
 export const metadata = {
   title: "ArbDesk",
@@ -37,6 +38,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
                     <Link href="/inbound">Inbound</Link>
                     <Link href="/settings">Settings</Link>
                     <Link href="/admin/users">Admin</Link>
+                    <SignOutButton />
                   </>
                 ) : (
                   <Link href="/login">Login</Link>
