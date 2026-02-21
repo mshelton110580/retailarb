@@ -20,6 +20,7 @@ type BucketKey =
   | "needs_return"
   | "missing_units"
   | "check_quantity"
+  | "reviewed_lots"
   | "ebay_returns"
   | "ebay_inr"
   | "contact_seller"
@@ -54,7 +55,9 @@ const cardConfig: Array<{
   { key: "needs_return", label: "Needs Return", color: "text-red-400", border: "border-red-600", description: "Checked in with bad condition", section: "action" },
   { key: "contact_seller", label: "Contact Seller", color: "text-sky-400", border: "border-sky-600", description: "Keeping item but condition notes were recorded — contact seller about the issue (excludes orders with returns filed)", section: "action" },
   { key: "missing_units", label: "Missing Units", color: "text-orange-400", border: "border-orange-600", description: "Scanned fewer units than expected quantity", section: "action" },
-  { key: "check_quantity", label: "Check Quantity (Lots)", color: "text-fuchsia-400", border: "border-fuchsia-600", description: "More units scanned than listed qty — verify lot count", section: "action" },
+  { key: "check_quantity", label: "Check Quantity (Lots)", color: "text-fuchsia-400", border: "border-fuchsia-600", description: "Lots pending review — verify lot count", section: "action" },
+  // Completed actions
+  { key: "reviewed_lots", label: "Reviewed Lots", color: "text-green-400", border: "border-green-600", description: "Lots that have been reviewed and reconciled", section: "completed" },
   // eBay Cases
   { key: "ebay_returns", label: "eBay Returns", color: "text-red-400", border: "border-red-600", description: "Return requests synced from eBay", section: "cases", linkTo: "/returns" },
   { key: "ebay_inr", label: "eBay INR Cases", color: "text-amber-400", border: "border-amber-600", description: "Item Not Received inquiries from eBay", section: "cases", linkTo: "/inr" },
@@ -356,6 +359,7 @@ export default async function InventoryPage({
     return_refunded: [],
     missing_units: [],
     check_quantity: [],
+    reviewed_lots: [],
     ebay_returns: [],
     ebay_inr: [],
   };
@@ -457,9 +461,14 @@ export default async function InventoryPage({
       buckets.missing_units.push(shipment);
     }
 
-    // Check quantity (lots)
+    // Check quantity (lots) — split by review status
     if (shipment.is_lot || shipment.scan_status === "check_quantity") {
-      buckets.check_quantity.push(shipment);
+      const reconcStatus = (shipment as any).reconciliation_status ?? "pending";
+      if (reconcStatus === "reviewed" || reconcStatus === "overridden") {
+        buckets.reviewed_lots.push(shipment);
+      } else {
+        buckets.check_quantity.push(shipment);
+      }
     }
   }
 
@@ -562,6 +571,7 @@ export default async function InventoryPage({
   const primaryCards = cardConfig.filter((c) => c.section === "primary");
   const warehouseCards = cardConfig.filter((c) => c.section === "warehouse");
   const actionCards = cardConfig.filter((c) => c.section === "action");
+  const completedCards = cardConfig.filter((c) => c.section === "completed");
   const caseCards = cardConfig.filter((c) => c.section === "cases");
   const returnTrackingCards = cardConfig.filter((c) => c.section === "return_tracking");
 
@@ -648,6 +658,16 @@ export default async function InventoryPage({
         </div>
       </div>
 
+      {/* Completed Actions */}
+      {completedCards.some((c) => buckets[c.key as BucketKey].length > 0) && (
+        <div>
+          <h2 className="mb-2 text-sm font-medium text-slate-400 uppercase tracking-wider">Completed Actions</h2>
+          <div className="grid gap-4 md:grid-cols-4">
+            {renderCards(completedCards)}
+          </div>
+        </div>
+      )}
+
       {/* eBay Cases */}
       <div>
         <h2 className="mb-2 text-sm font-medium text-slate-400 uppercase tracking-wider">eBay Cases</h2>
@@ -674,8 +694,8 @@ export default async function InventoryPage({
             {cardConfig.find((c) => c.key === activeFilter)?.label ?? activeFilter} ({filteredItems.length})
           </h2>
 
-          {/* Lot reconciliation — replaces generic drilldown for check_quantity */}
-          {activeFilter === "check_quantity" ? (
+          {/* Lot reconciliation — replaces generic drilldown for check_quantity and reviewed_lots */}
+          {(activeFilter === "check_quantity" || activeFilter === "reviewed_lots") ? (
             <CheckQuantityPanel
               shipments={filteredItems.map((s) => ({
                 id: s.id,
