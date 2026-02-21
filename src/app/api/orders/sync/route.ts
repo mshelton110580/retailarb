@@ -75,7 +75,6 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
             update: {
               order_status: order.orderStatus,
               totals: { total: order.total },
-              shipping_cost: shippingNum,
               tax_amount: taxNum,
               ship_to_city: order.shippingAddress?.city ?? null,
               ship_to_state: order.shippingAddress?.state ?? null,
@@ -97,18 +96,6 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
               order_url: `https://order.ebay.com/ord/show?orderId=${String(order.orderId)}`,
             }
           });
-
-          // Fix original_total if it was set before shipping data was available.
-          // Only correct it when shipping_cost > 0 and original_total currently equals subtotal alone.
-          if (shippingNum > 0) {
-            await prisma.orders.updateMany({
-              where: {
-                order_id: String(order.orderId),
-                original_total: subtotalNum,
-              },
-              data: { original_total: originalTotal },
-            });
-          }
 
           // Upsert order items and targets
           for (const tx of order.transactions) {
