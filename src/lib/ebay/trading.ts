@@ -28,6 +28,8 @@ export type GetOrdersResult = {
     taxAmount: string;
     transactions: Array<{
       itemId: string;
+      transactionId: string | undefined;
+      orderLineItemId: string | undefined;
       title: string;
       quantity: number;
       transactionPrice: string;
@@ -91,6 +93,8 @@ function parseOrdersFromResponse(ordersRaw: any): GetOrdersResult["orders"] {
 
       return {
         itemId: transaction?.Item?.ItemID ?? "",
+        transactionId: transaction?.TransactionID ? String(transaction.TransactionID) : undefined,
+        orderLineItemId: transaction?.OrderLineItemID ? String(transaction.OrderLineItemID) : undefined,
         title: transaction?.Item?.Title ?? "",
         quantity: Number(transaction?.QuantityPurchased ?? 0),
         transactionPrice: extractValue(transaction?.TransactionPrice) ?? "0",

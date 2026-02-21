@@ -147,12 +147,16 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
                 qty: Number(tx.quantity),
                 transaction_price: Number(tx.transactionPrice),
                 shipping_cost: tx.shippingServiceCost ? Number(tx.shippingServiceCost) : null,
-                purchase_date: new Date(order.createdTime)
+                purchase_date: new Date(order.createdTime),
+                transaction_id: tx.transactionId ?? null,
+                order_line_item_id: tx.orderLineItemId ?? null,
               },
               create: {
                 id: `${String(order.orderId)}-${itemId}`,
                 order_id: String(order.orderId),
                 item_id: itemId,
+                transaction_id: tx.transactionId ?? null,
+                order_line_item_id: tx.orderLineItemId ?? null,
                 title: String(tx.title),
                 qty: Number(tx.quantity),
                 transaction_price: Number(tx.transactionPrice),

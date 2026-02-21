@@ -145,18 +145,20 @@ model orders {
 }
 
 model order_items {
-  id               String  @id @default(cuid())
-  order_id         String
-  item_id          String
-  title            String
-  qty              Int
-  transaction_price Decimal @db.Decimal(12, 2)
-  shipping_cost    Decimal? @db.Decimal(12, 2)
-  final_price      Decimal? @db.Decimal(12, 2)
-  purchase_date    DateTime
-  order            orders @relation(fields: [order_id], references: [order_id])
-  target           targets? @relation(fields: [item_id], references: [item_id])
-  received_units   received_units[]
+  id                  String  @id @default(cuid())
+  order_id            String
+  item_id             String
+  transaction_id      String?  // eBay TransactionID — unique per order line item
+  order_line_item_id  String?  // eBay OrderLineItemID — stable line-item identifier
+  title               String
+  qty                 Int
+  transaction_price   Decimal @db.Decimal(12, 2)
+  shipping_cost       Decimal? @db.Decimal(12, 2)
+  final_price         Decimal? @db.Decimal(12, 2)
+  purchase_date       DateTime
+  order               orders @relation(fields: [order_id], references: [order_id])
+  target              targets? @relation(fields: [item_id], references: [item_id])
+  received_units      received_units[]
 }
 
 model shipments {
