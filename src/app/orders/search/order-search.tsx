@@ -490,13 +490,17 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
     orderId: string;
     trackingNumber: string | null;
     itemTitle: string;
+    totalQty: number;
+    alreadyScanned: number;
   } | null>(null);
 
   function triggerCheckIn(order: Order, e: React.MouseEvent) {
     e.stopPropagation();
     const tracking = order.shipment?.trackingNumbers?.[0]?.number ?? null;
     const title = order.items[0]?.title ?? order.orderId;
-    setCheckInTarget({ orderId: order.orderId, trackingNumber: tracking, itemTitle: title });
+    const totalQty = order.items.reduce((s, i) => s + i.qty, 0) || 1;
+    const alreadyScanned = order.shipment?.scannedUnits ?? 0;
+    setCheckInTarget({ orderId: order.orderId, trackingNumber: tracking, itemTitle: title, totalQty, alreadyScanned });
   }
 
   const trackingRef = useRef<HTMLInputElement>(null);
@@ -1482,6 +1486,8 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
           orderId={checkInTarget.orderId}
           trackingNumber={checkInTarget.trackingNumber}
           itemTitle={checkInTarget.itemTitle}
+          totalQty={checkInTarget.totalQty}
+          alreadyScanned={checkInTarget.alreadyScanned}
           onClose={() => setCheckInTarget(null)}
           onSuccess={() => {
             setCheckInTarget(null);
