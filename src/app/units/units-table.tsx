@@ -105,7 +105,6 @@ export default function UnitsTable({ categories }: { categories: Category[] }) {
 
   // Bulk edit
   const [bulkPanel, setBulkPanel] = useState(false);
-  const [bulkState, setBulkState] = useState("");
   const [bulkCondition, setBulkCondition] = useState("");
   const [bulkCategoryId, setBulkCategoryId] = useState("__unchanged__");
   const [bulkLoading, setBulkLoading] = useState(false);
@@ -257,7 +256,6 @@ export default function UnitsTable({ categories }: { categories: Category[] }) {
   async function applyBulkEdit() {
     if (selected.size === 0) return;
     const updates: Record<string, any> = {};
-    if (bulkState) updates.state = bulkState;
     if (bulkCondition) updates.condition = bulkCondition;
     if (bulkCategoryId !== "__unchanged__") {
       updates.categoryId = bulkCategoryId === "__none__" ? null : bulkCategoryId;
@@ -278,7 +276,6 @@ export default function UnitsTable({ categories }: { categories: Category[] }) {
       if (res.ok) {
         setBulkMessage({ type: "success", text: `Updated ${data.updated} unit(s).` });
         setSelected(new Set());
-        setBulkState("");
         setBulkCondition("");
         setBulkCategoryId("__unchanged__");
         fetchUnits(true);
@@ -503,17 +500,10 @@ export default function UnitsTable({ categories }: { categories: Category[] }) {
                   {bulkMessage.text}
                 </div>
               )}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Set State</label>
-                  <select value={bulkState} onChange={e => setBulkState(e.target.value)}
-                    className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300">
-                    <option value="">— no change —</option>
-                    {STATES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-                  </select>
-                </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-slate-400 mb-1">Set Condition</label>
+                  <p className="text-xs text-slate-500 mb-1">State updates automatically based on condition.</p>
                   <select value={bulkCondition} onChange={e => setBulkCondition(e.target.value)}
                     className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300">
                     <option value="">— no change —</option>
