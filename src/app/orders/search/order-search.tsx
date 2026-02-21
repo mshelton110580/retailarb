@@ -688,7 +688,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   // ── Column resize ─────────────────────────────────────────────────────────
 
   function getCellStyle(key: ColKey): React.CSSProperties {
-    if (key === "item") return { flex: 1, minWidth: 0, overflow: "hidden" };
+    if (key === "item" && !colWidths[key]) return { flex: 1, minWidth: 0, overflow: "hidden" };
     const w = colWidths[key] ?? DEFAULT_COL_WIDTHS[key] ?? 80;
     return { width: w, flexShrink: 0, overflow: "hidden" };
   }
@@ -1114,21 +1114,19 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
               <span className="truncate">{c.label}</span>
               {getSortIcon(c)}
             </button>
-            {c.key !== "item" && (
-              <span
-                onMouseDown={e => startResize(e, c.key)}
-                onDoubleClick={() => setColWidths(prev => {
-                  const next = { ...prev };
-                  delete next[c.key];
-                  return next;
-                })}
-                title="Drag to resize · double-click to reset"
-                className="absolute right-0 top-0 h-full w-2 cursor-col-resize flex items-center justify-center group"
-                style={{ userSelect: "none" }}
-              >
-                <span className="w-px h-4 bg-slate-700 group-hover:bg-blue-500 transition-colors" />
-              </span>
-            )}
+            <span
+              onMouseDown={e => startResize(e, c.key)}
+              onDoubleClick={() => setColWidths(prev => {
+                const next = { ...prev };
+                delete next[c.key];
+                return next;
+              })}
+              title="Drag to resize · double-click to reset"
+              className="absolute right-0 top-0 h-full w-2 cursor-col-resize flex items-center justify-center group"
+              style={{ userSelect: "none" }}
+            >
+              <span className="w-px h-4 bg-slate-700 group-hover:bg-blue-500 transition-colors" />
+            </span>
           </div>
         ))}
         <span className="flex-shrink-0 w-3" />
