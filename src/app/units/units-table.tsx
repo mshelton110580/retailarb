@@ -503,7 +503,7 @@ export default function UnitsTable({ categories }: { categories: Category[] }) {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-slate-400 mb-1">Set Condition</label>
-                  <p className="text-xs text-slate-500 mb-1">State is managed by receiving, reconciliation, and return sync.</p>
+                  <p className="text-xs text-slate-500 mb-1">State recalculates from condition + return status.</p>
                   <select value={bulkCondition} onChange={e => setBulkCondition(e.target.value)}
                     className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300">
                     <option value="">— no change —</option>
