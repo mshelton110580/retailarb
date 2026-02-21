@@ -2,6 +2,8 @@
 const DEFAULT_EXPECTED_TRANSIT_DAYS = 7;
 // When an order has tracking but no delivery window, consider it overdue after this many days from shipment/purchase
 const DEFAULT_TRACKED_OVERDUE_DAYS = 3;
+// Days after shippedTime to escalate an untracked "shipped" order to not_received
+const DEFAULT_UNTRACKED_SHIPPED_OVERDUE_DAYS = 14;
 
 export function deriveShippingStatus(input: {
   actualDelivery?: string | null;
@@ -68,14 +70,22 @@ export function deriveShippingStatus(input: {
     return "shipped";
   }
 
-  // No tracking: check if past expected date — item was never shipped
-  if (!input.hasTracking && !input.shippedTime) {
-    if (expectedDate && now > expectedDate) {
+  // No tracking: check if past expected date — item was never shipped or overdue
+  if (!input.hasTracking) {
+    if (!input.shippedTime && expectedDate && now > expectedDate) {
       return "not_received";
+    }
+    // Seller marked shipped but never provided tracking — escalate after grace period
+    if (input.shippedTime) {
+      const overdueDate = new Date(input.shippedTime);
+      overdueDate.setDate(overdueDate.getDate() + DEFAULT_UNTRACKED_SHIPPED_OVERDUE_DAYS);
+      if (now > overdueDate) {
+        return "not_received";
+      }
     }
   }
 
-  // Shipped time but no tracking
+  // Shipped time but no tracking and not yet overdue
   if (input.shippedTime || input.hasScheduledWindow) {
     return "shipped";
   }
