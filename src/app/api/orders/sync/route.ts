@@ -82,11 +82,6 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
               ship_to_city: order.shippingAddress?.city ?? null,
               ship_to_state: order.shippingAddress?.state ?? null,
               ship_to_postal: order.shippingAddress?.postalCode ?? null,
-              // Update shipping_cost and original_total only when eBay returns a real
-              // shipping value (> 0). This handles completed orders where eBay initially
-              // returns 0 but later syncs return the actual cost.
-              // Prisma does not support conditional field updates in upsert directly,
-              // so we handle the shipping upgrade in a separate updateMany below.
             },
             create: {
               order_id: String(order.orderId),
@@ -104,17 +99,6 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
               order_url: `https://order.ebay.com/ord/show?orderId=${String(order.orderId)}`,
             }
           });
-
-          // If eBay returned a real shipping cost this sync, upgrade shipping_cost and
-          // original_total on any row where shipping was previously stored as 0.
-          // This is not a backfill — it's the normal update path for completed orders
-          // where eBay's API returns 0 on early syncs and the real value on later syncs.
-          if (shippingNum > 0) {
-            await prisma.orders.updateMany({
-              where: { order_id: String(order.orderId), shipping_cost: 0 },
-              data: { shipping_cost: shippingNum, original_total: originalTotal },
-            });
-          }
 
           // Upsert order items and targets
           for (const tx of order.transactions) {
