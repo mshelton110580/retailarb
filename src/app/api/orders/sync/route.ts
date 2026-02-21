@@ -97,6 +97,17 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
             }
           });
 
+          // Backfill original_total for orders created before tax was included in the formula.
+          // Only fires when: tax > 0, AND stored original_total == subtotal + shipping (no tax).
+          // Cannot affect orders already correctly storing tax, or orders with no tax.
+          if (taxNum > 0) {
+            const preTaxTotal = parseFloat((subtotalNum + shippingNum).toFixed(2));
+            await prisma.orders.updateMany({
+              where: { order_id: String(order.orderId), original_total: preTaxTotal },
+              data: { original_total: originalTotal },
+            });
+          }
+
           // Upsert order items and targets
           for (const tx of order.transactions) {
             const itemId = String(tx.itemId);
