@@ -7,6 +7,7 @@ type UnitDetail = {
   id: string;
   order_id: string;
   item_id: string;
+  title: string | null;
   unit_index: number;
   condition_status: string;
   inventory_state: string;
@@ -154,6 +155,11 @@ export default function ProductRow({ product, units }: ProductRowProps) {
                     key={unit.id}
                     className="bg-slate-900/50 rounded border border-slate-700 p-3 text-xs"
                   >
+                    {unit.title && (
+                      <div className="text-slate-300 font-medium mb-2 leading-snug">
+                        {unit.title}
+                      </div>
+                    )}
                     <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                       <div>
                         <div className="text-slate-500 mb-1">Order</div>

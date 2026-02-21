@@ -21,6 +21,7 @@ type UnitDetail = {
   id: string;
   order_id: string;
   item_id: string;
+  title: string | null;
   unit_index: number;
   condition_status: string;
   inventory_state: string;
@@ -50,6 +51,7 @@ export default async function OnHandPage() {
         select: {
           id: true,
           item_id: true,
+          title: true,
           transaction_price: true,
           shipping_cost: true,
           qty: true
@@ -384,6 +386,7 @@ export default async function OnHandPage() {
       id: unit.id,
       order_id: unit.order?.order_id || "Unknown",
       item_id: unit.item_id,
+      title: unit.order_item?.title ?? null,
       unit_index: unit.unit_index,
       condition_status: unit.condition_status,
       inventory_state: unit.inventory_state,
