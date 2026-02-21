@@ -59,11 +59,24 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
           // 3. Order-level ShippingServiceCost (already summed across svc entries in trading.ts)
           const orderLevelShipping = parseFloat(order.shippingCost);
 
-          const shippingNum = txActualShippingSum > 0
+          const ebayShippingNum = txActualShippingSum > 0
             ? parseFloat(txActualShippingSum.toFixed(2))
             : txServiceShippingSum > 0
               ? parseFloat(txServiceShippingSum.toFixed(2))
               : orderLevelShipping;
+
+          // 4. Fallback: use the already-stored shipping_cost if eBay returns 0.
+          //    eBay strips shipping details from completed orders, so older syncs may get 0
+          //    even when the real cost is known. Never downgrade a known value to 0.
+          const existingOrder = ebayShippingNum === 0
+            ? await prisma.orders.findUnique({
+                where: { order_id: String(order.orderId) },
+                select: { shipping_cost: true }
+              })
+            : null;
+          const shippingNum = ebayShippingNum > 0
+            ? ebayShippingNum
+            : parseFloat((existingOrder?.shipping_cost ?? 0).toString());
 
           const taxNum = parseFloat(parseFloat(order.taxAmount).toFixed(2));
           // original_total = subtotal + shipping + tax — set on CREATE only, never updated.
@@ -97,16 +110,22 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
             }
           });
 
-          // Backfill original_total for orders created before tax was included in the formula.
-          // Only fires when: tax > 0, AND stored original_total == subtotal + shipping (no tax).
-          // Cannot affect orders already correctly storing tax, or orders with no tax.
-          if (taxNum > 0) {
-            const preTaxTotal = parseFloat((subtotalNum + shippingNum).toFixed(2));
-            await prisma.orders.updateMany({
-              where: { order_id: String(order.orderId), original_total: preTaxTotal },
-              data: { original_total: originalTotal },
-            });
-          }
+          // Backfill original_total when it was stored incorrectly at create time.
+          // shippingNum is now always the best known value (eBay or DB fallback), so
+          // originalTotal is always the correct full value here.
+          // Only update rows where original_total is a known-wrong partial value:
+          //   - subtotal only (shipping was missing at create time)
+          //   - subtotal + shipping (tax was missing at create time)
+          // This condition cannot match a row already storing the correct full value.
+          const partialNoShipping = subtotalNum;
+          const partialNoTax = parseFloat((subtotalNum + shippingNum).toFixed(2));
+          await prisma.orders.updateMany({
+            where: {
+              order_id: String(order.orderId),
+              original_total: { in: [partialNoShipping, partialNoTax] }
+            },
+            data: { original_total: originalTotal },
+          });
 
           // Upsert order items and targets
           for (const tx of order.transactions) {
