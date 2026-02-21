@@ -61,6 +61,8 @@ export default function CheckInModal({
   const [condition, setCondition] = useState("good");
   const [notes, setNotes] = useState("");
   const [perUnit, setPerUnit] = useState(false); // step through each unit individually
+  const [isLotMode, setIsLotMode] = useState(false);
+  const [lotCount, setLotCount] = useState(totalQty > 1 ? totalQty : 2);
 
   // Progress state (used in scanning / per-unit modes)
   const [currentUnit, setCurrentUnit] = useState(alreadyScanned + 1); // 1-based index of unit being scanned
@@ -112,10 +114,11 @@ export default function CheckInModal({
   }
 
   // ── "All same condition" flow ─────────────────────────────────────────────
-  // Calls scan API `remaining` times sequentially with the same condition.
+  // Calls scan API `effectiveRemaining` times sequentially with the same condition.
 
   async function submitAll() {
     if (!trackingNumber) { setError("No tracking number for this shipment."); return; }
+    const effectiveRemaining = isLotMode ? Math.max(lotCount - alreadyScanned, 1) : remaining;
     setLoading(true);
     setError(null);
     setStep("scanning");
@@ -124,7 +127,7 @@ export default function CheckInModal({
     const photosNeeded: Array<{ unitId: string; unitIndex: number; title: string }> = [];
     let lotDetected = false;
 
-    for (let i = 0; i < remaining; i++) {
+    for (let i = 0; i < effectiveRemaining; i++) {
       setCurrentUnit(alreadyScanned + i + 1);
       const result = await doScan(condition, notes.trim() || undefined);
       if (!result) { setLoading(false); setStep("form"); return; }
@@ -182,6 +185,7 @@ export default function CheckInModal({
 
   async function submitUnit() {
     if (!trackingNumber) { setError("No tracking number for this shipment."); return; }
+    const effectiveRemaining = isLotMode ? Math.max(lotCount - alreadyScanned, 1) : remaining;
     setLoading(true);
     setError(null);
 
@@ -196,7 +200,7 @@ export default function CheckInModal({
     const isBad = !GOOD_CONDITIONS.has(unitCondition);
 
     const afterThis = () => {
-      const moreToGo = newScanned < remaining;
+      const moreToGo = newScanned < effectiveRemaining;
       if (moreToGo) {
         setCurrentUnit(alreadyScanned + newScanned + 1);
         setUnitCondition("good");
@@ -288,12 +292,13 @@ export default function CheckInModal({
   // ── Photo queue drain ─────────────────────────────────────────────────────
 
   function onPhotoClosed() {
+    const effectiveRemaining = isLotMode ? Math.max(lotCount - alreadyScanned, 1) : remaining;
     const nextIndex = photoQueueIndex + 1;
     if (nextIndex < photoQueue.length) {
       setPhotoQueueIndex(nextIndex);
     } else {
       // All photos done
-      if (perUnit && scannedSoFar < remaining) {
+      if (perUnit && scannedSoFar < effectiveRemaining) {
         setCurrentUnit(alreadyScanned + scannedSoFar + 1);
         setUnitCondition("good");
         setUnitNotes("");
@@ -319,10 +324,13 @@ export default function CheckInModal({
     );
   }
 
+  const effectiveTotal = isLotMode ? lotCount : totalQty;
+  const effectiveRemaining = isLotMode ? Math.max(lotCount - alreadyScanned, 1) : remaining;
+
   const headerTitle =
     step === "category" ? "Select Category" :
     step === "scanning" ? "Checking In…" :
-    step === "unit_form" ? `Unit ${currentUnit} of ${totalQty}` :
+    step === "unit_form" ? `Unit ${currentUnit} of ${effectiveTotal}` :
     "Check In";
 
   return (
@@ -353,10 +361,37 @@ export default function CheckInModal({
               </div>
             )}
 
-            {remaining > 1 && (
+            {effectiveRemaining > 1 && !isLotMode && (
               <div className="rounded-lg bg-slate-800 border border-slate-700 p-3 text-xs text-slate-400">
                 This order has <span className="text-slate-200 font-medium">{totalQty} units</span>
-                {alreadyScanned > 0 && <span> ({alreadyScanned} already checked in, {remaining} remaining)</span>}.
+                {alreadyScanned > 0 && <span> ({alreadyScanned} already checked in, {effectiveRemaining} remaining)</span>}.
+              </div>
+            )}
+
+            {/* Lot toggle */}
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+                <input type="checkbox" checked={isLotMode} onChange={e => setIsLotMode(e.target.checked)}
+                  className="accent-amber-500" />
+                This is a lot (received more units than ordered)
+              </label>
+            </div>
+
+            {isLotMode && (
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-slate-400">
+                  Total units received
+                </label>
+                <input
+                  type="number"
+                  min={totalQty + 1}
+                  value={lotCount}
+                  onChange={e => setLotCount(Math.max(totalQty + 1, parseInt(e.target.value) || totalQty + 1))}
+                  className="w-full rounded border border-amber-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-amber-500"
+                />
+                <p className="mt-1 text-xs text-slate-600">
+                  Order qty: {totalQty} · Lot will scan {lotCount - alreadyScanned} units · server detects lot at unit {totalQty + 1}
+                </p>
               </div>
             )}
 
@@ -373,19 +408,19 @@ export default function CheckInModal({
               <input type="text" value={notes} onChange={e => setNotes(e.target.value)}
                 placeholder="e.g. cracked corner, missing cable"
                 className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-blue-600"
-                onKeyDown={e => { if (e.key === "Enter" && remaining <= 1) submitAll(); }} />
+                onKeyDown={e => { if (e.key === "Enter" && effectiveRemaining <= 1) submitAll(); }} />
             </div>
 
             {error && (
               <div className="rounded-lg bg-red-900/30 border border-red-700 p-3 text-sm text-red-300">{error}</div>
             )}
 
-            <div className={`grid gap-2 ${remaining > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
+            <div className={`grid gap-2 ${effectiveRemaining > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
               <button onClick={submitAll} disabled={loading || !trackingNumber}
                 className="rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 py-2.5 text-sm font-semibold text-white transition-colors">
-                {loading ? "Checking in…" : remaining > 1 ? `All ${remaining} — Same Condition` : "Check In"}
+                {loading ? "Checking in…" : effectiveRemaining > 1 ? `All ${effectiveRemaining} — Same Condition` : "Check In"}
               </button>
-              {remaining > 1 && (
+              {effectiveRemaining > 1 && (
                 <button onClick={startPerUnit} disabled={loading || !trackingNumber}
                   className="rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-50 py-2.5 text-sm font-semibold text-slate-200 transition-colors">
                   Per Unit
@@ -399,15 +434,15 @@ export default function CheckInModal({
         {step === "scanning" && (
           <div className="p-8 text-center space-y-3">
             <div className="text-sm text-slate-300 animate-pulse">
-              Checking in unit {currentUnit} of {totalQty}…
+              Checking in unit {currentUnit} of {effectiveTotal}…
             </div>
             <div className="w-full bg-slate-800 rounded-full h-2">
               <div
                 className="bg-emerald-600 h-2 rounded-full transition-all"
-                style={{ width: `${(scannedSoFar / remaining) * 100}%` }}
+                style={{ width: `${(scannedSoFar / effectiveRemaining) * 100}%` }}
               />
             </div>
-            <div className="text-xs text-slate-500">{scannedSoFar} / {remaining} done</div>
+            <div className="text-xs text-slate-500">{scannedSoFar} / {effectiveRemaining} done</div>
           </div>
         )}
 
@@ -415,8 +450,8 @@ export default function CheckInModal({
         {step === "unit_form" && (
           <div className="p-5 space-y-4">
             <div className="text-xs text-slate-500">
-              Unit {currentUnit} of {totalQty}
-              {remaining > 1 && <span className="ml-2 text-slate-600">({remaining - scannedSoFar} remaining after this)</span>}
+              Unit {currentUnit} of {effectiveTotal}
+              {effectiveRemaining > 1 && <span className="ml-2 text-slate-600">({effectiveRemaining - scannedSoFar} remaining after this)</span>}
             </div>
 
             <div>
@@ -441,7 +476,7 @@ export default function CheckInModal({
 
             <button onClick={submitUnit} disabled={loading}
               className="w-full rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 py-2.5 text-sm font-semibold text-white transition-colors">
-              {loading ? "Scanning…" : scannedSoFar + 1 < remaining ? `Scan Unit ${currentUnit} →` : "Scan Final Unit"}
+              {loading ? "Scanning…" : scannedSoFar + 1 < effectiveRemaining ? `Scan Unit ${currentUnit} →` : "Scan Final Unit"}
             </button>
 
             {isLot && (
