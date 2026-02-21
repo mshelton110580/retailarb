@@ -697,13 +697,15 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
     e.preventDefault();
     e.stopPropagation();
     const startW = colWidths[col] ?? DEFAULT_COL_WIDTHS[col] ?? 80;
-    resizeRef.current = { col, startX: e.clientX, startW };
+    const startX = e.clientX;
+    resizeRef.current = { col, startX, startW };
 
     function onMove(ev: MouseEvent) {
-      if (!resizeRef.current) return;
-      const delta = ev.clientX - resizeRef.current.startX;
-      const newW = Math.max(MIN_COL_WIDTH, resizeRef.current.startW + delta);
-      setColWidths(prev => ({ ...prev, [resizeRef.current!.col]: newW }));
+      const r = resizeRef.current;
+      if (!r) return;
+      const delta = ev.clientX - r.startX;
+      const newW = Math.max(MIN_COL_WIDTH, r.startW + delta);
+      setColWidths(prev => ({ ...prev, [r.col]: newW }));
     }
     function onUp() {
       resizeRef.current = null;
