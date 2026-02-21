@@ -361,10 +361,10 @@ export default async function OrderDetailPage({ params }: { params: { orderId: s
                 {order.order_items.map((item) => {
                   const label = item.title.length > 45 ? item.title.slice(0, 45) + "…" : item.title;
                   const returnUrl = item.transaction_id
-                    ? `https://ocsnext.ebay.com/ocs/sr?${new URLSearchParams({ flow: "RETURN", orderId: order.order_id, transId: item.transaction_id, itemId: item.item_id })}`
+                    ? `https://www.ebay.com/rtn/Return/ReturnViewSelectedItem?itemId=${item.item_id}&transactionId=${item.transaction_id}`
                     : `https://order.ebay.com/ord/show?orderId=${order.order_id}`;
                   const inrUrl = item.transaction_id
-                    ? `https://ocsnext.ebay.com/ocs/sr?${new URLSearchParams({ flow: "INR", orderId: order.order_id, transId: item.transaction_id })}`
+                    ? `https://www.ebay.com/rtn/INR/INRPurchaseHistory?itemId=${item.item_id}&transactionId=${item.transaction_id}`
                     : `https://order.ebay.com/ord/show?orderId=${order.order_id}`;
                   return (
                     <div key={item.id} className="flex flex-wrap items-center gap-2">

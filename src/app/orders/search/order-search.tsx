@@ -162,8 +162,7 @@ type ItemRow = {
 function buildReturnUrl(orderId: string, items: OrderItem[]): string {
   const first = items[0];
   if (first?.transactionId) {
-    const p = new URLSearchParams({ flow: "RETURN", orderId, transId: first.transactionId, itemId: first.itemId });
-    return `https://ocsnext.ebay.com/ocs/sr?${p}`;
+    return `https://www.ebay.com/rtn/Return/ReturnViewSelectedItem?itemId=${first.itemId}&transactionId=${first.transactionId}`;
   }
   return `https://order.ebay.com/ord/show?orderId=${orderId}`;
 }
@@ -171,8 +170,7 @@ function buildReturnUrl(orderId: string, items: OrderItem[]): string {
 function buildInrUrl(orderId: string, items: OrderItem[]): string {
   const first = items[0];
   if (first?.transactionId) {
-    const p = new URLSearchParams({ flow: "INR", orderId, transId: first.transactionId });
-    return `https://ocsnext.ebay.com/ocs/sr?${p}`;
+    return `https://www.ebay.com/rtn/INR/INRPurchaseHistory?itemId=${first.itemId}&transactionId=${first.transactionId}`;
   }
   return `https://order.ebay.com/ord/show?orderId=${orderId}`;
 }
