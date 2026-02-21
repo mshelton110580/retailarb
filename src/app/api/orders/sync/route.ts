@@ -38,14 +38,18 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
 
         for (const order of result.orders) {
           // Upsert the order.
-          // subtotal = eBay Subtotal (items only) — immutable, never changes after purchase.
-          // shipping_cost priority:
-          //   1. Sum of Transaction.ActualShippingCost (set at checkout, most reliable when present)
-          //   2. Sum of Transaction.ShippingServiceCost (transaction-level negotiated cost)
-          //   3. Order-level ShippingServiceSelected.ShippingServiceCost (summed across all svc entries)
-          //      — this handles multi-item orders where eBay stores per-transaction shipping at order level
-          // original_total = subtotal + shipping_cost — set on CREATE only, never overwritten.
-          // totals.total is always updated to the current (possibly post-refund) value.
+          // IMMUTABLE fields (set on CREATE, never overwritten on UPDATE):
+          //   subtotal       = eBay Subtotal (items only)
+          //   shipping_cost  = cost at checkout (0 = legitimately free shipping)
+          //   tax_amount     = eBay-collected tax at purchase time
+          //   original_total = subtotal + shipping_cost + tax_amount
+          // MUTABLE fields (updated every sync):
+          //   order_status, totals.total (may reflect post-purchase refunds), ship_to_*
+          //
+          // shipping_cost source priority:
+          //   1. Sum of Transaction.ActualShippingCost (most reliable — set at checkout)
+          //   2. Sum of Transaction.ShippingServiceCost (transaction-level)
+          //   3. Order-level ShippingServiceSelected.ShippingServiceCost (summed)
           const subtotalNum = parseFloat(order.subtotal);
 
           // 1. Try ActualShippingCost sum across transactions
@@ -76,12 +80,14 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
           await prisma.orders.upsert({
             where: { order_id: String(order.orderId) },
             update: {
+              // Mutable: status and current total (may reflect refunds) and address
               order_status: order.orderStatus,
               totals: { total: order.total },
-              tax_amount: taxNum,
               ship_to_city: order.shippingAddress?.city ?? null,
               ship_to_state: order.shippingAddress?.state ?? null,
               ship_to_postal: order.shippingAddress?.postalCode ?? null,
+              // subtotal, shipping_cost, tax_amount, original_total are immutable —
+              // captured once on create and never overwritten.
             },
             create: {
               order_id: String(order.orderId),
@@ -91,8 +97,8 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
               totals: { total: order.total },
               subtotal: subtotalNum,
               shipping_cost: shippingNum,
-              original_total: originalTotal,
               tax_amount: taxNum,
+              original_total: originalTotal, // subtotal + shipping + tax at purchase time
               ship_to_city: order.shippingAddress?.city ?? null,
               ship_to_state: order.shippingAddress?.state ?? null,
               ship_to_postal: order.shippingAddress?.postalCode ?? null,
