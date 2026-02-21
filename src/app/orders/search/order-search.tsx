@@ -8,6 +8,8 @@ type Account = { id: string; ebay_username: string | null };
 
 type OrderItem = {
   itemId: string;
+  transactionId: string | null;
+  orderLineItemId: string | null;
   title: string;
   qty: number;
   price: number;
@@ -154,6 +156,26 @@ type ItemRow = {
   price: number;
   order: Order;
 };
+
+// ── eBay OCS deep-link helpers ──────────────────────────────────────────────
+
+function buildReturnUrl(orderId: string, items: OrderItem[]): string {
+  const first = items[0];
+  if (first?.transactionId) {
+    const p = new URLSearchParams({ flow: "RETURN", orderId, transId: first.transactionId, itemId: first.itemId });
+    return `https://ocsnext.ebay.com/ocs/sr?${p}`;
+  }
+  return `https://order.ebay.com/ord/show?orderId=${orderId}`;
+}
+
+function buildInrUrl(orderId: string, items: OrderItem[]): string {
+  const first = items[0];
+  if (first?.transactionId) {
+    const p = new URLSearchParams({ flow: "INR", orderId, transId: first.transactionId });
+    return `https://ocsnext.ebay.com/ocs/sr?${p}`;
+  }
+  return `https://order.ebay.com/ord/show?orderId=${orderId}`;
+}
 
 // ── Return/INR badge helpers ────────────────────────────────────────────────
 
@@ -799,8 +821,8 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
       case "returnCase":
         if (order.returnCase) return <ReturnBadge r={order.returnCase} />;
         if (order.needsReturn) return (
-          <a href={`https://order.ebay.com/ord/show?orderId=${order.orderId}`} target="_blank" rel="noreferrer"
-            title="Received in bad condition — click to open this order on eBay and use 'More actions' > 'Return this item'"
+          <a href={buildReturnUrl(order.orderId, order.items)} target="_blank" rel="noreferrer"
+            title="Received in bad condition — click to file a return on eBay"
             onClick={e => e.stopPropagation()}
             className="inline-block rounded px-2 py-0.5 text-[10px] font-medium bg-orange-950 border border-orange-800 text-orange-400 hover:bg-orange-900 transition-colors">
             File Return ↗
@@ -814,8 +836,8 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
           && order.orderStatus !== "Cancelled" && !order.hasRefund;
         if (canFileInr) {
           return (
-            <a href={`https://order.ebay.com/ord/show?orderId=${order.orderId}`} target="_blank" rel="noreferrer"
-              title="No INR filed — click to open this order on eBay and use 'More actions' > 'I didn't receive it'"
+            <a href={buildInrUrl(order.orderId, order.items)} target="_blank" rel="noreferrer"
+              title="No INR filed — click to file an Item Not Received case on eBay"
               onClick={e => e.stopPropagation()}
               className="inline-block rounded px-2 py-0.5 text-[10px] font-medium bg-yellow-950 border border-yellow-800 text-yellow-400 hover:bg-yellow-900 transition-colors">
               File INR ↗
@@ -886,8 +908,8 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
       case "returnCase":
         if (order.returnCase) return <ReturnBadge r={order.returnCase} />;
         if (order.needsReturn) return (
-          <a href={`https://order.ebay.com/ord/show?orderId=${order.orderId}`} target="_blank" rel="noreferrer"
-            title="Received in bad condition — click to open this order on eBay and use 'More actions' > 'Return this item'"
+          <a href={buildReturnUrl(order.orderId, order.items)} target="_blank" rel="noreferrer"
+            title="Received in bad condition — click to file a return on eBay"
             onClick={e => e.stopPropagation()}
             className="inline-block rounded px-2 py-0.5 text-[10px] font-medium bg-orange-950 border border-orange-800 text-orange-400 hover:bg-orange-900 transition-colors">
             File Return ↗
@@ -901,8 +923,8 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
           && order.orderStatus !== "Cancelled" && !order.hasRefund;
         if (canFileInr) {
           return (
-            <a href={`https://order.ebay.com/ord/show?orderId=${order.orderId}`} target="_blank" rel="noreferrer"
-              title="No INR filed — click to open this order on eBay and use 'More actions' > 'I didn't receive it'"
+            <a href={buildInrUrl(order.orderId, order.items)} target="_blank" rel="noreferrer"
+              title="No INR filed — click to file an Item Not Received case on eBay"
               onClick={e => e.stopPropagation()}
               className="inline-block rounded px-2 py-0.5 text-[10px] font-medium bg-yellow-950 border border-yellow-800 text-yellow-400 hover:bg-yellow-900 transition-colors">
               File INR ↗
@@ -984,13 +1006,13 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
           <a href={order.orderUrl} target="_blank" rel="noreferrer" className="rounded bg-slate-800 px-3 py-1 text-xs text-slate-300 hover:bg-slate-700 transition-colors">
             View on eBay ↗
           </a>
-          <a href={`https://order.ebay.com/ord/show?orderId=${order.orderId}`} target="_blank" rel="noreferrer"
-            title="Opens this order on eBay — click 'More actions' then 'Return this item'"
+          <a href={buildReturnUrl(order.orderId, order.items)} target="_blank" rel="noreferrer"
+            title="Click to file a return on eBay"
             className="rounded bg-orange-950 border border-orange-800 px-3 py-1 text-xs text-orange-300 hover:bg-orange-900 transition-colors">
             File Return ↗
           </a>
-          <a href={`https://order.ebay.com/ord/show?orderId=${order.orderId}`} target="_blank" rel="noreferrer"
-            title="Opens this order on eBay — click 'More actions' then 'I didn't receive it'"
+          <a href={buildInrUrl(order.orderId, order.items)} target="_blank" rel="noreferrer"
+            title="Click to file an Item Not Received case on eBay"
             className="rounded bg-yellow-950 border border-yellow-800 px-3 py-1 text-xs text-yellow-300 hover:bg-yellow-900 transition-colors">
             File INR ↗
           </a>
@@ -1078,13 +1100,13 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
           <a href={order.orderUrl} target="_blank" rel="noreferrer" className="rounded bg-slate-800 px-3 py-1 text-xs text-slate-300 hover:bg-slate-700 transition-colors">
             View on eBay ↗
           </a>
-          <a href={`https://order.ebay.com/ord/show?orderId=${order.orderId}`} target="_blank" rel="noreferrer"
-            title="Opens this order on eBay — click 'More actions' then 'Return this item'"
+          <a href={buildReturnUrl(order.orderId, order.items)} target="_blank" rel="noreferrer"
+            title="Click to file a return on eBay"
             className="rounded bg-orange-950 border border-orange-800 px-3 py-1 text-xs text-orange-300 hover:bg-orange-900 transition-colors">
             File Return ↗
           </a>
-          <a href={`https://order.ebay.com/ord/show?orderId=${order.orderId}`} target="_blank" rel="noreferrer"
-            title="Opens this order on eBay — click 'More actions' then 'I didn't receive it'"
+          <a href={buildInrUrl(order.orderId, order.items)} target="_blank" rel="noreferrer"
+            title="Click to file an Item Not Received case on eBay"
             className="rounded bg-yellow-950 border border-yellow-800 px-3 py-1 text-xs text-yellow-300 hover:bg-yellow-900 transition-colors">
             File INR ↗
           </a>
