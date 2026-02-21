@@ -31,12 +31,21 @@ type ScanResult = {
   isLot: boolean;
   categoryInfo: {
     categoryId: string | null;
+    confidence: "high" | "medium" | "low";
     requiresManualSelection: boolean;
     reason?: string;
     suggestedCategoryName?: string;
   };
   item: { title: string; itemId: string; qty: number };
 };
+
+// Show the category step when manual selection is required OR when the category
+// was auto-assigned but confidence is not high (let user confirm or correct it).
+function needsCategoryStep(categoryInfo: ScanResult["categoryInfo"]): boolean {
+  if (categoryInfo.requiresManualSelection) return true;
+  if (categoryInfo.categoryId && categoryInfo.confidence !== "high") return true;
+  return false;
+}
 
 type Props = {
   orderId: string;
@@ -63,6 +72,7 @@ export default function CheckInModal({
   const [perUnit, setPerUnit] = useState(false); // step through each unit individually
   const [isLotMode, setIsLotMode] = useState(false);
   const [lotCount, setLotCount] = useState(totalQty > 1 ? totalQty : 2);
+  const [lotPerUnitCategory, setLotPerUnitCategory] = useState(false);
 
   // Progress state (used in scanning / per-unit modes)
   const [currentUnit, setCurrentUnit] = useState(alreadyScanned + 1); // 1-based index of unit being scanned
@@ -83,6 +93,7 @@ export default function CheckInModal({
   const [pendingCategory, setPendingCategory] = useState<{
     unitId: string; unitIndex: number; title: string;
     reason: string; suggestedCategoryName?: string;
+    assignedCategoryId: string | null; // already-auto-assigned id (for confirm/change flow)
     afterCategory: () => void; // what to do after category is resolved
   } | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -98,6 +109,24 @@ export default function CheckInModal({
       if (res.ok) setCategories((await res.json()).categories ?? []);
     } finally { setCategoryLoading(false); }
   }, []);
+
+  // Helper: open the category step and return a promise that resolves when user acts.
+  function pauseForCategory(result: ScanResult): Promise<void> {
+    return new Promise<void>(resolve => {
+      setPendingCategory({
+        unitId: result.unitId, unitIndex: result.unitIndex, title: result.item.title,
+        reason: result.categoryInfo.reason ?? "Manual selection required",
+        suggestedCategoryName: result.categoryInfo.suggestedCategoryName,
+        assignedCategoryId: result.categoryInfo.categoryId,
+        afterCategory: resolve,
+      });
+      setEditedCategoryName(result.categoryInfo.suggestedCategoryName ?? "");
+      setCreateMerge(true);
+      setSelectedCategoryId(result.categoryInfo.categoryId ?? "");
+      loadCategories();
+      setStep("category");
+    });
+  }
 
   // ── Core scan call ────────────────────────────────────────────────────────
 
@@ -135,21 +164,14 @@ export default function CheckInModal({
       setScannedSoFar(i + 1);
       if (result.isLot) lotDetected = true;
 
-      // Category needs selection — pause and handle it, then continue loop
-      if (result.categoryInfo?.requiresManualSelection) {
-        await new Promise<void>(resolve => {
-          setPendingCategory({
-            unitId: result.unitId, unitIndex: result.unitIndex, title: result.item.title,
-            reason: result.categoryInfo.reason ?? "Manual selection required",
-            suggestedCategoryName: result.categoryInfo.suggestedCategoryName,
-            afterCategory: resolve,
-          });
-          setEditedCategoryName(result.categoryInfo.suggestedCategoryName ?? "");
-          setCreateMerge(true);
-          setSelectedCategoryId("");
-          loadCategories();
-          setStep("category");
-        });
+      // Show category step when: manual selection required, low/medium confidence auto-assign,
+      // or lot with per-unit category mode enabled.
+      const showCategory =
+        needsCategoryStep(result.categoryInfo) ||
+        (result.isLot && lotPerUnitCategory);
+
+      if (showCategory) {
+        await pauseForCategory(result);
         setStep("scanning");
       }
 
@@ -212,24 +234,25 @@ export default function CheckInModal({
       }
     };
 
-    if (result.categoryInfo?.requiresManualSelection) {
+    if (needsCategoryStep(result.categoryInfo)) {
+      // After category is resolved, go to photos or next unit
+      const afterCat = isBad
+        ? () => {
+            setPhotoQueue([{ unitId: result.unitId, unitIndex: result.unitIndex, title: result.item.title }]);
+            setPhotoQueueIndex(0);
+            setStep("photos");
+          }
+        : afterThis;
       setPendingCategory({
         unitId: result.unitId, unitIndex: result.unitIndex, title: result.item.title,
         reason: result.categoryInfo.reason ?? "Manual selection required",
         suggestedCategoryName: result.categoryInfo.suggestedCategoryName,
-        afterCategory: isBad
-          ? () => {
-              setPhotoQueue([{ unitId: result.unitId, unitIndex: result.unitIndex, title: result.item.title }]);
-              setPhotoQueueIndex(0);
-              setStep("photos");
-              // After photos, call afterThis
-              // We'll handle this via photoQueue drain
-            }
-          : afterThis,
+        assignedCategoryId: result.categoryInfo.categoryId,
+        afterCategory: afterCat,
       });
       setEditedCategoryName(result.categoryInfo.suggestedCategoryName ?? "");
       setCreateMerge(true);
-      setSelectedCategoryId("");
+      setSelectedCategoryId(result.categoryInfo.categoryId ?? "");
       loadCategories();
       setStep("category");
     } else if (isBad) {
@@ -379,20 +402,27 @@ export default function CheckInModal({
             </div>
 
             {isLotMode && (
-              <div>
-                <label className="mb-1.5 block text-xs font-medium text-slate-400">
-                  Total units received
+              <div className="space-y-2">
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-slate-400">
+                    Total units received
+                  </label>
+                  <input
+                    type="number"
+                    min={totalQty + 1}
+                    value={lotCount}
+                    onChange={e => setLotCount(Math.max(totalQty + 1, parseInt(e.target.value) || totalQty + 1))}
+                    className="w-full rounded border border-amber-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-amber-500"
+                  />
+                  <p className="mt-1 text-xs text-slate-600">
+                    Order qty: {totalQty} · Lot will scan {lotCount - alreadyScanned} units · server detects lot at unit {totalQty + 1}
+                  </p>
+                </div>
+                <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+                  <input type="checkbox" checked={lotPerUnitCategory} onChange={e => setLotPerUnitCategory(e.target.checked)}
+                    className="accent-fuchsia-500" />
+                  Mixed lot — assign category per unit
                 </label>
-                <input
-                  type="number"
-                  min={totalQty + 1}
-                  value={lotCount}
-                  onChange={e => setLotCount(Math.max(totalQty + 1, parseInt(e.target.value) || totalQty + 1))}
-                  className="w-full rounded border border-amber-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-amber-500"
-                />
-                <p className="mt-1 text-xs text-slate-600">
-                  Order qty: {totalQty} · Lot will scan {lotCount - alreadyScanned} units · server detects lot at unit {totalQty + 1}
-                </p>
               </div>
             )}
 
@@ -495,6 +525,16 @@ export default function CheckInModal({
               <span className="text-slate-500">Reason: </span>{pendingCategory.reason}
             </div>
 
+            {/* Auto-assigned category — show a Keep button prominently */}
+            {pendingCategory.assignedCategoryId && !pendingCategory.suggestedCategoryName && (
+              <div className="rounded-lg bg-green-900/20 border border-green-800 p-3 text-xs">
+                <p className="text-slate-400 mb-1">Auto-assigned category:</p>
+                <p className="font-semibold text-green-300">
+                  {categories.find(c => c.id === pendingCategory.assignedCategoryId)?.category_name ?? "…"}
+                </p>
+              </div>
+            )}
+
             {pendingCategory.suggestedCategoryName && (
               <div className="text-xs text-slate-400">
                 Detected: <span className="font-semibold text-blue-300">{pendingCategory.suggestedCategoryName}</span>
@@ -543,6 +583,16 @@ export default function CheckInModal({
                 </>
               )}
             </div>
+
+            {/* Keep button — only shown when a category was already auto-assigned */}
+            {pendingCategory.assignedCategoryId && (
+              <button
+                onClick={() => { const cb = pendingCategory.afterCategory; setPendingCategory(null); cb(); }}
+                disabled={categoryLoading}
+                className="w-full rounded-lg border border-green-700 text-green-400 hover:bg-green-900/20 disabled:opacity-50 py-2 text-xs font-semibold transition-colors">
+                Keep Auto-Assigned Category
+              </button>
+            )}
 
             <button onClick={skipCategory} className="w-full text-xs text-slate-600 hover:text-slate-400 py-1">
               Skip for now
