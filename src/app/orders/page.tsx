@@ -4,6 +4,7 @@ import { getDateRangeFromParams } from "@/lib/date-range";
 import { prisma } from "@/lib/db";
 import Link from "next/link";
 import SyncAllButton from "@/components/sync-all-button";
+import FilterLink from "@/components/filter-link";
 
 const statusColors: Record<string, string> = {
   delivered: "bg-green-600",
@@ -32,10 +33,11 @@ const statusLabels: Record<string, string> = {
 export default async function OrdersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ range?: string; from?: string; to?: string }>;
+  searchParams: Promise<{ range?: string; from?: string; to?: string; checkin?: string }>;
 }) {
   const params = await searchParams;
   const dateRange = getDateRangeFromParams(params);
+  const checkinFilter = params.checkin; // "yes" | "no" | undefined
 
   const orders = await prisma.orders.findMany({
     where: {
@@ -43,6 +45,11 @@ export default async function OrdersPage({
         gte: dateRange.from,
         lte: dateRange.to,
       },
+      ...(checkinFilter === "yes"
+        ? { shipments: { some: { checked_in_at: { not: null } } } }
+        : checkinFilter === "no"
+        ? { shipments: { none: { checked_in_at: { not: null } } } }
+        : {}),
     },
     orderBy: { purchase_date: "desc" },
     include: {
@@ -59,6 +66,27 @@ export default async function OrdersPage({
       <div className="flex items-center justify-between">
         <DateRangeFilter />
         <span className="text-sm text-slate-400">{orders.length} orders</span>
+      </div>
+      <div className="flex items-center gap-2 text-sm">
+        <span className="text-slate-500">Check-in:</span>
+        <FilterLink
+          href="/orders"
+          className={`rounded px-3 py-1 ${!checkinFilter ? "bg-slate-600 text-white" : "bg-slate-800 text-slate-400 hover:bg-slate-700"}`}
+        >
+          All
+        </FilterLink>
+        <FilterLink
+          href="/orders?checkin=yes"
+          className={`rounded px-3 py-1 ${checkinFilter === "yes" ? "bg-emerald-700 text-emerald-100" : "bg-slate-800 text-slate-400 hover:bg-slate-700"}`}
+        >
+          Checked In
+        </FilterLink>
+        <FilterLink
+          href="/orders?checkin=no"
+          className={`rounded px-3 py-1 ${checkinFilter === "no" ? "bg-slate-600 text-white" : "bg-slate-800 text-slate-400 hover:bg-slate-700"}`}
+        >
+          Not Checked In
+        </FilterLink>
       </div>
       <section className="rounded-lg border border-slate-800 bg-slate-900 p-4">
         <div className="space-y-3 text-sm text-slate-300">
