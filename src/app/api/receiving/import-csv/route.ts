@@ -156,12 +156,20 @@ export async function POST(req: Request) {
         where: { order_id: shipment.order_id }
       });
 
+      const orderQty = expectedUnits; // total qty purchased (sum of order_items.qty)
+
       // Skip only if this order was already fully checked in by a PREVIOUS import/scan run,
       // AND it has not appeared in the current batch (which would mean it's a lot).
       // processedOrderIds tracks what we've already touched this run — if it's in there,
       // the same tracking appeared again in the sheet → lot, always create more units.
+      //
+      // For lot shipments (is_lot already set), never skip — additional scans are valid.
+      // Also: for multi-qty orders (orderQty > 1), "complete" means existingCount >= orderQty
+      // but those orders can still be lots. We only skip if existingCount == expected exactly
+      // AND the shipment is not a lot.
       const seenThisRun = processedOrderIds.has(shipment.order_id);
-      const checkedInPreviously = !seenThisRun && shipment.checked_in_at != null && existingCount >= shipment.expected_units;
+      const isAlreadyLot = shipment.is_lot;
+      const checkedInPreviously = !seenThisRun && !isAlreadyLot && shipment.checked_in_at != null && existingCount >= shipment.expected_units && existingCount > 0;
       const isExactRepeat = checkedInPreviously;
 
       if (isExactRepeat) {
@@ -286,8 +294,8 @@ export async function POST(req: Request) {
                 // Got a refund and kept it — parts_repair means "compensated, can scrap/part out"
                 inventoryState = "parts_repair";
               } else {
-                // Closed with no refund and no shipping — still needs action
-                inventoryState = "to_be_returned";
+                // Closed with no refund and no return tracking — possible chargeback
+                inventoryState = "possible_chargeback";
               }
             } else {
               // Open return filed, not yet shipped — need to send back
@@ -317,7 +325,22 @@ export async function POST(req: Request) {
         const newScannedCount = existingCount + unitsCreated;
         // A lot is any shipment where the final scanned count exceeds the listed expected_units
         const isLot = newScannedCount > shipment.expected_units;
+        // lot_size = ceil(scanned / orderQty) — same formula as scan route
+        // e.g. orderQty=2, scanned=12 → ceil(12/2)=6 meaning 2 lots of 6
+        const lotSize = isLot && orderQty > 0
+          ? Math.ceil(newScannedCount / orderQty)
+          : (shipment.lot_size ?? null);
         const scanStatus = isLot ? "check_quantity" : newScannedCount >= shipment.expected_units ? "complete" : "partial";
+
+        // If this import just made the shipment a lot, retroactively point all prior
+        // units' order_item_id to the first order item (same as scan route does).
+        const justBecameLot = !shipment.is_lot && isLot;
+        if (justBecameLot && orderItems[0]) {
+          await prisma.received_units.updateMany({
+            where: { order_id: shipment.order_id },
+            data: { order_item_id: orderItems[0].id }
+          });
+        }
 
         await prisma.shipments.update({
           where: { id: shipment.id },
@@ -325,6 +348,7 @@ export async function POST(req: Request) {
             scanned_units: newScannedCount,
             scan_status: scanStatus,
             is_lot: isLot || shipment.is_lot,
+            lot_size: lotSize,
             checked_in_at: shipment.checked_in_at ?? scannedAt,
             checked_in_by: shipment.checked_in_by ?? auth.session!.user!.id
           }
