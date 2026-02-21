@@ -65,22 +65,9 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
               ? parseFloat(txServiceShippingSum.toFixed(2))
               : orderLevelShipping;
 
-          // 4. Fallback: use the already-stored shipping_cost if eBay returns 0.
-          //    eBay strips shipping details from completed orders, so older syncs may get 0
-          //    even when the real cost is known. Never downgrade a known value to 0.
-          const existingOrder = ebayShippingNum === 0
-            ? await prisma.orders.findUnique({
-                where: { order_id: String(order.orderId) },
-                select: { shipping_cost: true }
-              })
-            : null;
-          const shippingNum = ebayShippingNum > 0
-            ? ebayShippingNum
-            : parseFloat((existingOrder?.shipping_cost ?? 0).toString());
+          const shippingNum = ebayShippingNum;
 
           const taxNum = parseFloat(parseFloat(order.taxAmount).toFixed(2));
-          // original_total = subtotal + shipping + tax — set on CREATE only, never updated.
-          // Tax is included so original_total truly reflects what was paid at purchase time.
           const originalTotal = parseFloat((subtotalNum + shippingNum + taxNum).toFixed(2));
 
           await prisma.orders.upsert({
@@ -92,6 +79,11 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
               ship_to_city: order.shippingAddress?.city ?? null,
               ship_to_state: order.shippingAddress?.state ?? null,
               ship_to_postal: order.shippingAddress?.postalCode ?? null,
+              // Update shipping_cost and original_total only when eBay returns a real
+              // shipping value (> 0). This handles completed orders where eBay initially
+              // returns 0 but later syncs return the actual cost.
+              // Prisma does not support conditional field updates in upsert directly,
+              // so we handle the shipping upgrade in a separate updateMany below.
             },
             create: {
               order_id: String(order.orderId),
@@ -110,22 +102,16 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
             }
           });
 
-          // Backfill original_total when it was stored incorrectly at create time.
-          // shippingNum is now always the best known value (eBay or DB fallback), so
-          // originalTotal is always the correct full value here.
-          // Only update rows where original_total is a known-wrong partial value:
-          //   - subtotal only (shipping was missing at create time)
-          //   - subtotal + shipping (tax was missing at create time)
-          // This condition cannot match a row already storing the correct full value.
-          const partialNoShipping = subtotalNum;
-          const partialNoTax = parseFloat((subtotalNum + shippingNum).toFixed(2));
-          await prisma.orders.updateMany({
-            where: {
-              order_id: String(order.orderId),
-              original_total: { in: [partialNoShipping, partialNoTax] }
-            },
-            data: { original_total: originalTotal },
-          });
+          // If eBay returned a real shipping cost this sync, upgrade shipping_cost and
+          // original_total on any row where shipping was previously stored as 0.
+          // This is not a backfill — it's the normal update path for completed orders
+          // where eBay's API returns 0 on early syncs and the real value on later syncs.
+          if (shippingNum > 0) {
+            await prisma.orders.updateMany({
+              where: { order_id: String(order.orderId), shipping_cost: 0 },
+              data: { shipping_cost: shippingNum, original_total: originalTotal },
+            });
+          }
 
           // Upsert order items and targets
           for (const tx of order.transactions) {
