@@ -348,29 +348,53 @@ export default async function OrderDetailPage({ params }: { params: { orderId: s
               >
                 View Order on eBay ↗
               </a>
-              <a
-                href={`https://order.ebay.com/ord/show?orderId=${order.order_id}`}
-                target="_blank"
-                rel="noreferrer"
-                title="Opens this order on eBay — click 'More actions' then 'Return this item' to file"
-                className="rounded bg-orange-950 border border-orange-800 px-3 py-2 text-xs font-medium text-orange-300 hover:bg-orange-900 transition-colors"
-              >
-                File Return ↗
-              </a>
-              <a
-                href={`https://order.ebay.com/ord/show?orderId=${order.order_id}`}
-                target="_blank"
-                rel="noreferrer"
-                title="Opens this order on eBay — click 'More actions' then 'I didn't receive it' to file"
-                className="rounded bg-yellow-950 border border-yellow-800 px-3 py-2 text-xs font-medium text-yellow-300 hover:bg-yellow-900 transition-colors"
-              >
-                File INR ↗
-              </a>
             </div>
-            <p className="mt-1.5 text-[10px] text-slate-600">
-              Return &amp; INR buttons open this order on eBay — click <span className="text-slate-500">More actions</span> to file.
-            </p>
           </div>
+
+          {/* Per-item Return / INR actions */}
+          {order.order_items.length > 0 && (
+            <div>
+              <p className="mb-2 text-xs text-slate-500">
+                {order.order_items.length === 1 ? "File a case" : "File a case (per item)"}
+              </p>
+              <div className="space-y-2">
+                {order.order_items.map((item) => {
+                  const label = item.title.length > 45 ? item.title.slice(0, 45) + "…" : item.title;
+                  const returnUrl = item.transaction_id
+                    ? `https://ocsnext.ebay.com/ocs/sr?${new URLSearchParams({ flow: "RETURN", orderId: order.order_id, transId: item.transaction_id, itemId: item.item_id })}`
+                    : `https://order.ebay.com/ord/show?orderId=${order.order_id}`;
+                  const inrUrl = item.transaction_id
+                    ? `https://ocsnext.ebay.com/ocs/sr?${new URLSearchParams({ flow: "INR", orderId: order.order_id, transId: item.transaction_id })}`
+                    : `https://order.ebay.com/ord/show?orderId=${order.order_id}`;
+                  return (
+                    <div key={item.id} className="flex flex-wrap items-center gap-2">
+                      {order.order_items.length > 1 && (
+                        <span className="text-xs text-slate-500 w-full">{label}</span>
+                      )}
+                      <a
+                        href={returnUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={`File a return for: ${item.title}`}
+                        className="rounded bg-orange-950 border border-orange-800 px-3 py-2 text-xs font-medium text-orange-300 hover:bg-orange-900 transition-colors"
+                      >
+                        {order.order_items.length === 1 ? `File Return ↗` : `Return ↗`}
+                      </a>
+                      <a
+                        href={inrUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={`File an INR for: ${item.title}`}
+                        className="rounded bg-yellow-950 border border-yellow-800 px-3 py-2 text-xs font-medium text-yellow-300 hover:bg-yellow-900 transition-colors"
+                      >
+                        {order.order_items.length === 1 ? `File INR ↗` : `INR ↗`}
+                      </a>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Item links */}
           {order.order_items.length > 0 && (
