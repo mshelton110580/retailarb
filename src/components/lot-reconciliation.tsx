@@ -73,6 +73,10 @@ export default function LotReconciliation({ shipmentId, onDone }: { shipmentId: 
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [unitEdits, setUnitEdits] = useState<Record<string, Partial<LotUnit & { condition: string; inventoryState: string; categoryId: string | null; notes: string }>>>({});
   const [imageUploadUnit, setImageUploadUnit] = useState<{ unitId: string; unitIndex: number; title: string } | null>(null);
+  const [showAddMissing, setShowAddMissing] = useState(false);
+  const [addMissingCount, setAddMissingCount] = useState(1);
+  const [addMissingNotes, setAddMissingNotes] = useState("");
+  const [addingMissing, setAddingMissing] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -128,6 +132,31 @@ export default function LotReconciliation({ shipmentId, onDone }: { shipmentId: 
       setMessage({ type: "error", text: e.message });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleAddMissing() {
+    if (addMissingCount < 1) return;
+    setAddingMissing(true);
+    setMessage(null);
+    try {
+      const res = await fetch(`/api/reconciliation/${shipmentId}/add-unit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ count: addMissingCount, notes: addMissingNotes || undefined }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Failed to add units");
+      setMessage({ type: "success", text: `Added ${addMissingCount} missing unit${addMissingCount !== 1 ? "s" : ""}. Lot re-opened for review.` });
+      setShowAddMissing(false);
+      setAddMissingCount(1);
+      setAddMissingNotes("");
+      setUnitEdits({});
+      await load();
+    } catch (e: any) {
+      setMessage({ type: "error", text: e.message });
+    } finally {
+      setAddingMissing(false);
     }
   }
 
@@ -296,6 +325,62 @@ export default function LotReconciliation({ shipmentId, onDone }: { shipmentId: 
       {message && (
         <div className={`rounded-lg p-3 text-sm ${message.type === "success" ? "bg-green-900/30 border border-green-700 text-green-300" : "bg-red-900/30 border border-red-700 text-red-300"}`}>
           {message.text}
+        </div>
+      )}
+
+      {/* Add Missing Units */}
+      {!showAddMissing ? (
+        <button
+          onClick={() => setShowAddMissing(true)}
+          className="w-full rounded-lg border border-dashed border-slate-600 px-4 py-2 text-sm text-slate-400 hover:border-slate-400 hover:text-slate-200 transition-colors text-left"
+        >
+          + Add Missing Units
+        </button>
+      ) : (
+        <div className="rounded-lg border border-orange-800 bg-orange-900/10 p-4 space-y-3">
+          <p className="text-sm font-medium text-orange-300">Add Missing Units</p>
+          <p className="text-xs text-slate-400">
+            Creates additional unit records with condition <span className="font-mono bg-slate-800 px-1 rounded">missing</span>.
+            The lot will be re-opened for review after adding.
+          </p>
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-slate-400">Count</label>
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={addMissingCount}
+                onChange={(e) => setAddMissingCount(Math.max(1, parseInt(e.target.value) || 1))}
+                className="w-16 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-200 text-center"
+              />
+            </div>
+            <div className="flex items-center gap-2 flex-1 min-w-[180px]">
+              <label className="text-xs text-slate-400 whitespace-nowrap">Notes</label>
+              <input
+                type="text"
+                placeholder="Optional note"
+                value={addMissingNotes}
+                onChange={(e) => setAddMissingNotes(e.target.value)}
+                className="flex-1 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-200 placeholder-slate-600"
+              />
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleAddMissing}
+              disabled={addingMissing}
+              className="rounded-lg bg-orange-700 hover:bg-orange-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 transition-colors"
+            >
+              {addingMissing ? "Adding..." : `Add ${addMissingCount} Unit${addMissingCount !== 1 ? "s" : ""}`}
+            </button>
+            <button
+              onClick={() => { setShowAddMissing(false); setAddMissingCount(1); setAddMissingNotes(""); }}
+              className="text-xs text-slate-500 hover:text-slate-300"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 
