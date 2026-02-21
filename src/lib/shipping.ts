@@ -37,11 +37,6 @@ export function deriveShippingStatus(input: {
     expectedDate.setDate(expectedDate.getDate() + DEFAULT_EXPECTED_TRANSIT_DAYS);
   }
 
-  // eBay marks order "Completed" only after successful delivery — treat as delivered.
-  if (input.orderStatus === "Completed") {
-    return "delivered";
-  }
-
   // If we have tracking, check late/not_delivered based on expected date.
   // If no delivery window was provided by eBay, fall back to shipped/purchase date + overdue threshold
   // so orders with tracking but no EDD don't stay stuck at "shipped" forever.
