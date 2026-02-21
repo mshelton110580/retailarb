@@ -99,7 +99,8 @@ export async function PATCH(req: Request) {
           if (existingReturn.refund_issued_date || existingReturn.actual_refund) {
             inventoryState = "parts_repair";
           } else {
-            inventoryState = "to_be_returned";
+            // Closed with no refund and no return tracking — possible chargeback
+            inventoryState = "possible_chargeback";
           }
         } else {
           inventoryState = "to_be_returned";

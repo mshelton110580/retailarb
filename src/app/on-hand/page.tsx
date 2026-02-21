@@ -12,6 +12,7 @@ type ProductStats = {
   partsRepair: number;
   returned: number;
   missing: number;
+  possibleChargeback: number;
   totalValue: number;
   onHandValue: number;
   toBeReturnedValue: number;
@@ -200,9 +201,9 @@ export default async function OnHandPage() {
   const orderItemUnitCounts = new Map<string, number>();
   const orderItemBadUnits = new Map<string, Set<string>>();  // Map of order_item_id -> set of bad/parts unit IDs
   const goodConditionSet = new Set(["good", "new", "like_new", "acceptable", "excellent"]);
-  // A unit is "bad" if its condition is not good, OR if it's parts/repair/missing (not resaleable)
+  // A unit is "bad" if its condition is not good, OR if it's parts/repair/missing/possible_chargeback (not resaleable)
   const isBadUnit = (u: { condition_status: string; inventory_state: string }) =>
-    !goodConditionSet.has(u.condition_status?.toLowerCase() ?? "") || u.inventory_state === "parts_repair" || u.inventory_state === "missing";
+    !goodConditionSet.has(u.condition_status?.toLowerCase() ?? "") || u.inventory_state === "parts_repair" || u.inventory_state === "missing" || u.inventory_state === "possible_chargeback";
 
   for (const unit of units) {
     if (unit.order_item_id) {
@@ -350,6 +351,7 @@ export default async function OnHandPage() {
         partsRepair: 0,
         returned: 0,
         missing: 0,
+        possibleChargeback: 0,
         totalValue: 0,
         onHandValue: 0,
         toBeReturnedValue: 0,
@@ -379,6 +381,9 @@ export default async function OnHandPage() {
         break;
       case "missing":
         stats.missing++;
+        break;
+      case "possible_chargeback":
+        stats.possibleChargeback++;
         break;
     }
 
@@ -412,6 +417,7 @@ export default async function OnHandPage() {
     partsRepair: products.reduce((sum, p) => sum + p.partsRepair, 0),
     returned: products.reduce((sum, p) => sum + p.returned, 0),
     missing: products.reduce((sum, p) => sum + p.missing, 0),
+    possibleChargeback: products.reduce((sum, p) => sum + p.possibleChargeback, 0),
     onHandValue: products.reduce((sum, p) => sum + p.onHandValue, 0),
     toBeReturnedValue: products.reduce((sum, p) => sum + p.toBeReturnedValue, 0),
     partsRepairValue: products.reduce((sum, p) => sum + p.partsRepairValue, 0),
@@ -459,6 +465,14 @@ export default async function OnHandPage() {
             <h3 className="text-sm font-medium text-slate-400">Missing</h3>
             <p className="mt-1 text-2xl font-bold text-orange-400">{totals.missing}</p>
             <p className="mt-1 text-xs text-slate-500">Short-shipped lot units</p>
+          </div>
+        )}
+
+        {totals.possibleChargeback > 0 && (
+          <div className="rounded-lg border border-rose-800 bg-slate-900 p-4">
+            <h3 className="text-sm font-medium text-slate-400">Possible Chargeback</h3>
+            <p className="mt-1 text-2xl font-bold text-rose-400">{totals.possibleChargeback}</p>
+            <p className="mt-1 text-xs text-slate-500">Closed case/INR, no refund, not returned</p>
           </div>
         )}
       </div>

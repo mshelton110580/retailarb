@@ -214,8 +214,8 @@ export async function POST(req: Request) {
             // Got a refund and kept it — parts_repair means "compensated, can scrap/part out"
             inventoryState = "parts_repair";
           } else {
-            // Closed with no refund and no shipping — still needs action
-            inventoryState = "to_be_returned";
+            // Closed with no refund and no return tracking — possible chargeback
+            inventoryState = "possible_chargeback";
           }
         } else {
           // Open return filed, not yet shipped — need to send back
