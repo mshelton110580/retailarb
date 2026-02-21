@@ -41,10 +41,11 @@ npx prisma generate
 echo "--- Building..."
 npm run build
 
-echo "--- Restarting service..."
-systemctl restart arbdesk
+echo "--- Restarting services..."
+systemctl restart arbdesk arbdesk-worker
 sleep 3
 systemctl is-active arbdesk
+systemctl is-active arbdesk-worker
 EOF
 
 echo "==> Deploy complete! Server is on commit $COMMIT (branch: $BRANCH)"
