@@ -65,6 +65,9 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
               ? parseFloat(txServiceShippingSum.toFixed(2))
               : orderLevelShipping;
 
+          // Log shipping breakdown for diagnosis — remove once root cause confirmed
+          console.log(`[Order Sync] ${order.orderId} shipping: txActual=${txActualShippingSum} txService=${txServiceShippingSum} orderLevel=${orderLevelShipping} → used=${ebayShippingNum}`);
+
           const shippingNum = ebayShippingNum;
 
           const taxNum = parseFloat(parseFloat(order.taxAmount).toFixed(2));
