@@ -1,38 +1,50 @@
 #!/bin/bash
 # Deploy script for arbdesk (retailarb)
-# .env is EXCLUDED from rsync — it lives only on the server.
-# Backup is kept at /root/.arbdesk.env on the server.
-# A copy of all secrets is stored as GitHub Actions secret ENV_FILE.
+# Pushes current branch to GitHub, then pulls on the server and builds.
+# .env is EXCLUDED from git — it lives only on the server.
 set -e
 
 SERVER="root@68.183.121.176"
 SSH_KEY="$HOME/.ssh/temp_do_key2"
 REMOTE_DIR="/opt/retailarb"
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
-echo "==> Syncing files (excluding .env and uploaded photos)..."
-rsync -avz --delete \
-  --exclude='.env' \
-  --exclude='node_modules' \
-  --exclude='.next' \
-  --exclude='.git' \
-  --exclude='storage' \
-  --exclude='public/uploads' \
-  -e "ssh -i $SSH_KEY" \
-  /workspace/retailarb/ $SERVER:$REMOTE_DIR/
+echo "==> Pushing branch '$BRANCH' to GitHub..."
+git push origin "$BRANCH"
 
-echo "==> Ensuring uploads directory exists on server..."
-ssh -i $SSH_KEY $SERVER "mkdir -p $REMOTE_DIR/public/uploads"
+COMMIT=$(git rev-parse --short HEAD)
+echo "==> Deploying commit $COMMIT to server..."
 
-echo "==> Ensuring .env exists on server (restoring from backup if needed)..."
-ssh -i $SSH_KEY $SERVER \
-  "[ -f $REMOTE_DIR/.env ] && echo '.env present' || (cp /root/.arbdesk.env $REMOTE_DIR/.env && echo 'Restored .env from /root/.arbdesk.env backup')"
+ssh -i "$SSH_KEY" "$SERVER" bash <<EOF
+set -e
+cd $REMOTE_DIR
 
-echo "==> Installing dependencies and building..."
-ssh -i $SSH_KEY $SERVER \
-  "cd $REMOTE_DIR && npm ci --legacy-peer-deps && npx prisma generate && npm run build"
+echo "--- Fetching from GitHub..."
+git fetch origin
 
-echo "==> Restarting service..."
-ssh -i $SSH_KEY $SERVER \
-  "systemctl restart arbdesk && sleep 3 && systemctl is-active arbdesk"
+echo "--- Checking out branch '$BRANCH' and resetting to origin..."
+git checkout "$BRANCH"
+git reset --hard "origin/$BRANCH"
 
-echo "==> Deploy complete!"
+echo "--- Ensuring uploads directory exists..."
+mkdir -p public/uploads
+
+echo "--- Ensuring .env exists (restoring from backup if needed)..."
+[ -f .env ] && echo ".env present" || (cp /root/.arbdesk.env .env && echo "Restored .env from backup")
+
+echo "--- Installing dependencies..."
+npm ci --legacy-peer-deps
+
+echo "--- Generating Prisma client..."
+npx prisma generate
+
+echo "--- Building..."
+npm run build
+
+echo "--- Restarting service..."
+systemctl restart arbdesk
+sleep 3
+systemctl is-active arbdesk
+EOF
+
+echo "==> Deploy complete! Server is on commit $COMMIT (branch: $BRANCH)"
