@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Link from "next/link";
+import CheckInModal from "@/components/check-in-modal";
 
 type Account = { id: string; ebay_username: string | null };
 
@@ -485,6 +486,19 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
+  const [checkInTarget, setCheckInTarget] = useState<{
+    orderId: string;
+    trackingNumber: string | null;
+    itemTitle: string;
+  } | null>(null);
+
+  function triggerCheckIn(order: Order, e: React.MouseEvent) {
+    e.stopPropagation();
+    const tracking = order.shipment?.trackingNumbers?.[0]?.number ?? null;
+    const title = order.items[0]?.title ?? order.orderId;
+    setCheckInTarget({ orderId: order.orderId, trackingNumber: tracking, itemTitle: title });
+  }
+
   const trackingRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Cancel token: increment to abort in-flight background loads on filter change
@@ -764,9 +778,17 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
           : <span className="text-xs text-slate-600">—</span>;
       case "checkedIn":
         return (
-          <span className={`inline-block rounded px-2 py-0.5 text-[10px] font-medium ${shipment?.checkedInAt ? "bg-emerald-900 text-emerald-300" : "bg-slate-800 text-slate-500"}`}>
+          <button
+            onClick={e => { if (!shipment?.checkedInAt) triggerCheckIn(order, e); else e.stopPropagation(); }}
+            title={shipment?.checkedInAt ? `Checked in ${new Date(shipment.checkedInAt).toLocaleDateString()}` : "Click to check in"}
+            className={`inline-block rounded px-2 py-0.5 text-[10px] font-medium transition-colors ${
+              shipment?.checkedInAt
+                ? "bg-emerald-900 text-emerald-300 cursor-default"
+                : "bg-slate-800 text-slate-500 hover:bg-slate-700 hover:text-slate-300 cursor-pointer"
+            }`}
+          >
             {shipment?.checkedInAt ? "✓ In" : "Not in"}
-          </span>
+          </button>
         );
       case "returnCase":
         if (order.returnCase) return <ReturnBadge r={order.returnCase} />;
@@ -843,9 +865,17 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
           : <span className="text-xs text-slate-600">—</span>;
       case "checkedIn":
         return (
-          <span className={`inline-block rounded px-2 py-0.5 text-[10px] font-medium ${shipment?.checkedInAt ? "bg-emerald-900 text-emerald-300" : "bg-slate-800 text-slate-500"}`}>
+          <button
+            onClick={e => { if (!shipment?.checkedInAt) triggerCheckIn(order, e); else e.stopPropagation(); }}
+            title={shipment?.checkedInAt ? `Checked in ${new Date(shipment.checkedInAt).toLocaleDateString()}` : "Click to check in"}
+            className={`inline-block rounded px-2 py-0.5 text-[10px] font-medium transition-colors ${
+              shipment?.checkedInAt
+                ? "bg-emerald-900 text-emerald-300 cursor-default"
+                : "bg-slate-800 text-slate-500 hover:bg-slate-700 hover:text-slate-300 cursor-pointer"
+            }`}
+          >
             {shipment?.checkedInAt ? `✓ ${new Date(shipment.checkedInAt).toLocaleDateString()}` : "Not in"}
-          </span>
+          </button>
         );
       case "returnCase":
         if (order.returnCase) return <ReturnBadge r={order.returnCase} />;
@@ -1445,6 +1475,21 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
         <p className="text-center text-xs text-slate-600">
           {loadedCount.toLocaleString()} of {total.toLocaleString()} orders loaded
         </p>
+      )}
+
+      {checkInTarget && (
+        <CheckInModal
+          orderId={checkInTarget.orderId}
+          trackingNumber={checkInTarget.trackingNumber}
+          itemTitle={checkInTarget.itemTitle}
+          onClose={() => setCheckInTarget(null)}
+          onSuccess={() => {
+            setCheckInTarget(null);
+            // Refresh order data to reflect new check-in status
+            const snapshot = { search, trackingScan, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo, sortBy, sortDir };
+            fetchAll(snapshot);
+          }}
+        />
       )}
     </div>
   );
