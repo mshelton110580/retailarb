@@ -541,7 +541,7 @@ export default function UnitsTable({ categories }: { categories: Category[] }) {
 
       {/* Table */}
       <div className="rounded-lg border border-slate-800 bg-slate-900 overflow-x-auto">
-        <table className="text-sm" style={{ tableLayout: "fixed", minWidth: "100%" }}>
+        <table className="text-sm" style={{ tableLayout: "fixed", width: Math.max(36 + visibleCols.reduce((s, c) => s + colWidths[c.key], 0), 600) }}>
           <colgroup>
             <col style={{ width: 36 }} />
             {visibleCols.map(col => (
