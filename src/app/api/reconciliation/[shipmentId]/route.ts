@@ -95,7 +95,7 @@ export async function GET(
         createdAt: img.created_at,
       })),
       imageCount: u.images.length,
-      needsImages: !goodConditions.has(u.condition_status?.toLowerCase() ?? "") && u.condition_status?.toLowerCase() !== "missing" && u.images.length === 0,
+      needsImages: !goodConditions.has(u.condition_status?.toLowerCase() ?? "") && u.images.length === 0,
     })),
   });
 }
