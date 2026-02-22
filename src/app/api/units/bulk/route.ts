@@ -67,20 +67,24 @@ export async function PATCH(req: Request) {
 
     let updated = 0;
     for (const unit of units) {
-      // Look up return for this order/item — same query as the scan route
-      const existingReturn = await prisma.returns.findFirst({
-        where: { order_id: unit.order_id, item_id: unit.item_id },
-        select: {
-          ebay_state: true,
-          ebay_status: true,
-          return_shipped_date: true,
-          return_delivered_date: true,
-          refund_issued_date: true,
-          actual_refund: true,
-          refund_amount: true,
-          estimated_refund: true
-        }
-      });
+      // Look up return and shipment for this order/item — same logic as the scan route
+      const [existingReturn, shipment] = await Promise.all([
+        prisma.returns.findFirst({
+          where: { order_id: unit.order_id, item_id: unit.item_id },
+          select: {
+            ebay_state: true,
+            ebay_status: true,
+            refund_issued_date: true,
+            actual_refund: true,
+            refund_amount: true,
+            estimated_refund: true
+          }
+        }),
+        prisma.shipments.findFirst({
+          where: { order_id: unit.order_id },
+          select: { delivered_at: true }
+        })
+      ]);
 
       // Replicate scan route state logic exactly
       let inventoryState = computeInventoryState(updates.condition);
@@ -99,18 +103,18 @@ export async function PATCH(req: Request) {
           existingReturn.refund_amount ||
           existingReturn.estimated_refund
         );
-        const itemShippedBack = !!(existingReturn.return_shipped_date || existingReturn.return_delivered_date);
+        // Order never delivered to us (outbound shipment status)
+        const orderNeverDelivered = !shipment?.delivered_at;
 
-        if (itemShippedBack) {
-          inventoryState = "returned";
-        } else if (isClosed) {
+        if (isClosed) {
           if (hasRefund) {
             // Closed with refund — compensated, item kept
             inventoryState = "parts_repair";
-          } else {
-            // Closed, no refund, item never shipped back — possible chargeback
+          } else if (orderNeverDelivered) {
+            // Closed, no refund, order never delivered to us — possible chargeback
             inventoryState = "possible_chargeback";
           }
+          // else: closed, no refund, but we did receive it — leave as condition-based state
         } else {
           inventoryState = "to_be_returned";
         }

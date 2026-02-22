@@ -275,7 +275,6 @@ export async function POST(req: Request) {
             where: { order_id: shipment.order_id, item_id: targetItem.item_id },
             select: {
               ebay_state: true, ebay_status: true,
-              return_shipped_date: true, return_delivered_date: true,
               refund_issued_date: true, actual_refund: true,
               refund_amount: true, estimated_refund: true
             }
@@ -291,21 +290,20 @@ export async function POST(req: Request) {
               existingReturn.refund_issued_date || existingReturn.actual_refund ||
               existingReturn.refund_amount || existingReturn.estimated_refund
             );
-            const itemShippedBack = !!(existingReturn.return_shipped_date || existingReturn.return_delivered_date);
+            // Order never delivered to us (outbound shipment status)
+            const orderNeverDelivered = !shipment.delivered_at;
 
-            if (itemShippedBack) {
-              // Item physically shipped or delivered back to seller
-              inventoryState = "returned";
-            } else if (isClosed) {
+            if (isClosed) {
               if (hasRefund) {
                 // Closed with refund — compensated, item kept
                 inventoryState = "parts_repair";
-              } else {
-                // Closed, no refund, item never shipped back — possible chargeback
+              } else if (orderNeverDelivered) {
+                // Closed, no refund, order never delivered to us — possible chargeback
                 inventoryState = "possible_chargeback";
               }
+              // else: closed, no refund, but we did receive it — leave as condition-based state
             } else {
-              // Open return filed, not yet shipped — need to send back
+              // Open return filed — need to send back
               inventoryState = "to_be_returned";
             }
           }

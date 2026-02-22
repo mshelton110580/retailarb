@@ -50,8 +50,6 @@ export async function updateInventoryStatesFromReturns() {
       ebay_state: true,
       ebay_status: true,
       ebay_type: true,
-      return_shipped_date: true,
-      return_delivered_date: true,
       refund_issued_date: true,
       actual_refund: true,
       refund_amount: true,
@@ -62,30 +60,34 @@ export async function updateInventoryStatesFromReturns() {
   for (const ret of returns) {
     if (!ret.order_id) continue;
 
-    const units = await prisma.received_units.findMany({
-      where: { order_id: ret.order_id, item_id: ret.item_id || undefined },
-      select: { id: true, inventory_state: true, condition_status: true }
-    });
+    const [units, shipment] = await Promise.all([
+      prisma.received_units.findMany({
+        where: { order_id: ret.order_id, item_id: ret.item_id || undefined },
+        select: { id: true, inventory_state: true, condition_status: true }
+      }),
+      prisma.shipments.findFirst({
+        where: { order_id: ret.order_id },
+        select: { delivered_at: true }
+      })
+    ]);
 
     for (const unit of units) {
       let newState: string | null = null;
       const isBadCondition = !goodConditions.has(unit.condition_status?.toLowerCase() ?? "");
       const hasRefund = !!(ret.refund_issued_date || ret.actual_refund || ret.refund_amount || ret.estimated_refund);
-      const itemShippedBack = !!(ret.return_shipped_date || ret.return_delivered_date);
+      // Order never delivered to us (outbound shipment status)
+      const orderNeverDelivered = !shipment?.delivered_at;
 
-      if (itemShippedBack) {
-        // Item physically shipped/delivered back
-        newState = "returned";
-      } else if (isReturnClosed(ret)) {
+      if (isReturnClosed(ret)) {
         if (hasRefund) {
           // Closed with refund — compensated, item kept
           if (isBadCondition) newState = "parts_repair";
           // Good condition + refund: stays on_hand (no state change)
-        } else {
-          // Closed, no refund, item never shipped back — possible chargeback:
-          // order not refunded, return no longer open, item not returned/in transit
+        } else if (orderNeverDelivered) {
+          // Closed, no refund, order never delivered to us — possible chargeback
           newState = "possible_chargeback";
         }
+        // else: closed, no refund, but order was delivered — leave state unchanged
       } else {
         // Open return — needs to be sent back
         newState = "to_be_returned";
@@ -129,9 +131,7 @@ export async function updateInventoryStatesFromReturns() {
           refund_issued_date: true,
           actual_refund: true,
           refund_amount: true,
-          estimated_refund: true,
-          return_shipped_date: true,
-          return_delivered_date: true
+          estimated_refund: true
         }
       })
     ]);
@@ -143,11 +143,6 @@ export async function updateInventoryStatesFromReturns() {
       associatedReturn?.actual_refund ||
       associatedReturn?.refund_amount ||
       associatedReturn?.estimated_refund
-    );
-    // Item shipped back via associated return
-    const itemShippedBack = !!(
-      associatedReturn?.return_shipped_date ||
-      associatedReturn?.return_delivered_date
     );
 
     // Resolve item_id: prefer item_id column, fall back to ebay_item_id
@@ -165,10 +160,10 @@ export async function updateInventoryStatesFromReturns() {
       let newState: string | null = null;
 
       if (isInrClosed(inr)) {
-        if (wasDelivered || itemShippedBack || hasRefund) {
-          // INR closed legitimately — delivered, returned, or refunded — no action needed
+        if (wasDelivered || hasRefund) {
+          // INR closed legitimately — delivered or refunded — no action needed
         } else {
-          // INR closed, no delivery, no return, no refund — possible chargeback
+          // INR closed, order never delivered to us, no refund — possible chargeback
           newState = "possible_chargeback";
         }
       } else if (inr.ebay_status || inr.ebay_state) {
