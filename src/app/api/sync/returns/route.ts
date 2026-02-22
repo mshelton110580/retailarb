@@ -407,6 +407,8 @@ async function upsertInquiry(inq: EbayInquirySummary, token: string) {
   let fullInquiry: any = null;
   try {
     fullInquiry = await getInquiry(token, inquiryId);
+    console.log(`[Sync Inquiries] Full inquiry ${inquiryId} top-level keys:`, Object.keys(fullInquiry ?? {}));
+    console.log(`[Sync Inquiries] Full inquiry ${inquiryId} raw:`, JSON.stringify(fullInquiry, null, 2));
 
     // Extract delivery information from inquiry tracking details
     if (resolvedOrderId && fullInquiry?.inquiryHistoryDetails?.shipmentTrackingDetails) {
