@@ -273,7 +273,11 @@ export async function POST(req: Request) {
           // Compute inventory state
           const existingReturn = await prisma.returns.findFirst({
             where: { order_id: shipment.order_id, item_id: targetItem.item_id },
-            select: { ebay_state: true, ebay_status: true }
+            select: {
+              ebay_state: true, ebay_status: true,
+              return_shipped_date: true, return_delivered_date: true,
+              refund_issued_date: true, actual_refund: true
+            }
           });
 
           let inventoryState = computeInventoryState(conditionStatus);
@@ -282,26 +286,20 @@ export async function POST(req: Request) {
               existingReturn.ebay_state === "CLOSED" || existingReturn.ebay_status === "CLOSED" ||
               existingReturn.ebay_state === "REFUND_ISSUED" || existingReturn.ebay_state === "RETURN_CLOSED" ||
               existingReturn.ebay_status === "REFUND_ISSUED" || existingReturn.ebay_status === "LESS_THAN_A_FULL_REFUND_ISSUED";
-            // Refund determined by original_total vs current totals.total
-            const originalTotal = shipment.order?.original_total != null ? Number(shipment.order.original_total) : null;
-            const currentTotal = shipment.order?.totals && typeof shipment.order.totals === "object" && "total" in (shipment.order.totals as any)
-              ? Number((shipment.order.totals as any).total)
-              : null;
-            const hasRefund = originalTotal !== null && currentTotal !== null && currentTotal < originalTotal;
-            // Order never delivered to us (outbound shipment status)
-            const orderNeverDelivered = !shipment.delivered_at;
 
-            if (isClosed) {
-              if (hasRefund) {
+            if (existingReturn.return_shipped_date || existingReturn.return_delivered_date) {
+              // Item physically shipped or delivered back to seller
+              inventoryState = "returned";
+            } else if (isClosed) {
+              if (existingReturn.refund_issued_date || existingReturn.actual_refund) {
                 // Closed with refund — compensated, item kept
                 inventoryState = "parts_repair";
-              } else if (orderNeverDelivered) {
-                // Closed, no refund, order never delivered to us — possible chargeback
-                inventoryState = "possible_chargeback";
+              } else {
+                // Closed, no refund, no return tracking — still needs action
+                inventoryState = "to_be_returned";
               }
-              // else: closed, no refund, but we did receive it — leave as condition-based state
             } else {
-              // Open return filed — need to send back
+              // Open return filed, not yet shipped — need to send back
               inventoryState = "to_be_returned";
             }
           }

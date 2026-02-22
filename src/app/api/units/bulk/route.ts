@@ -67,21 +67,18 @@ export async function PATCH(req: Request) {
 
     let updated = 0;
     for (const unit of units) {
-      // Look up return, shipment, and order — same logic as the scan route
-      const [existingReturn, shipment, order] = await Promise.all([
-        prisma.returns.findFirst({
-          where: { order_id: unit.order_id, item_id: unit.item_id },
-          select: { ebay_state: true, ebay_status: true }
-        }),
-        prisma.shipments.findFirst({
-          where: { order_id: unit.order_id },
-          select: { delivered_at: true }
-        }),
-        prisma.orders.findUnique({
-          where: { order_id: unit.order_id ?? "" },
-          select: { original_total: true, totals: true }
-        })
-      ]);
+      // Look up return for this order/item — same query as the scan route
+      const existingReturn = await prisma.returns.findFirst({
+        where: { order_id: unit.order_id, item_id: unit.item_id },
+        select: {
+          ebay_state: true,
+          ebay_status: true,
+          return_shipped_date: true,
+          return_delivered_date: true,
+          refund_issued_date: true,
+          actual_refund: true
+        }
+      });
 
       // Replicate scan route state logic exactly
       let inventoryState = computeInventoryState(updates.condition);
@@ -94,24 +91,17 @@ export async function PATCH(req: Request) {
           existingReturn.ebay_state === "RETURN_CLOSED" ||
           existingReturn.ebay_status === "REFUND_ISSUED" ||
           existingReturn.ebay_status === "LESS_THAN_A_FULL_REFUND_ISSUED";
-        // Refund determined by original_total vs current totals.total
-        const originalTotal = order?.original_total != null ? Number(order.original_total) : null;
-        const currentTotal = order?.totals && typeof order.totals === "object" && "total" in (order.totals as any)
-          ? Number((order.totals as any).total)
-          : null;
-        const hasRefund = originalTotal !== null && currentTotal !== null && currentTotal < originalTotal;
-        // Order never delivered to us (outbound shipment status)
-        const orderNeverDelivered = !shipment?.delivered_at;
 
-        if (isClosed) {
-          if (hasRefund) {
+        if (existingReturn.return_shipped_date || existingReturn.return_delivered_date) {
+          inventoryState = "returned";
+        } else if (isClosed) {
+          if (existingReturn.refund_issued_date || existingReturn.actual_refund) {
             // Closed with refund — compensated, item kept
             inventoryState = "parts_repair";
-          } else if (orderNeverDelivered) {
-            // Closed, no refund, order never delivered to us — possible chargeback
-            inventoryState = "possible_chargeback";
+          } else {
+            // Closed, no refund, no return tracking — still needs action
+            inventoryState = "to_be_returned";
           }
-          // else: closed, no refund, but we did receive it — leave as condition-based state
         } else {
           inventoryState = "to_be_returned";
         }
