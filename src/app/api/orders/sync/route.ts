@@ -189,15 +189,25 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
           });
           let shipmentId: string;
           if (existingShipment) {
+            // If eBay's order API has no actualDelivery but the inquiry sync already wrote
+            // a delivered_at (e.g. via closed INR case), preserve that value and status.
+            const inrDeliveredAt = !order.delivery.actualDelivery && existingShipment.delivered_at
+              ? existingShipment.delivered_at
+              : null;
+            const effectiveDeliveredAt = order.delivery.actualDelivery
+              ? new Date(order.delivery.actualDelivery)
+              : inrDeliveredAt;
+            const effectiveStatus = effectiveDeliveredAt ? "delivered" : derivedStatus;
+
             await prisma.shipments.update({
               where: { id: existingShipment.id },
               data: {
-                derived_status: derivedStatus,
+                derived_status: effectiveStatus,
                 estimated_min: order.delivery.estimatedMin ? new Date(order.delivery.estimatedMin) : null,
                 estimated_max: order.delivery.estimatedMax ? new Date(order.delivery.estimatedMax) : null,
                 scheduled_min: order.delivery.scheduledMin ? new Date(order.delivery.scheduledMin) : null,
                 scheduled_max: order.delivery.scheduledMax ? new Date(order.delivery.scheduledMax) : null,
-                delivered_at: order.delivery.actualDelivery ? new Date(order.delivery.actualDelivery) : null,
+                delivered_at: effectiveDeliveredAt,
                 last_refreshed_at: new Date(),
                 expected_units: totalExpectedUnits
               }

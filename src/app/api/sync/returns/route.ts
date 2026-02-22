@@ -407,9 +407,6 @@ async function upsertInquiry(inq: EbayInquirySummary, token: string) {
   let fullInquiry: any = null;
   try {
     fullInquiry = await getInquiry(token, inquiryId);
-    console.log(`[Sync Inquiries] Full inquiry ${inquiryId} top-level keys:`, Object.keys(fullInquiry ?? {}));
-    console.log(`[Sync Inquiries] Full inquiry ${inquiryId} raw:`, JSON.stringify(fullInquiry, null, 2));
-
     // Extract delivery information from inquiry tracking details
     if (resolvedOrderId && fullInquiry?.inquiryHistoryDetails?.shipmentTrackingDetails) {
       const trackingDetails = fullInquiry.inquiryHistoryDetails.shipmentTrackingDetails;
@@ -428,7 +425,6 @@ async function upsertInquiry(inq: EbayInquirySummary, token: string) {
           // Look for case expiration (usually happens after delivery confirmation)
           if (action.includes('expired') && eventDate) {
             deliveryDate = new Date(eventDate);
-            console.log(`[Sync Inquiries] Order ${resolvedOrderId}: Found delivery via case expiration on ${eventDate}`);
             break;
           }
         }
@@ -444,7 +440,7 @@ async function upsertInquiry(inq: EbayInquirySummary, token: string) {
               }
             });
             if (updated.count > 0) {
-              console.log(`[Sync Inquiries] Order ${resolvedOrderId}: Updated delivery date to ${deliveryDate.toISOString()}`);
+              console.log(`[Sync Inquiries] Order ${resolvedOrderId}: Set delivered_at from INR case expiry (${deliveryDate.toISOString().slice(0,10)})`);
             }
           } catch (err: any) {
             console.error(`[Sync Inquiries] Failed to update shipment delivery for ${resolvedOrderId}:`, err.message);
