@@ -15,12 +15,15 @@ type ReceivedUnit = {
 
 type MatchedOrder = {
   orderId: string;
+  shipmentId: string | null;
   items: Array<{ title: string; itemId: string; qty: number; price: string }>;
   checkedIn: boolean;
   expectedUnits: number;
   scannedUnits: number;
   scanStatus: string | null;
   isLot: boolean;
+  lotSize: number | null;
+  orderQty: number;
   receivedUnits: ReceivedUnit[];
 };
 
@@ -337,7 +340,11 @@ export default function ScanList({ entries }: { entries: ScanEntry[] }) {
               />
             </div>
             <span className="text-xs text-slate-400 whitespace-nowrap">
-              {order.isLot ? `${order.scannedUnits} scanned (listed: ${order.expectedUnits})` : `${order.scannedUnits}/${order.expectedUnits} units`}
+              {order.isLot
+                ? order.lotSize && order.orderQty > 1
+                  ? `${order.orderQty} lots × ${order.lotSize} units (${order.scannedUnits} total)`
+                  : `${order.scannedUnits} scanned (qty: ${order.orderQty})`
+                : `${order.scannedUnits}/${order.expectedUnits} units`}
             </span>
           </div>
         )}

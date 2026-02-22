@@ -56,9 +56,14 @@ export default async function ReceivingPage({
               category: { select: { id: true, category_name: true } }
             }
           });
+          const orderItems = m.shipment!.order!.order_items;
+          const orderQty = orderItems.reduce((s, i) => s + i.qty, 0);
+          const lotSize = m.shipment!.lot_size ??
+            (m.shipment!.is_lot && orderQty > 0 ? Math.ceil(m.shipment!.scanned_units / orderQty) : null);
           return {
             orderId: m.shipment!.order_id,
-            items: m.shipment!.order!.order_items.map((i) => ({
+            shipmentId: m.shipment!.id,
+            items: orderItems.map((i) => ({
               title: i.title,
               itemId: i.item_id,
               qty: i.qty,
@@ -69,6 +74,8 @@ export default async function ReceivingPage({
             scannedUnits: m.shipment!.scanned_units,
             scanStatus: m.shipment!.scan_status,
             isLot: m.shipment!.is_lot,
+            lotSize,
+            orderQty,
             receivedUnits: units.map((u) => ({
               id: u.id,
               unitIndex: u.unit_index,
@@ -146,7 +153,7 @@ export default async function ReceivingPage({
       order: {
         include: {
           order_items: true,
-          shipments: { select: { expected_units: true, scanned_units: true, scan_status: true, is_lot: true, checked_in_at: true } }
+          shipments: { select: { id: true, expected_units: true, scanned_units: true, scan_status: true, is_lot: true, lot_size: true, checked_in_at: true } }
         }
       }
     }
@@ -154,6 +161,7 @@ export default async function ReceivingPage({
 
   type ImportOrderMap = {
     orderId: string;
+    shipmentId: string | null;
     trackingLast8: string;
     receivedAt: string;
     receivedUnits: ScanEntry["matchedOrders"][0]["receivedUnits"];
@@ -162,6 +170,8 @@ export default async function ReceivingPage({
     scannedUnits: number;
     scanStatus: string | null;
     isLot: boolean;
+    lotSize: number | null;
+    orderQty: number;
     checkedIn: boolean;
   };
 
@@ -172,12 +182,18 @@ export default async function ReceivingPage({
     const tl8 = orderToTrackingLast8.get(unit.order_id) ?? "????????";
     const shipment = unit.order?.shipments?.[0];
     if (!importGroupsByOrder.has(unit.order_id)) {
+      const orderItems = unit.order?.order_items ?? [];
+      const oQty = orderItems.reduce((s, i) => s + i.qty, 0);
+      const isLot = shipment?.is_lot ?? false;
+      const lotSize = shipment?.lot_size ??
+        (isLot && oQty > 0 ? Math.ceil((shipment?.scanned_units ?? 0) / oQty) : null);
       importGroupsByOrder.set(unit.order_id, {
         orderId: unit.order_id,
+        shipmentId: shipment?.id ?? null,
         trackingLast8: tl8,
         receivedAt: unit.received_at.toISOString(),
         receivedUnits: [],
-        items: (unit.order?.order_items ?? []).map(i => ({
+        items: orderItems.map(i => ({
           title: i.title ?? ("Item " + i.item_id),
           itemId: i.item_id,
           qty: i.qty,
@@ -186,7 +202,9 @@ export default async function ReceivingPage({
         expectedUnits: shipment?.expected_units ?? 0,
         scannedUnits: shipment?.scanned_units ?? 0,
         scanStatus: shipment?.scan_status ?? null,
-        isLot: shipment?.is_lot ?? false,
+        isLot,
+        lotSize,
+        orderQty: oQty,
         checkedIn: Boolean(shipment?.checked_in_at)
       });
     }
@@ -234,12 +252,15 @@ export default async function ReceivingPage({
       date: orders[0].receivedAt,
       matchedOrders: orders.map(o => ({
         orderId: o.orderId,
+        shipmentId: o.shipmentId,
         items: o.items,
         checkedIn: o.checkedIn,
         expectedUnits: o.expectedUnits,
         scannedUnits: o.scannedUnits,
         scanStatus: o.scanStatus,
         isLot: o.isLot,
+        lotSize: o.lotSize,
+        orderQty: o.orderQty,
         receivedUnits: o.receivedUnits
       }))
     });
