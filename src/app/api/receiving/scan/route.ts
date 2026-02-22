@@ -182,11 +182,7 @@ export async function POST(req: Request) {
         },
         select: {
           ebay_state: true,
-          ebay_status: true,
-          refund_issued_date: true,
-          actual_refund: true,
-          refund_amount: true,
-          estimated_refund: true
+          ebay_status: true
         }
       });
 
@@ -204,12 +200,12 @@ export async function POST(req: Request) {
           existingReturn.ebay_state === "RETURN_CLOSED" ||
           existingReturn.ebay_status === "REFUND_ISSUED" ||
           existingReturn.ebay_status === "LESS_THAN_A_FULL_REFUND_ISSUED";
-        const hasRefund = !!(
-          existingReturn.refund_issued_date ||
-          existingReturn.actual_refund ||
-          existingReturn.refund_amount ||
-          existingReturn.estimated_refund
-        );
+        // Refund determined by original_total vs current totals.total
+        const originalTotal = shipment.order?.original_total != null ? Number(shipment.order.original_total) : null;
+        const currentTotal = shipment.order?.totals && typeof shipment.order.totals === "object" && "total" in (shipment.order.totals as any)
+          ? Number((shipment.order.totals as any).total)
+          : null;
+        const hasRefund = originalTotal !== null && currentTotal !== null && currentTotal < originalTotal;
         // Order never shipped or delivered to us (outbound shipment status)
         const orderNeverDelivered = !shipment.delivered_at;
 

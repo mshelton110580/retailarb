@@ -67,22 +67,19 @@ export async function PATCH(req: Request) {
 
     let updated = 0;
     for (const unit of units) {
-      // Look up return and shipment for this order/item — same logic as the scan route
-      const [existingReturn, shipment] = await Promise.all([
+      // Look up return, shipment, and order — same logic as the scan route
+      const [existingReturn, shipment, order] = await Promise.all([
         prisma.returns.findFirst({
           where: { order_id: unit.order_id, item_id: unit.item_id },
-          select: {
-            ebay_state: true,
-            ebay_status: true,
-            refund_issued_date: true,
-            actual_refund: true,
-            refund_amount: true,
-            estimated_refund: true
-          }
+          select: { ebay_state: true, ebay_status: true }
         }),
         prisma.shipments.findFirst({
           where: { order_id: unit.order_id },
           select: { delivered_at: true }
+        }),
+        prisma.orders.findUnique({
+          where: { order_id: unit.order_id ?? "" },
+          select: { original_total: true, totals: true }
         })
       ]);
 
@@ -97,12 +94,12 @@ export async function PATCH(req: Request) {
           existingReturn.ebay_state === "RETURN_CLOSED" ||
           existingReturn.ebay_status === "REFUND_ISSUED" ||
           existingReturn.ebay_status === "LESS_THAN_A_FULL_REFUND_ISSUED";
-        const hasRefund = !!(
-          existingReturn.refund_issued_date ||
-          existingReturn.actual_refund ||
-          existingReturn.refund_amount ||
-          existingReturn.estimated_refund
-        );
+        // Refund determined by original_total vs current totals.total
+        const originalTotal = order?.original_total != null ? Number(order.original_total) : null;
+        const currentTotal = order?.totals && typeof order.totals === "object" && "total" in (order.totals as any)
+          ? Number((order.totals as any).total)
+          : null;
+        const hasRefund = originalTotal !== null && currentTotal !== null && currentTotal < originalTotal;
         // Order never delivered to us (outbound shipment status)
         const orderNeverDelivered = !shipment?.delivered_at;
 

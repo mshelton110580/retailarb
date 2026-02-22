@@ -3,6 +3,23 @@ import { prisma } from "@/lib/db";
 const CLOSED_STATES = ["CLOSED"];
 
 /**
+ * Determine if a refund was issued for an order by comparing original_total
+ * (what was paid at purchase) to totals.total (current eBay balance).
+ * A refund exists if the current total is less than the original total.
+ */
+function orderHasRefund(order: {
+  original_total: any;
+  totals: any;
+}): boolean {
+  const originalTotal = order.original_total != null ? Number(order.original_total) : null;
+  const currentTotal = order.totals && typeof order.totals === "object" && "total" in order.totals
+    ? Number((order.totals as any).total)
+    : null;
+  if (originalTotal === null || currentTotal === null) return false;
+  return currentTotal < originalTotal;
+}
+
+/**
  * Check if a return is closed (matching inventory/returns page logic)
  */
 function isReturnClosed(ret: {
@@ -50,10 +67,9 @@ export async function updateInventoryStatesFromReturns() {
       ebay_state: true,
       ebay_status: true,
       ebay_type: true,
-      refund_issued_date: true,
-      actual_refund: true,
-      refund_amount: true,
-      estimated_refund: true
+      order: {
+        select: { original_total: true, totals: true }
+      }
     }
   });
 
@@ -74,7 +90,8 @@ export async function updateInventoryStatesFromReturns() {
     for (const unit of units) {
       let newState: string | null = null;
       const isBadCondition = !goodConditions.has(unit.condition_status?.toLowerCase() ?? "");
-      const hasRefund = !!(ret.refund_issued_date || ret.actual_refund || ret.refund_amount || ret.estimated_refund);
+      // Refund determined by original_total vs current totals.total
+      const hasRefund = ret.order ? orderHasRefund(ret.order) : false;
       // Order never delivered to us (outbound shipment status)
       const orderNeverDelivered = !shipment?.delivered_at;
 
@@ -119,31 +136,21 @@ export async function updateInventoryStatesFromReturns() {
   for (const inr of inrCases) {
     if (!inr.order_id) continue;
 
-    // Look up shipment delivery status and any associated return for this order
-    const [shipment, associatedReturn] = await Promise.all([
+    // Look up shipment delivery status and order totals for refund check
+    const [shipment, order] = await Promise.all([
       prisma.shipments.findFirst({
         where: { order_id: inr.order_id },
         select: { delivered_at: true }
       }),
-      prisma.returns.findFirst({
+      prisma.orders.findUnique({
         where: { order_id: inr.order_id },
-        select: {
-          refund_issued_date: true,
-          actual_refund: true,
-          refund_amount: true,
-          estimated_refund: true
-        }
+        select: { original_total: true, totals: true }
       })
     ]);
 
     const wasDelivered = !!shipment?.delivered_at;
-    // For INR: also check if a refund was issued via an associated return
-    const hasRefund = !!(
-      associatedReturn?.refund_issued_date ||
-      associatedReturn?.actual_refund ||
-      associatedReturn?.refund_amount ||
-      associatedReturn?.estimated_refund
-    );
+    // Refund determined by original_total vs current totals.total
+    const hasRefund = order ? orderHasRefund(order) : false;
 
     // Resolve item_id: prefer item_id column, fall back to ebay_item_id
     const itemId = inr.item_id ?? inr.ebay_item_id ?? undefined;
