@@ -436,6 +436,7 @@ async function upsertInquiry(inq: EbayInquirySummary, token: string) {
               where: { order_id: resolvedOrderId },
               data: {
                 delivered_at: deliveryDate,
+                derived_status: "delivered",
                 last_refreshed_at: new Date()
               }
             });
