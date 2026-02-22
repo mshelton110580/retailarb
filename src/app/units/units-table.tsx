@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 
 type Category = { id: string; category_name: string };
 
@@ -96,12 +97,17 @@ function ConditionCell({
   const [value, setValue] = useState(unit.condition);
   const [newInput, setNewInput] = useState("");
   const [saving, setSaving] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const [dropPos, setDropPos] = useState<{ top: number; left: number } | null>(null);
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  const dropRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!editing) return;
     function handler(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
+      if (
+        dropRef.current && !dropRef.current.contains(e.target as Node) &&
+        triggerRef.current && !triggerRef.current.contains(e.target as Node)
+      ) {
         setEditing(false);
         setNewInput("");
       }
@@ -109,6 +115,16 @@ function ConditionCell({
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [editing]);
+
+  function openDropdown(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    // Position below the trigger, clamped so it doesn't go off the right edge
+    const left = Math.min(rect.left, window.innerWidth - 216);
+    setDropPos({ top: rect.bottom + 4, left });
+    setEditing(true);
+  }
 
   async function save(condition: string) {
     if (!condition || condition === value) { setEditing(false); return; }
@@ -128,49 +144,55 @@ function ConditionCell({
     if (trimmed) await save(trimmed);
   }
 
-  if (!editing) {
-    return (
+  const dropdown = editing && dropPos ? createPortal(
+    <div
+      ref={dropRef}
+      style={{ position: "fixed", top: dropPos.top, left: dropPos.left, zIndex: 9999, width: 208 }}
+      className="bg-slate-900 border border-slate-600 rounded shadow-xl p-2 space-y-1.5"
+      onClick={e => e.stopPropagation()}
+    >
+      <div className="text-xs text-slate-400 font-medium mb-1">Change condition</div>
+      <div className="max-h-48 overflow-y-auto space-y-0.5">
+        {conditions.map(c => (
+          <button key={c} disabled={saving} onClick={() => save(c)}
+            className={`w-full text-left text-xs px-2 py-1 rounded capitalize transition-colors ${
+              c === value ? "bg-blue-700 text-white" : "text-slate-300 hover:bg-slate-700"
+            }`}>
+            {c}
+          </button>
+        ))}
+      </div>
+      <div className="border-t border-slate-700 pt-1.5 flex gap-1">
+        <input
+          type="text"
+          value={newInput}
+          onChange={e => setNewInput(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") saveNew(); if (e.key === "Escape") { setEditing(false); setNewInput(""); } }}
+          placeholder="New condition…"
+          className="flex-1 rounded border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-slate-200 placeholder-slate-600"
+          autoFocus
+        />
+        <button disabled={saving || !newInput.trim()} onClick={saveNew}
+          className="rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700 disabled:opacity-40">
+          Add
+        </button>
+      </div>
+    </div>,
+    document.body
+  ) : null;
+
+  return (
+    <>
       <span
+        ref={triggerRef}
         className="text-xs capitalize text-slate-400 cursor-pointer hover:text-slate-200 hover:underline decoration-dotted"
-        onClick={e => { e.stopPropagation(); setEditing(true); }}
+        onClick={openDropdown}
         title="Click to change condition"
       >
         {value}
       </span>
-    );
-  }
-
-  return (
-    <div ref={ref} className="relative z-20" onClick={e => e.stopPropagation()}>
-      <div className="absolute top-0 left-0 w-52 bg-slate-900 border border-slate-600 rounded shadow-xl p-2 space-y-1.5">
-        <div className="text-xs text-slate-400 font-medium mb-1">Change condition</div>
-        <div className="max-h-40 overflow-y-auto space-y-0.5">
-          {conditions.map(c => (
-            <button key={c} disabled={saving} onClick={() => save(c)}
-              className={`w-full text-left text-xs px-2 py-1 rounded capitalize transition-colors ${
-                c === value ? "bg-blue-700 text-white" : "text-slate-300 hover:bg-slate-700"
-              }`}>
-              {c}
-            </button>
-          ))}
-        </div>
-        <div className="border-t border-slate-700 pt-1.5 flex gap-1">
-          <input
-            type="text"
-            value={newInput}
-            onChange={e => setNewInput(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") saveNew(); if (e.key === "Escape") setEditing(false); }}
-            placeholder="New condition…"
-            className="flex-1 rounded border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-slate-200 placeholder-slate-600"
-            autoFocus
-          />
-          <button disabled={saving || !newInput.trim()} onClick={saveNew}
-            className="rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700 disabled:opacity-40">
-            Add
-          </button>
-        </div>
-      </div>
-    </div>
+      {dropdown}
+    </>
   );
 }
 
