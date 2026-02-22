@@ -197,8 +197,6 @@ export async function GET(req: Request) {
           select: {
             id: true,
             item_id: true,
-            transaction_id: true,
-            order_line_item_id: true,
             title: true,
             qty: true,
             transaction_price: true,
@@ -280,8 +278,6 @@ export async function GET(req: Request) {
         ebayUsername: o.ebay_account?.ebay_username ?? null,
         items: o.order_items.map(i => ({
           itemId: i.item_id,
-          transactionId: i.transaction_id ?? null,
-          orderLineItemId: i.order_line_item_id ?? null,
           title: i.title,
           qty: i.qty,
           price: Number(i.transaction_price),

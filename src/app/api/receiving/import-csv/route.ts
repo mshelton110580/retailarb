@@ -157,11 +157,13 @@ export async function POST(req: Request) {
       });
 
       // Skip only if this order was already fully checked in by a PREVIOUS import/scan run,
-      // AND it has not appeared in the current batch (which would mean it's a lot).
+      // AND it has not appeared in the current batch (which would mean it's a lot),
+      // AND it is not already flagged as a lot (lots always allow more units).
       // processedOrderIds tracks what we've already touched this run — if it's in there,
       // the same tracking appeared again in the sheet → lot, always create more units.
       const seenThisRun = processedOrderIds.has(shipment.order_id);
-      const checkedInPreviously = !seenThisRun && shipment.checked_in_at != null && existingCount >= shipment.expected_units;
+      const isAlreadyLot = shipment.is_lot;
+      const checkedInPreviously = !seenThisRun && !isAlreadyLot && shipment.checked_in_at != null && existingCount >= shipment.expected_units && existingCount > 0;
       const isExactRepeat = checkedInPreviously;
 
       if (isExactRepeat) {
@@ -197,12 +199,16 @@ export async function POST(req: Request) {
         for (let u = 0; u < qty; u++) {
           const unitIndex = existingCount + u + 1;
 
-          // Determine which order item this unit belongs to
+          // Determine which order item this unit belongs to.
+          // If shipment is already a lot, or this unit exceeds expected qty, it's a lot unit → use first item.
+          // Otherwise walk linearly through order items.
           let targetItem = orderItems[0];
-          let runningCount = 0;
-          for (const item of orderItems) {
-            runningCount += item.qty;
-            if (unitIndex <= runningCount) { targetItem = item; break; }
+          if (!isAlreadyLot && unitIndex <= shipment.expected_units) {
+            let runningCount = 0;
+            for (const item of orderItems) {
+              runningCount += item.qty;
+              if (unitIndex <= runningCount) { targetItem = item; break; }
+            }
           }
 
           // Ensure target exists
@@ -315,9 +321,25 @@ export async function POST(req: Request) {
 
         // Update shipment check-in state
         const newScannedCount = existingCount + unitsCreated;
-        // A lot is any shipment where the final scanned count exceeds the listed expected_units
+        const orderQty = orderItems.reduce((sum, item) => sum + item.qty, 0);
+        // A lot is any shipment where the final scanned count exceeds the purchased qty
         const isLot = newScannedCount > shipment.expected_units;
         const scanStatus = isLot ? "check_quantity" : newScannedCount >= shipment.expected_units ? "complete" : "partial";
+
+        // lot_size = ceil(scanned / qty) — best estimate of units per lot
+        const lotSize = isLot && orderQty > 0
+          ? Math.ceil(newScannedCount / orderQty)
+          : (shipment.lot_size ?? null);
+
+        // If this import just triggered lot reclassification, retroactively point all prior
+        // units' order_item_id to the first order item (consistent with lot scan logic).
+        const justBecameLot = !shipment.is_lot && isLot;
+        if (justBecameLot && orderItems[0]) {
+          await prisma.received_units.updateMany({
+            where: { order_id: shipment.order_id },
+            data: { order_item_id: orderItems[0].id }
+          });
+        }
 
         await prisma.shipments.update({
           where: { id: shipment.id },
@@ -325,6 +347,7 @@ export async function POST(req: Request) {
             scanned_units: newScannedCount,
             scan_status: scanStatus,
             is_lot: isLot || shipment.is_lot,
+            lot_size: lotSize,
             checked_in_at: shipment.checked_in_at ?? scannedAt,
             checked_in_by: shipment.checked_in_by ?? auth.session!.user!.id
           }
