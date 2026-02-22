@@ -186,7 +186,9 @@ export async function POST(req: Request) {
           return_shipped_date: true,
           return_delivered_date: true,
           refund_issued_date: true,
-          actual_refund: true
+          actual_refund: true,
+          refund_amount: true,
+          estimated_refund: true
         }
       });
 
@@ -204,17 +206,23 @@ export async function POST(req: Request) {
           existingReturn.ebay_state === "RETURN_CLOSED" ||
           existingReturn.ebay_status === "REFUND_ISSUED" ||
           existingReturn.ebay_status === "LESS_THAN_A_FULL_REFUND_ISSUED";
+        const hasRefund = !!(
+          existingReturn.refund_issued_date ||
+          existingReturn.actual_refund ||
+          existingReturn.refund_amount ||
+          existingReturn.estimated_refund
+        );
+        const itemShippedBack = !!(existingReturn.return_shipped_date || existingReturn.return_delivered_date);
 
-        if (existingReturn.return_shipped_date || existingReturn.return_delivered_date) {
+        if (itemShippedBack) {
           // Item physically shipped or delivered back to seller
           inventoryState = "returned";
         } else if (isClosed) {
-          // Closed return, no return tracking — we kept the item
-          if (existingReturn.refund_issued_date || existingReturn.actual_refund) {
-            // Got a refund and kept it — parts_repair means "compensated, can scrap/part out"
+          if (hasRefund) {
+            // Closed with refund — compensated, item kept
             inventoryState = "parts_repair";
           } else {
-            // Closed with no refund and no return tracking — possible chargeback
+            // Closed, no refund, item never shipped back — possible chargeback
             inventoryState = "possible_chargeback";
           }
         } else {

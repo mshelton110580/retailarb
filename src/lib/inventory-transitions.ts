@@ -71,17 +71,19 @@ export async function updateInventoryStatesFromReturns() {
       let newState: string | null = null;
       const isBadCondition = !goodConditions.has(unit.condition_status?.toLowerCase() ?? "");
       const hasRefund = !!(ret.refund_issued_date || ret.actual_refund || ret.refund_amount || ret.estimated_refund);
+      const itemShippedBack = !!(ret.return_shipped_date || ret.return_delivered_date);
 
-      if (ret.return_shipped_date || ret.return_delivered_date) {
+      if (itemShippedBack) {
         // Item physically shipped/delivered back
         newState = "returned";
       } else if (isReturnClosed(ret)) {
         if (hasRefund) {
-          // Got a refund, kept the item — compensated
+          // Closed with refund — compensated, item kept
           if (isBadCondition) newState = "parts_repair";
-          // Good condition + refund: stays on_hand (no change needed)
+          // Good condition + refund: stays on_hand (no state change)
         } else {
-          // Closed with NO refund and NO return tracking — possible chargeback
+          // Closed, no refund, item never shipped back — possible chargeback:
+          // order not refunded, return no longer open, item not returned/in transit
           newState = "possible_chargeback";
         }
       } else {
@@ -115,12 +117,38 @@ export async function updateInventoryStatesFromReturns() {
   for (const inr of inrCases) {
     if (!inr.order_id) continue;
 
-    // Look up whether the shipment was delivered
-    const shipment = await prisma.shipments.findFirst({
-      where: { order_id: inr.order_id },
-      select: { delivered_at: true }
-    });
+    // Look up shipment delivery status and any associated return for this order
+    const [shipment, associatedReturn] = await Promise.all([
+      prisma.shipments.findFirst({
+        where: { order_id: inr.order_id },
+        select: { delivered_at: true }
+      }),
+      prisma.returns.findFirst({
+        where: { order_id: inr.order_id },
+        select: {
+          refund_issued_date: true,
+          actual_refund: true,
+          refund_amount: true,
+          estimated_refund: true,
+          return_shipped_date: true,
+          return_delivered_date: true
+        }
+      })
+    ]);
+
     const wasDelivered = !!shipment?.delivered_at;
+    // For INR: also check if a refund was issued via an associated return
+    const hasRefund = !!(
+      associatedReturn?.refund_issued_date ||
+      associatedReturn?.actual_refund ||
+      associatedReturn?.refund_amount ||
+      associatedReturn?.estimated_refund
+    );
+    // Item shipped back via associated return
+    const itemShippedBack = !!(
+      associatedReturn?.return_shipped_date ||
+      associatedReturn?.return_delivered_date
+    );
 
     // Resolve item_id: prefer item_id column, fall back to ebay_item_id
     const itemId = inr.item_id ?? inr.ebay_item_id ?? undefined;
@@ -137,11 +165,10 @@ export async function updateInventoryStatesFromReturns() {
       let newState: string | null = null;
 
       if (isInrClosed(inr)) {
-        if (wasDelivered) {
-          // INR closed because item was actually delivered — no action needed
-          // Don't override whatever state the unit is in
+        if (wasDelivered || itemShippedBack || hasRefund) {
+          // INR closed legitimately — delivered, returned, or refunded — no action needed
         } else {
-          // INR closed, order not delivered — suspicious, possible chargeback
+          // INR closed, no delivery, no return, no refund — possible chargeback
           newState = "possible_chargeback";
         }
       } else if (inr.ebay_status || inr.ebay_state) {

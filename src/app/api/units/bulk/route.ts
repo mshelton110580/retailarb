@@ -76,7 +76,9 @@ export async function PATCH(req: Request) {
           return_shipped_date: true,
           return_delivered_date: true,
           refund_issued_date: true,
-          actual_refund: true
+          actual_refund: true,
+          refund_amount: true,
+          estimated_refund: true
         }
       });
 
@@ -84,7 +86,6 @@ export async function PATCH(req: Request) {
       let inventoryState = computeInventoryState(updates.condition);
 
       if (existingReturn) {
-        const goodConditions = new Set(["good", "new", "like_new", "acceptable", "excellent"]);
         const isClosed =
           existingReturn.ebay_state === "CLOSED" ||
           existingReturn.ebay_status === "CLOSED" ||
@@ -92,14 +93,22 @@ export async function PATCH(req: Request) {
           existingReturn.ebay_state === "RETURN_CLOSED" ||
           existingReturn.ebay_status === "REFUND_ISSUED" ||
           existingReturn.ebay_status === "LESS_THAN_A_FULL_REFUND_ISSUED";
+        const hasRefund = !!(
+          existingReturn.refund_issued_date ||
+          existingReturn.actual_refund ||
+          existingReturn.refund_amount ||
+          existingReturn.estimated_refund
+        );
+        const itemShippedBack = !!(existingReturn.return_shipped_date || existingReturn.return_delivered_date);
 
-        if (existingReturn.return_shipped_date || existingReturn.return_delivered_date) {
+        if (itemShippedBack) {
           inventoryState = "returned";
         } else if (isClosed) {
-          if (existingReturn.refund_issued_date || existingReturn.actual_refund) {
+          if (hasRefund) {
+            // Closed with refund — compensated, item kept
             inventoryState = "parts_repair";
           } else {
-            // Closed with no refund and no return tracking — possible chargeback
+            // Closed, no refund, item never shipped back — possible chargeback
             inventoryState = "possible_chargeback";
           }
         } else {
