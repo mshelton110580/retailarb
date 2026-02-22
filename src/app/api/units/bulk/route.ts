@@ -84,6 +84,7 @@ export async function PATCH(req: Request) {
       let inventoryState = computeInventoryState(updates.condition);
 
       if (existingReturn) {
+        const goodConditions = new Set(["good", "new", "like_new", "acceptable", "excellent"]);
         const isClosed =
           existingReturn.ebay_state === "CLOSED" ||
           existingReturn.ebay_status === "CLOSED" ||
@@ -96,10 +97,8 @@ export async function PATCH(req: Request) {
           inventoryState = "returned";
         } else if (isClosed) {
           if (existingReturn.refund_issued_date || existingReturn.actual_refund) {
-            // Closed with refund — compensated, item kept
             inventoryState = "parts_repair";
           } else {
-            // Closed, no refund, no return tracking — still needs action
             inventoryState = "to_be_returned";
           }
         } else {

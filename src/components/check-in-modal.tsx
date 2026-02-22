@@ -71,8 +71,7 @@ export default function CheckInModal({
   const [notes, setNotes] = useState("");
   const [perUnit, setPerUnit] = useState(false); // step through each unit individually
   const [isLotMode, setIsLotMode] = useState(false);
-  // lotCount = units PER LOT (for multi-qty orders) or total lot units (for qty=1)
-  const [lotCount, setLotCount] = useState(2);
+  const [lotCount, setLotCount] = useState(totalQty > 1 ? totalQty : 2);
   const [lotPerUnitCategory, setLotPerUnitCategory] = useState(false);
 
   // Progress state (used in scanning / per-unit modes)
@@ -148,8 +147,7 @@ export default function CheckInModal({
 
   async function submitAll() {
     if (!trackingNumber) { setError("No tracking number for this shipment."); return; }
-    const totalLotUnitsLocal = isLotMode ? (totalQty > 1 ? lotCount * totalQty : lotCount) : totalQty;
-    const effectiveRemaining = isLotMode ? Math.max(totalLotUnitsLocal - alreadyScanned, 1) : remaining;
+    const effectiveRemaining = isLotMode ? Math.max(lotCount - alreadyScanned, 1) : remaining;
     setLoading(true);
     setError(null);
     setStep("scanning");
@@ -349,11 +347,8 @@ export default function CheckInModal({
     );
   }
 
-  // For multi-qty lot orders: lotCount = per-lot units, total = lotCount * qty
-  // For single-qty lot orders: lotCount = total units to scan
-  const totalLotUnits = isLotMode ? (totalQty > 1 ? lotCount * totalQty : lotCount) : totalQty;
-  const effectiveTotal = totalLotUnits;
-  const effectiveRemaining = isLotMode ? Math.max(totalLotUnits - alreadyScanned, 1) : remaining;
+  const effectiveTotal = isLotMode ? lotCount : totalQty;
+  const effectiveRemaining = isLotMode ? Math.max(lotCount - alreadyScanned, 1) : remaining;
 
   const headerTitle =
     step === "category" ? "Select Category" :
@@ -410,20 +405,17 @@ export default function CheckInModal({
               <div className="space-y-2">
                 <div>
                   <label className="mb-1.5 block text-xs font-medium text-slate-400">
-                    {totalQty > 1 ? `Units per lot (qty: ${totalQty})` : "Total units received"}
+                    Total units received
                   </label>
                   <input
                     type="number"
-                    min={2}
+                    min={totalQty + 1}
                     value={lotCount}
-                    onChange={e => setLotCount(Math.max(2, parseInt(e.target.value) || 2))}
+                    onChange={e => setLotCount(Math.max(totalQty + 1, parseInt(e.target.value) || totalQty + 1))}
                     className="w-full rounded border border-amber-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-amber-500"
                   />
                   <p className="mt-1 text-xs text-slate-600">
-                    {totalQty > 1
-                      ? `${totalQty} lots × ${lotCount} units = ${totalQty * lotCount} total to scan`
-                      : `Order qty: ${totalQty} · Scanning ${lotCount} units total`
-                    }
+                    Order qty: {totalQty} · Lot will scan {lotCount - alreadyScanned} units · server detects lot at unit {totalQty + 1}
                   </p>
                 </div>
                 <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">

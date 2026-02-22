@@ -24,8 +24,6 @@ const STATES = [
   { value: "to_be_returned", label: "To Return", color: "text-yellow-400" },
   { value: "parts_repair", label: "Parts/Repair", color: "text-red-400" },
   { value: "returned", label: "Returned", color: "text-slate-500" },
-  { value: "missing", label: "Missing", color: "text-orange-400" },
-  { value: "possible_chargeback", label: "Possible Chargeback", color: "text-rose-400" },
 ];
 
 const CONDITIONS = [

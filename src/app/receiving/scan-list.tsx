@@ -15,15 +15,12 @@ type ReceivedUnit = {
 
 type MatchedOrder = {
   orderId: string;
-  shipmentId: string | null;
   items: Array<{ title: string; itemId: string; qty: number; price: string }>;
   checkedIn: boolean;
   expectedUnits: number;
   scannedUnits: number;
   scanStatus: string | null;
   isLot: boolean;
-  lotSize: number | null;
-  orderQty: number;
   receivedUnits: ReceivedUnit[];
 };
 
@@ -280,16 +277,9 @@ export default function ScanList({ entries }: { entries: ScanEntry[] }) {
   }
 
   function renderOrder(order: MatchedOrder, i: number) {
-    const isMultiQtyLot = order.isLot && order.orderQty > 1 && order.lotSize;
-    const lotLabel = isMultiQtyLot
-      ? `${order.orderQty} lots × ${order.lotSize} units = ${order.orderQty * order.lotSize!} expected`
-      : order.isLot
-      ? `${order.scannedUnits} scanned (listed: ${order.expectedUnits})`
-      : `${order.scannedUnits}/${order.expectedUnits} units`;
-
     return (
       <div key={i} className="rounded bg-slate-800 px-3 py-2">
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
           <a href={`/orders/${order.orderId}`} className="text-xs font-medium text-blue-400 hover:underline">
             Order {order.orderId}
           </a>
@@ -297,23 +287,9 @@ export default function ScanList({ entries }: { entries: ScanEntry[] }) {
             {order.checkedIn ? "Checked In" : "Not Checked In"}
           </span>
           {order.isLot && (
-            <span className="rounded bg-fuchsia-900 px-1.5 py-0.5 text-xs text-fuchsia-300">
-              {isMultiQtyLot ? `LOT ×${order.orderQty}` : "LOT"}
-            </span>
-          )}
-          {order.isLot && order.shipmentId && (
-            <a
-              href={`/receiving?reconcile=${order.shipmentId}`}
-              className="rounded border border-fuchsia-700 px-1.5 py-0.5 text-xs text-fuchsia-400 hover:bg-fuchsia-900/30"
-            >
-              Reconcile
-            </a>
+            <span className="rounded bg-fuchsia-900 px-1.5 py-0.5 text-xs text-fuchsia-300">LOT</span>
           )}
         </div>
-
-        {isMultiQtyLot && (
-          <p className="mt-1 text-xs text-fuchsia-400/70">{lotLabel} · scanned: {order.scannedUnits}</p>
-        )}
 
         <div className="mt-1.5 border-l-2 border-slate-700 pl-2">
           <p className="text-[10px] uppercase tracking-wide text-slate-500">Ordered Items</p>
@@ -343,7 +319,9 @@ export default function ScanList({ entries }: { entries: ScanEntry[] }) {
                 style={{ width: `${Math.min(100, order.expectedUnits > 0 ? (order.scannedUnits / order.expectedUnits) * 100 : 100)}%` }}
               />
             </div>
-            <span className="text-xs text-slate-400 whitespace-nowrap">{lotLabel}</span>
+            <span className="text-xs text-slate-400 whitespace-nowrap">
+              {order.isLot ? `${order.scannedUnits} scanned (listed: ${order.expectedUnits})` : `${order.scannedUnits}/${order.expectedUnits} units`}
+            </span>
           </div>
         )}
 

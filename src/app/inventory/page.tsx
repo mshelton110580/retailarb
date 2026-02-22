@@ -18,7 +18,6 @@ type BucketKey =
   | "delivered_not_checked_in"
   | "cancelled"
   | "needs_return"
-  | "possible_chargeback"
   | "missing_units"
   | "check_quantity"
   | "reviewed_lots"
@@ -54,7 +53,6 @@ const cardConfig: Array<{
   { key: "never_shipped", label: "Never Shipped", color: "text-rose-400", border: "border-rose-600", description: "No tracking info uploaded (excludes cancelled)", section: "action" },
   { key: "overdue_not_received", label: "Overdue — Not Received", color: "text-amber-400", border: "border-amber-600", description: "Has tracking, past estimated delivery, no delivery confirmation", section: "action" },
   { key: "needs_return", label: "Needs Return", color: "text-red-400", border: "border-red-600", description: "Checked in with bad condition", section: "action" },
-  { key: "possible_chargeback", label: "Possible Chargeback", color: "text-rose-400", border: "border-rose-600", description: "Closed return/INR with no refund and item not returned — may need chargeback", section: "action" },
   { key: "contact_seller", label: "Contact Seller", color: "text-sky-400", border: "border-sky-600", description: "Keeping item but condition notes were recorded — contact seller about the issue (excludes orders with returns filed)", section: "action" },
   { key: "missing_units", label: "Missing Units", color: "text-orange-400", border: "border-orange-600", description: "Scanned fewer units than expected quantity", section: "action" },
   { key: "check_quantity", label: "Check Quantity (Lots)", color: "text-fuchsia-400", border: "border-fuchsia-600", description: "Lots pending review — verify lot count", section: "action" },
@@ -279,12 +277,6 @@ export default async function InventoryPage({
       .filter((u) => u.inventory_state === "to_be_returned")
       .map((u) => u.order_id)
   );
-  // Possible chargeback: closed return/INR with no refund and item not returned
-  const possibleChargebackOrderIds = new Set(
-    receivedUnits
-      .filter((u) => u.inventory_state === "possible_chargeback")
-      .map((u) => u.order_id)
-  );
   // Orders with any bad condition unit (for contact_seller exclusion)
   const badConditionOrderIds = new Set(
     receivedUnits
@@ -358,7 +350,6 @@ export default async function InventoryPage({
     never_shipped: [],
     overdue_not_received: [],
     needs_return: [],
-    possible_chargeback: [],
     contact_seller: [],
     return_filed_awaiting_response: [],
     return_print_label: [],
@@ -456,11 +447,6 @@ export default async function InventoryPage({
     // if a return was filed since the last sync (open return in orderIdsWithReturns)
     if (needsReturnOrderIds.has(orderId) && !orderIdsWithReturns.has(orderId)) {
       buckets.needs_return.push(shipment);
-    }
-
-    // Possible chargeback: closed return/INR, no refund, item not returned
-    if (possibleChargebackOrderIds.has(orderId)) {
-      buckets.possible_chargeback.push(shipment);
     }
 
     // Contact seller: good condition but has condition notes — keeping the item, seller should be notified
@@ -831,7 +817,6 @@ export default async function InventoryPage({
                             unit.inventory_state === 'parts_repair' ? 'text-orange-400' :
                             unit.inventory_state === 'returned' ? 'text-slate-400' :
                             unit.inventory_state === 'missing' ? 'text-orange-400' :
-                            unit.inventory_state === 'possible_chargeback' ? 'text-rose-400' :
                             'text-slate-300';
                           return (
                             <div key={idx} className="space-y-1">
