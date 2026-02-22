@@ -6,7 +6,6 @@ import { prisma } from "@/lib/db";
 import Link from "next/link";
 import INRAction from "./inr-action";
 import FilterLink from "@/components/filter-link";
-import MarkDeliveredButton from "@/components/mark-delivered-button";
 import { Decimal } from "@prisma/client/runtime/library";
 import { JsonValue } from "@prisma/client/runtime/library";
 
@@ -98,7 +97,7 @@ export default async function INRPage({
       order: {
         include: {
           order_items: true,
-          shipments: { select: { id: true, derived_status: true, delivered_at: true } },
+          shipments: { select: { derived_status: true, delivered_at: true } },
         }
       },
       listing: { select: { title: true } },
@@ -367,12 +366,9 @@ export default async function INRPage({
                             }
                             if (status === "not_received" || status === "not_delivered" || status === "shipped") {
                               return (
-                                <>
-                                  <span className="rounded bg-yellow-900 px-2 py-0.5 text-xs text-yellow-300" title="INR closed but item not yet confirmed delivered">
-                                    {status === "shipped" ? "In Transit" : "Not Confirmed Delivered"}
-                                  </span>
-                                  {shipment?.id && <MarkDeliveredButton shipmentId={shipment.id} />}
-                                </>
+                                <span className="rounded bg-yellow-900 px-2 py-0.5 text-xs text-yellow-300" title="INR closed but item not yet confirmed delivered">
+                                  {status === "shipped" ? "In Transit" : "Not Confirmed Delivered"}
+                                </span>
                               );
                             }
                             return null;

@@ -6,7 +6,6 @@ import { prisma } from "@/lib/db";
 import Link from "next/link";
 import SyncAllButton from "@/components/sync-all-button";
 import CheckQuantityPanel from "@/components/check-quantity-panel";
-import MarkDeliveredButton from "@/components/mark-delivered-button";
 
 type BucketKey =
   | "total_orders"
@@ -779,9 +778,6 @@ export default async function InventoryPage({
                              return 'Never Shipped';
                            })()}
                         </span>
-                        {!shipment.delivered_at && (shipment.tracking_numbers?.length ?? 0) > 0 && (
-                          <MarkDeliveredButton shipmentId={shipment.id} />
-                        )}
                         <span className={`rounded px-1.5 py-0.5 text-xs ${shipment.checked_in_at ? 'bg-emerald-900 text-emerald-300' : 'bg-yellow-900 text-yellow-300'}`}>
                           {shipment.checked_in_at ? `Checked in: ${shipment.checked_in_at.toISOString().slice(0, 10)}` : 'Not checked in'}
                         </span>
