@@ -4,6 +4,9 @@
 # .env is EXCLUDED from git — it lives only on the server.
 set -e
 
+# Branch guardrail — refuse to deploy from any branch other than arbdesk-dev
+bash "$(dirname "$0")/.ai/verify-branch.sh" || exit 1
+
 SERVER="root@68.183.121.176"
 SSH_KEY="$HOME/.ssh/temp_do_key2"
 REMOTE_DIR="/opt/retailarb"
