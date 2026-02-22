@@ -64,6 +64,7 @@ export default function ScanList({ entries }: { entries: ScanEntry[] }) {
   const router = useRouter();
   const [deleting, setDeleting] = useState<string | null>(null);
   const [deletingUnit, setDeletingUnit] = useState<string | null>(null);
+  const [deletingOrder, setDeletingOrder] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -107,6 +108,22 @@ export default function ScanList({ entries }: { entries: ScanEntry[] }) {
       setMessage("Network error. Please try again.");
     } finally {
       setDeletingUnit(null);
+    }
+  }
+
+  async function handleDeleteImportedOrder(orderId: string, trackingLast8: string, unitCount: number) {
+    if (!confirm(`Delete all ${unitCount} unit${unitCount !== 1 ? "s" : ""} for imported order (...${trackingLast8})? This will reverse the check-in.`)) return;
+    setDeletingOrder(orderId);
+    setMessage(null);
+    try {
+      const res = await fetch(`/api/receiving/order/${orderId}`, { method: "DELETE" });
+      const data = await res.json();
+      if (res.ok) { setMessage(`✓ ${data.message}`); router.refresh(); }
+      else setMessage(`Error: ${data.error}`);
+    } catch {
+      setMessage("Network error. Please try again.");
+    } finally {
+      setDeletingOrder(null);
     }
   }
 
@@ -381,6 +398,20 @@ export default function ScanList({ entries }: { entries: ScanEntry[] }) {
                   >
                     {deleting === entry.trackingLast8 ? "Deleting..." : "Delete Lot"}
                   </button>
+                )}
+                {entry.source === "import" && entry.matchedOrders.length > 0 && (
+                  <div className="flex flex-col gap-1 items-end">
+                    {entry.matchedOrders.map((order) => (
+                      <button
+                        key={order.orderId}
+                        onClick={() => handleDeleteImportedOrder(order.orderId, entry.trackingLast8, order.receivedUnits.length)}
+                        disabled={deletingOrder === order.orderId}
+                        className="rounded border border-red-800 px-2 py-1 text-xs text-red-400 hover:bg-red-900 disabled:opacity-50"
+                      >
+                        {deletingOrder === order.orderId ? "Deleting..." : "Delete"}
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
 
