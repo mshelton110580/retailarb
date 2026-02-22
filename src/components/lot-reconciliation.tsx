@@ -248,12 +248,25 @@ export default function LotReconciliation({ shipmentId, onDone }: { shipmentId: 
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800 bg-slate-900/50">
-            {units.map((unit) => {
+            {units.map((unit, idx) => {
               const cond = getUnitValue(unit, "condition") as string;
               const state = getUnitValue(unit, "inventoryState") as string;
               const isEdited = !!unitEdits[unit.id];
 
+              // Show a lot group header when lotSize > 0 and orderQty > 1
+              const lotSize = shipment.lotSize ?? (shipment.orderQty > 0 ? Math.ceil(shipment.scannedUnits / shipment.orderQty) : null);
+              const showLotHeader = lotSize && shipment.orderQty > 1 && idx % lotSize === 0;
+              const lotNumber = lotSize ? Math.floor(idx / lotSize) + 1 : null;
+
               return (
+                <>
+                {showLotHeader && (
+                  <tr key={`lot-header-${lotNumber}`} className="bg-fuchsia-900/20 border-t-2 border-fuchsia-800">
+                    <td colSpan={6} className="px-3 py-1.5 text-xs font-semibold text-fuchsia-300">
+                      Lot {lotNumber} — units {idx + 1}–{Math.min(idx + lotSize!, units.length)}
+                    </td>
+                  </tr>
+                )}
                 <tr key={unit.id} className={`transition-colors ${isEdited ? "bg-blue-900/10" : ""}`}>
                   <td className="px-3 py-2 text-slate-500 font-mono">{unit.unitIndex}</td>
                   <td className="px-3 py-2">
@@ -317,6 +330,7 @@ export default function LotReconciliation({ shipmentId, onDone }: { shipmentId: 
                     )}
                   </td>
                 </tr>
+                </>
               );
             })}
           </tbody>
