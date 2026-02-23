@@ -909,10 +909,10 @@ export default function UnitsTable({ categories: initialCategories }: { categori
                       onChange={e => setNewBulkConditionInput(e.target.value)}
                       onKeyDown={e => { if (e.key === "Enter") addNewBulkCondition(); }}
                       placeholder="New condition…"
-                      className="flex-1 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 placeholder-slate-600" />
+                      className="flex-1 rounded border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-slate-200 placeholder-slate-600" />
                     <button onClick={addNewBulkCondition} disabled={!newBulkConditionInput.trim()}
-                      className="rounded bg-slate-700 px-2 py-1 text-xs text-slate-200 hover:bg-slate-600 disabled:opacity-40">
-                      + Add
+                      className="rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700 disabled:opacity-40">
+                      Add
                     </button>
                   </div>
                 </div>
@@ -929,10 +929,10 @@ export default function UnitsTable({ categories: initialCategories }: { categori
                       onChange={e => setNewBulkCategoryInput(e.target.value)}
                       onKeyDown={e => { if (e.key === "Enter") addNewBulkCategory(); }}
                       placeholder="New category…"
-                      className="flex-1 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 placeholder-slate-600" />
+                      className="flex-1 rounded border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-slate-200 placeholder-slate-600" />
                     <button onClick={addNewBulkCategory} disabled={creatingBulkCategory || !newBulkCategoryInput.trim()}
-                      className="rounded bg-slate-700 px-2 py-1 text-xs text-slate-200 hover:bg-slate-600 disabled:opacity-40">
-                      {creatingBulkCategory ? "…" : "+ Add"}
+                      className="rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700 disabled:opacity-40">
+                      {creatingBulkCategory ? "…" : "Add"}
                     </button>
                   </div>
                 </div>
