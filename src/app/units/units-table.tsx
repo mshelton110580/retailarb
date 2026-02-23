@@ -202,16 +202,18 @@ function CategoryCell({
   unit,
   categories,
   onUpdated,
-  onNewCategory,
+  onCategoryCreated,
 }: {
   unit: Unit;
   categories: Category[];
   onUpdated: (unitId: string, category: { id: string; name: string } | null) => void;
-  onNewCategory: () => void;
+  onCategoryCreated: (cat: Category) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(unit.category);
   const [saving, setSaving] = useState(false);
+  const [newInput, setNewInput] = useState("");
+  const [creating, setCreating] = useState(false);
   const [dropPos, setDropPos] = useState<{ top: number; left: number } | null>(null);
   const triggerRef = useRef<HTMLSpanElement>(null);
   const dropRef = useRef<HTMLDivElement>(null);
@@ -254,6 +256,26 @@ function CategoryCell({
     } finally { setSaving(false); setEditing(false); }
   }
 
+  async function createNew() {
+    const trimmed = newInput.trim();
+    if (!trimmed) return;
+    setCreating(true);
+    try {
+      const res = await fetch("/api/categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmed })
+      });
+      const data = await res.json();
+      if (res.ok || res.status === 409) {
+        const cat: Category = data.category;
+        onCategoryCreated(cat);
+        await save(cat.id);
+        setNewInput("");
+      }
+    } finally { setCreating(false); }
+  }
+
   const dropdown = editing && dropPos ? createPortal(
     <div
       ref={dropRef}
@@ -263,14 +285,14 @@ function CategoryCell({
     >
       <div className="text-xs text-slate-400 font-medium mb-1">Change category</div>
       <div className="max-h-48 overflow-y-auto space-y-0.5">
-        <button disabled={saving} onClick={() => save(null)}
+        <button disabled={saving || creating} onClick={() => save(null)}
           className={`w-full text-left text-xs px-2 py-1 rounded italic transition-colors ${
             !value ? "bg-blue-700 text-white" : "text-slate-500 hover:bg-slate-700"
           }`}>
           Uncategorized
         </button>
         {categories.map(c => (
-          <button key={c.id} disabled={saving} onClick={() => save(c.id)}
+          <button key={c.id} disabled={saving || creating} onClick={() => save(c.id)}
             className={`w-full text-left text-xs px-2 py-1 rounded transition-colors ${
               c.id === value?.id ? "bg-blue-700 text-white" : "text-slate-300 hover:bg-slate-700"
             }`}>
@@ -278,10 +300,19 @@ function CategoryCell({
           </button>
         ))}
       </div>
-      <div className="border-t border-slate-700 pt-1.5">
-        <button onClick={() => { setEditing(false); onNewCategory(); }}
-          className="w-full text-left text-xs px-2 py-1 rounded text-blue-400 hover:bg-slate-700 hover:text-blue-300">
-          + New category…
+      <div className="border-t border-slate-700 pt-1.5 flex gap-1">
+        <input
+          type="text"
+          value={newInput}
+          onChange={e => setNewInput(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") createNew(); if (e.key === "Escape") { setEditing(false); setNewInput(""); } }}
+          placeholder="New category…"
+          className="flex-1 rounded border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-slate-200 placeholder-slate-600"
+          autoFocus
+        />
+        <button disabled={saving || creating || !newInput.trim()} onClick={createNew}
+          className="rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700 disabled:opacity-40">
+          {creating ? "…" : "Add"}
         </button>
       </div>
     </div>,
@@ -459,6 +490,8 @@ export default function UnitsTable({ categories: initialCategories }: { categori
   const [bulkLoading, setBulkLoading] = useState(false);
   const [bulkMessage, setBulkMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [newBulkConditionInput, setNewBulkConditionInput] = useState("");
+  const [newBulkCategoryInput, setNewBulkCategoryInput] = useState("");
+  const [creatingBulkCategory, setCreatingBulkCategory] = useState(false);
 
   const [colWidths, setColWidths] = useState<Record<ColKey, number>>(
     () => Object.fromEntries(ALL_COLUMNS.map(c => [c.key, c.defaultWidth])) as Record<ColKey, number>
@@ -605,6 +638,26 @@ export default function UnitsTable({ categories: initialCategories }: { categori
     setNewBulkConditionInput("");
   }
 
+  async function addNewBulkCategory() {
+    const trimmed = newBulkCategoryInput.trim();
+    if (!trimmed) return;
+    setCreatingBulkCategory(true);
+    try {
+      const res = await fetch("/api/categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmed })
+      });
+      const data = await res.json();
+      if (res.ok || res.status === 409) {
+        const cat: Category = data.category;
+        handleNewCategoryCreated(cat);
+        setBulkCategoryId(cat.id);
+        setNewBulkCategoryInput("");
+      }
+    } finally { setCreatingBulkCategory(false); }
+  }
+
   async function applyBulkEdit() {
     if (selected.size === 0) return;
     const updates: Record<string, any> = {};
@@ -621,7 +674,7 @@ export default function UnitsTable({ categories: initialCategories }: { categori
       const data = await res.json();
       if (res.ok) {
         setBulkMessage({ type: "success", text: `Updated ${data.updated} unit(s).` });
-        setSelected(new Set()); setBulkCondition(""); setBulkCategoryId("__unchanged__"); setNewBulkConditionInput("");
+        setSelected(new Set()); setBulkCondition(""); setBulkCategoryId("__unchanged__"); setNewBulkConditionInput(""); setNewBulkCategoryInput("");
         fetchUnits(true);
       } else {
         setBulkMessage({ type: "error", text: data.error ?? "Update failed." });
@@ -676,7 +729,7 @@ export default function UnitsTable({ categories: initialCategories }: { categori
             unit={unit}
             categories={categories}
             onUpdated={handleCategoryUpdated}
-            onNewCategory={() => setShowNewCategoryModal(true)}
+            onCategoryCreated={handleNewCategoryCreated}
           />
         );
       case "condition":
@@ -864,17 +917,24 @@ export default function UnitsTable({ categories: initialCategories }: { categori
                   </div>
                 </div>
                 <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs text-slate-400">Set Category</label>
-                    <button onClick={() => setShowNewCategoryModal(true)}
-                      className="text-xs text-blue-400 hover:text-blue-300">+ New Category</button>
-                  </div>
+                  <label className="block text-xs text-slate-400 mb-1">Set Category</label>
                   <select value={bulkCategoryId} onChange={e => setBulkCategoryId(e.target.value)}
-                    className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300">
+                    className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300 mb-2">
                     <option value="__unchanged__">— no change —</option>
                     <option value="__none__">Remove category</option>
                     {categories.map(c => <option key={c.id} value={c.id}>{c.category_name}</option>)}
                   </select>
+                  <div className="flex gap-1.5">
+                    <input type="text" value={newBulkCategoryInput}
+                      onChange={e => setNewBulkCategoryInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter") addNewBulkCategory(); }}
+                      placeholder="New category…"
+                      className="flex-1 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 placeholder-slate-600" />
+                    <button onClick={addNewBulkCategory} disabled={creatingBulkCategory || !newBulkCategoryInput.trim()}
+                      className="rounded bg-slate-700 px-2 py-1 text-xs text-slate-200 hover:bg-slate-600 disabled:opacity-40">
+                      {creatingBulkCategory ? "…" : "+ Add"}
+                    </button>
+                  </div>
                 </div>
               </div>
               <button onClick={applyBulkEdit} disabled={bulkLoading}
