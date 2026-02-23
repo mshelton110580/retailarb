@@ -2,7 +2,8 @@
 
 **VPS**: `root@68.183.121.176` (SSH alias: `arbdesk`)
 **Deploy dir**: `/opt/retailarb`
-**Services**: `arbdesk` (Next.js app, port 3000) + `arbdesk-worker` (BullMQ worker)
+**Services**: `arbdesk` (Next.js app, port 3000) + `arbdesk-worker` (BullMQ worker) + `cloudflared` (Cloudflare Tunnel)
+**Public URL**: `https://arbdesk.sheltonpropertiesllc.com` → Cloudflare Tunnel → `http://localhost:3000`
 **Env file**: `/opt/retailarb/.env` (not in git; backed up at `/root/.arbdesk.env`)
 
 ---
@@ -68,6 +69,33 @@ sleep 3
 systemctl is-active arbdesk
 systemctl is-active arbdesk-worker
 curl -s http://localhost:3000/ -o /dev/null -w "HTTP %{http_code}\n"
+
+# Step 13: Verify Cloudflare tunnel is still connected
+systemctl is-active cloudflared
+# Expected: active
+# If failed: systemctl restart cloudflared
+```
+
+---
+
+## Cloudflare Tunnel
+
+The tunnel (`cloudflared.service`) proxies `https://arbdesk.sheltonpropertiesllc.com` → `http://localhost:3000`.
+
+- Tunnel is token-based (no config file) — managed via systemd unit at `/etc/systemd/system/cloudflared.service`
+- Unit has `After=arbdesk.service` — it starts after the app, but does NOT restart if the app goes down mid-session
+- **If the app is stopped or crashes**, cloudflared will return 502 to the browser until the app is back
+- **IMPORTANT**: Never kill the app with `fuser -k 3000/tcp` or manual `pkill` during a live session — always use `systemctl restart arbdesk`. Manual kills leave the port free but cloudflared immediately starts getting connection refused errors.
+
+```bash
+# Check tunnel status
+ssh arbdesk "systemctl is-active cloudflared && journalctl -u cloudflared -n 10 --no-pager"
+
+# Restart tunnel (rarely needed — it auto-reconnects)
+ssh arbdesk "systemctl restart cloudflared"
+
+# Full health check (app + tunnel)
+ssh arbdesk "systemctl is-active arbdesk arbdesk-worker cloudflared && curl -s http://localhost:3000/ -o /dev/null -w 'localhost: HTTP %{http_code}\n'"
 ```
 
 ---
@@ -75,7 +103,7 @@ curl -s http://localhost:3000/ -o /dev/null -w "HTTP %{http_code}\n"
 ## One-Liner Deploy (from Nxcode after push)
 
 ```bash
-ssh arbdesk "cd /opt/retailarb && bash .ai/verify-branch.sh && git fetch origin && git reset --hard origin/arbdesk-dev && [ -f .env ] || cp /root/.arbdesk.env .env && npm ci --legacy-peer-deps && npx prisma generate && npm run build && systemctl restart arbdesk arbdesk-worker && sleep 3 && systemctl is-active arbdesk && curl -s http://localhost:3000/ -o /dev/null -w 'HTTP %{http_code}'"
+ssh arbdesk "cd /opt/retailarb && bash .ai/verify-branch.sh && git fetch origin && git reset --hard origin/arbdesk-dev && [ -f .env ] || cp /root/.arbdesk.env .env && npm ci --legacy-peer-deps && npx prisma generate && npm run build && systemctl restart arbdesk arbdesk-worker && sleep 3 && systemctl is-active arbdesk arbdesk-worker cloudflared && curl -s http://localhost:3000/ -o /dev/null -w 'HTTP %{http_code}'"
 ```
 
 ---

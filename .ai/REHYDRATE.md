@@ -13,6 +13,8 @@ It tracks purchased orders, inbound shipments, receiving/check-in, inventory sta
 - **App**: `src/app/` — App Router pages + API routes
 - **Worker**: `src/worker/index.ts` — BullMQ background jobs (sync, enrichment, snipe, etc.)
 - **Deploy target**: DigitalOcean VPS at `/opt/retailarb` — systemd services `arbdesk` + `arbdesk-worker`
+- **Public URL**: `https://arbdesk.sheltonpropertiesllc.com` via Cloudflare Tunnel (systemd: `cloudflared.service`)
+- **Tunnel routes**: `arbdesk.sheltonpropertiesllc.com` → `http://localhost:3000`
 - **Source of truth**: GitHub `origin/arbdesk-dev`
 
 ---
@@ -30,24 +32,15 @@ It tracks purchased orders, inbound shipments, receiving/check-in, inventory sta
 ## Current Objective
 
 <!-- Update this each session -->
-**Objective**: Fix INR-driven delivery status — closed INR cases where the seller posted tracking
-should update the shipment `derived_status` to `delivered` and set `delivered_at`.
-
-**Definition of done**: Order `02-14043-95213` shows `derived_status=delivered` after a sync,
-without manual DB intervention. The `upsertInquiry()` function in
-`src/app/api/sync/returns/route.ts` correctly extracts delivery date from the full inquiry
-eBay API response and writes it to the `shipments` table.
+**Objective**: No active objective. All known issues resolved.
 
 ---
 
 ## Current State Summary (as of 2026-02-22)
 
 - Branch `arbdesk-dev` is the working branch; `main` is the stable production baseline.
-- Systemd `arbdesk` service is **currently stopped** (last systemd start failed at 15:22 UTC).
-  App is running via a manual `nohup npm exec next start` — **must restart via systemd** on next deploy.
-- Systemd `arbdesk-worker` is **active** (running `npm run worker`).
-- Debug logging temporarily added to `src/app/api/sync/returns/route.ts` (commit `eaa7bed`):
-  prints full eBay inquiry API response. **Remove before final fix commit.**
+- All three systemd services are **active**: `arbdesk`, `arbdesk-worker`, `cloudflared`.
+- INR delivery fix shipped at commit `afba73e` — order `02-14043-95213` shows `derived_status=delivered`.
 - Multi-qty lot detection is fixed (scan + import-csv routes).
 - Receiving log shows correct "2 lots × 6 units" display.
 - Delete button exists for both scanned and imported receiving entries.
@@ -60,6 +53,8 @@ eBay API response and writes it to the `shipments` table.
 |---|---|
 | Branch | `arbdesk-dev` only — never create other branches |
 | Deploy | DigitalOcean VPS via systemd, not Docker Compose or pm2 |
+| Public access | `https://arbdesk.sheltonpropertiesllc.com` → Cloudflare Tunnel → `localhost:3000` |
+| Cloudflare tunnel | systemd `cloudflared.service` — `After=arbdesk.service`. Must keep `arbdesk` running or tunnel gets 502. |
 | DB migrations | `npx prisma migrate dev` (dev) / `npx prisma migrate deploy` (prod) |
 | Inventory states | `on_hand`, `to_be_returned`, `parts_repair`, `returned`, `missing` — see `src/lib/inventory-transitions.ts` |
 | Shipment status | Derived by `deriveShippingStatus()` in `src/lib/shipping.ts` — only uses eBay order API `actualDelivery` field |
@@ -124,6 +119,7 @@ npx prisma migrate deploy
 | `src/worker/index.ts` | BullMQ worker (sync, enrich, returns scrape, snipe, reconcile, alerts) |
 | `deploy.sh` | Deploy script (push to GitHub → SSH to VPS → pull → build → systemctl restart) |
 | `.ai/DEPLOY_DO_VPS.md` | Step-by-step VPS deploy runbook |
+| `/etc/systemd/system/cloudflared.service` | Cloudflare Tunnel systemd unit (VPS only, not in repo) |
 | `.env` (VPS only) | Runtime secrets — never committed, backed up at `/root/.arbdesk.env` on VPS |
 
 ---
