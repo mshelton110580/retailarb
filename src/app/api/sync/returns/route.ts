@@ -411,6 +411,45 @@ async function upsertInquiry(inq: EbayInquirySummary, token: string) {
     if (resolvedOrderId && fullInquiry?.inquiryHistoryDetails?.shipmentTrackingDetails) {
       const trackingDetails = fullInquiry.inquiryHistoryDetails.shipmentTrackingDetails;
 
+      // Write tracking number to tracking_numbers table whenever present,
+      // regardless of currentStatus — this covers cases where the seller provides
+      // tracking via the INR response rather than through the normal eBay shipping flow.
+      const tn = trackingDetails.trackingNumber;
+      if (tn) {
+        try {
+          const shipment = await prisma.shipments.findFirst({ where: { order_id: resolvedOrderId } });
+          if (shipment) {
+            const carrier = trackingDetails.carrierName ?? trackingDetails.carrier ?? null;
+            const existingTn = await prisma.tracking_numbers.findFirst({
+              where: { shipment_id: shipment.id, tracking_number: tn }
+            });
+            if (existingTn) {
+              await prisma.tracking_numbers.update({
+                where: { id: existingTn.id },
+                data: {
+                  carrier,
+                  status_text: trackingDetails.currentStatus ?? null,
+                  last_seen_at: new Date()
+                }
+              });
+            } else {
+              await prisma.tracking_numbers.create({
+                data: {
+                  shipment_id: shipment.id,
+                  tracking_number: tn,
+                  carrier,
+                  status_text: trackingDetails.currentStatus ?? null,
+                  last_seen_at: new Date()
+                }
+              });
+            }
+            console.log(`[Sync Inquiries] Order ${resolvedOrderId}: Wrote INR tracking ${tn} (${trackingDetails.currentStatus ?? 'unknown status'})`);
+          }
+        } catch (err: any) {
+          console.error(`[Sync Inquiries] Failed to write INR tracking for ${resolvedOrderId}:`, err.message);
+        }
+      }
+
       // Check if the tracking shows delivered status
       if (trackingDetails.currentStatus === 'DELIVERED') {
         // Look for delivery date in the history

@@ -11,6 +11,7 @@ type BucketKey =
   | "total_orders"
   | "delivered"
   | "shipped"
+  | "awaiting_shipment"
   | "checked_in"
   | "not_checked_in"
   | "never_shipped"
@@ -45,12 +46,13 @@ const cardConfig: Array<{
   { key: "cancelled", label: "Cancelled & Refunded", color: "text-slate-400", border: "border-slate-600", description: "Order cancelled on eBay, refunded (not actionable)", section: "primary" },
   { key: "delivered", label: "Delivered", color: "text-green-400", border: "border-green-600", description: "eBay confirms delivery", section: "primary" },
   { key: "shipped", label: "In Transit", color: "text-blue-400", border: "border-blue-600", description: "Has tracking, within expected delivery window, not refunded", section: "primary" },
+  { key: "awaiting_shipment", label: "Awaiting Shipment", color: "text-sky-400", border: "border-sky-600", description: "No tracking yet, within expected shipping window", section: "primary" },
   // Warehouse status
   { key: "checked_in", label: "Checked In", color: "text-emerald-400", border: "border-emerald-600", description: "Scanned at warehouse", section: "warehouse" },
   { key: "not_checked_in", label: "Not Checked In", color: "text-yellow-400", border: "border-yellow-600", description: "Not yet scanned at warehouse (includes cancelled orders)", section: "warehouse" },
   // Action items
   { key: "delivered_not_checked_in", label: "Delivered — Not Checked In", color: "text-purple-400", border: "border-purple-600", description: "eBay says delivered but not scanned at warehouse — possible return to sender", section: "action" },
-  { key: "never_shipped", label: "Never Shipped", color: "text-rose-400", border: "border-rose-600", description: "No tracking info uploaded (excludes cancelled)", section: "action" },
+  { key: "never_shipped", label: "Never Shipped", color: "text-rose-400", border: "border-rose-600", description: "No tracking uploaded, past expected ship date (excludes cancelled)", section: "action" },
   { key: "overdue_not_received", label: "Overdue — Not Received", color: "text-amber-400", border: "border-amber-600", description: "Has tracking, past estimated delivery, no delivery confirmation", section: "action" },
   { key: "needs_return", label: "Needs Return", color: "text-red-400", border: "border-red-600", description: "Checked in with bad condition", section: "action" },
   { key: "contact_seller", label: "Contact Seller", color: "text-sky-400", border: "border-sky-600", description: "Keeping item but condition notes were recorded — contact seller about the issue (excludes orders with returns filed)", section: "action" },
@@ -343,6 +345,7 @@ export default async function InventoryPage({
     total_orders: [],
     delivered: [],
     shipped: [],
+    awaiting_shipment: [],
     checked_in: [],
     not_checked_in: [],
     delivered_not_checked_in: [],
@@ -406,9 +409,20 @@ export default async function InventoryPage({
         buckets.never_shipped.push(shipment);
       }
     } else {
-      // Everything else = never shipped (catchall ensures exhaustiveness)
-      // Includes: true never shipped, refunded with open INR/return, overdue shipments
-      buckets.never_shipped.push(shipment);
+      // No tracking: split by whether we're still within the expected shipping window
+      let awaitingExpectedBy: Date | null = null;
+      if (shipment.estimated_max) {
+        awaitingExpectedBy = new Date(shipment.estimated_max);
+      } else if (shipment.order?.purchase_date) {
+        awaitingExpectedBy = new Date(shipment.order.purchase_date);
+        awaitingExpectedBy.setDate(awaitingExpectedBy.getDate() + DEFAULT_TRANSIT_DAYS);
+      }
+
+      if (!isCancelled && !isRefunded && awaitingExpectedBy && now <= awaitingExpectedBy) {
+        buckets.awaiting_shipment.push(shipment);
+      } else {
+        buckets.never_shipped.push(shipment);
+      }
     }
 
     // === WAREHOUSE STATUS ===
@@ -635,7 +649,7 @@ export default async function InventoryPage({
       {/* Primary Delivery Status */}
       <div>
         <h2 className="mb-2 text-sm font-medium text-slate-400 uppercase tracking-wider">Delivery Status</h2>
-        <p className="mb-3 text-xs text-slate-600">Delivered + In Transit + Cancelled + Never Shipped = Total Orders</p>
+        <p className="mb-3 text-xs text-slate-600">Delivered + In Transit + Awaiting Shipment + Cancelled + Never Shipped = Total Orders</p>
         <div className="grid gap-4 md:grid-cols-4">
           {renderCards(primaryCards)}
         </div>
@@ -745,36 +759,37 @@ export default async function InventoryPage({
                           shipment.delivered_at ? 'bg-green-900 text-green-300' :
                           (() => {
                             const hasTracking = (shipment.tracking_numbers?.length ?? 0) > 0;
-                            if (hasTracking && !shipment.delivered_at) {
-                              let expectedBy: Date | null = null;
-                              if (shipment.estimated_max) {
-                                expectedBy = new Date(shipment.estimated_max);
-                              } else if (shipment.order?.purchase_date) {
-                                expectedBy = new Date(shipment.order.purchase_date);
-                                expectedBy.setDate(expectedBy.getDate() + DEFAULT_TRANSIT_DAYS);
-                              }
-                              if (expectedBy && now > expectedBy) {
-                                return 'bg-amber-900 text-amber-300';
-                              }
+                            let expectedBy: Date | null = null;
+                            if (shipment.estimated_max) {
+                              expectedBy = new Date(shipment.estimated_max);
+                            } else if (shipment.order?.purchase_date) {
+                              expectedBy = new Date(shipment.order.purchase_date);
+                              expectedBy.setDate(expectedBy.getDate() + DEFAULT_TRANSIT_DAYS);
                             }
-                            return hasTracking ? 'bg-blue-900 text-blue-300' : 'bg-rose-900 text-rose-300';
+                            if (hasTracking) {
+                              if (expectedBy && now > expectedBy) return 'bg-amber-900 text-amber-300';
+                              return 'bg-blue-900 text-blue-300';
+                            }
+                            if (expectedBy && now <= expectedBy) return 'bg-sky-900 text-sky-300';
+                            return 'bg-rose-900 text-rose-300';
                           })()
                         }`}>
                           {shipment.order?.order_status === 'Cancelled' ? 'Cancelled' :
                            shipment.delivered_at ? 'Delivered' :
                            (() => {
                              const hasTracking = (shipment.tracking_numbers?.length ?? 0) > 0;
-                             if (hasTracking && !shipment.delivered_at) {
-                               let expectedBy: Date | null = null;
-                               if (shipment.estimated_max) {
-                                 expectedBy = new Date(shipment.estimated_max);
-                               } else if (shipment.order?.purchase_date) {
-                                 expectedBy = new Date(shipment.order.purchase_date);
-                                 expectedBy.setDate(expectedBy.getDate() + DEFAULT_TRANSIT_DAYS);
-                               }
+                             let expectedBy: Date | null = null;
+                             if (shipment.estimated_max) {
+                               expectedBy = new Date(shipment.estimated_max);
+                             } else if (shipment.order?.purchase_date) {
+                               expectedBy = new Date(shipment.order.purchase_date);
+                               expectedBy.setDate(expectedBy.getDate() + DEFAULT_TRANSIT_DAYS);
+                             }
+                             if (hasTracking) {
                                if (expectedBy && now > expectedBy) return 'Overdue';
                                return 'In Transit';
                              }
+                             if (expectedBy && now <= expectedBy) return 'Awaiting Shipment';
                              return 'Never Shipped';
                            })()}
                         </span>

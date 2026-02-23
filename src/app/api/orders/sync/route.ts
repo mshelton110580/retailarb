@@ -185,19 +185,23 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
 
           // Upsert shipment - use order_id to find existing
           const existingShipment = await prisma.shipments.findFirst({
-            where: { order_id: String(order.orderId) }
+            where: { order_id: String(order.orderId) },
+            select: { id: true, derived_status: true, delivered_at: true }
           });
           let shipmentId: string;
           if (existingShipment) {
+            // Protect INR-set delivery: if the shipment is already marked delivered
+            // (by INR sync) but eBay's order API has no actualDelivery, don't null it out.
+            const protectDelivery = existingShipment.derived_status === "delivered" && !order.delivery.actualDelivery;
             await prisma.shipments.update({
               where: { id: existingShipment.id },
               data: {
-                derived_status: derivedStatus,
+                derived_status: protectDelivery ? "delivered" : derivedStatus,
                 estimated_min: order.delivery.estimatedMin ? new Date(order.delivery.estimatedMin) : null,
                 estimated_max: order.delivery.estimatedMax ? new Date(order.delivery.estimatedMax) : null,
                 scheduled_min: order.delivery.scheduledMin ? new Date(order.delivery.scheduledMin) : null,
                 scheduled_max: order.delivery.scheduledMax ? new Date(order.delivery.scheduledMax) : null,
-                delivered_at: order.delivery.actualDelivery ? new Date(order.delivery.actualDelivery) : null,
+                delivered_at: protectDelivery ? existingShipment.delivered_at : (order.delivery.actualDelivery ? new Date(order.delivery.actualDelivery) : null),
                 last_refreshed_at: new Date(),
                 expected_units: totalExpectedUnits
               }
