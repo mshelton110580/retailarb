@@ -4,8 +4,8 @@ import { prisma } from "@/lib/db";
 
 /**
  * PATCH /api/units/:unitId
- * Update condition_status and/or notes on a single unit.
- * Body: { condition?: string; notes?: string }
+ * Update condition_status, notes, and/or category_id on a single unit.
+ * Body: { condition?: string; notes?: string; categoryId?: string | null }
  */
 export async function PATCH(
   req: Request,
@@ -27,6 +27,17 @@ export async function PATCH(
   if (typeof body.notes === "string") {
     data.notes = body.notes.trim() || null;
   }
+  if ("categoryId" in body) {
+    if (body.categoryId === null) {
+      data.category_id = null;
+    } else if (typeof body.categoryId === "string" && body.categoryId.trim()) {
+      const cat = await prisma.item_categories.findUnique({ where: { id: body.categoryId } });
+      if (!cat) {
+        return NextResponse.json({ error: "Category not found" }, { status: 404 });
+      }
+      data.category_id = body.categoryId;
+    }
+  }
 
   if (Object.keys(data).length === 0) {
     return NextResponse.json({ error: "No valid fields provided" }, { status: 400 });
@@ -43,7 +54,7 @@ export async function PATCH(
   const updated = await prisma.received_units.update({
     where: { id: unitId },
     data,
-    select: { id: true, condition_status: true, notes: true }
+    select: { id: true, condition_status: true, notes: true, category_id: true }
   });
 
   return NextResponse.json({ ok: true, unit: updated });

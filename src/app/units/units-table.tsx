@@ -196,6 +196,116 @@ function ConditionCell({
   );
 }
 
+// ─── Inline Category Cell ────────────────────────────────────────────────────
+
+function CategoryCell({
+  unit,
+  categories,
+  onUpdated,
+  onNewCategory,
+}: {
+  unit: Unit;
+  categories: Category[];
+  onUpdated: (unitId: string, category: { id: string; name: string } | null) => void;
+  onNewCategory: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(unit.category);
+  const [saving, setSaving] = useState(false);
+  const [dropPos, setDropPos] = useState<{ top: number; left: number } | null>(null);
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  const dropRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!editing) return;
+    function handler(e: MouseEvent) {
+      if (
+        dropRef.current && !dropRef.current.contains(e.target as Node) &&
+        triggerRef.current && !triggerRef.current.contains(e.target as Node)
+      ) {
+        setEditing(false);
+      }
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [editing]);
+
+  function openDropdown(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const left = Math.min(rect.left, window.innerWidth - 216);
+    setDropPos({ top: rect.bottom + 4, left });
+    setEditing(true);
+  }
+
+  async function save(categoryId: string | null) {
+    const newCat = categoryId ? categories.find(c => c.id === categoryId) ?? null : null;
+    const newValue = newCat ? { id: newCat.id, name: newCat.category_name } : null;
+    if (categoryId === (value?.id ?? null)) { setEditing(false); return; }
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/units/${unit.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ categoryId })
+      });
+      if (res.ok) { setValue(newValue); onUpdated(unit.id, newValue); }
+    } finally { setSaving(false); setEditing(false); }
+  }
+
+  const dropdown = editing && dropPos ? createPortal(
+    <div
+      ref={dropRef}
+      style={{ position: "fixed", top: dropPos.top, left: dropPos.left, zIndex: 9999, width: 208 }}
+      className="bg-slate-900 border border-slate-600 rounded shadow-xl p-2 space-y-1.5"
+      onClick={e => e.stopPropagation()}
+    >
+      <div className="text-xs text-slate-400 font-medium mb-1">Change category</div>
+      <div className="max-h-48 overflow-y-auto space-y-0.5">
+        <button disabled={saving} onClick={() => save(null)}
+          className={`w-full text-left text-xs px-2 py-1 rounded italic transition-colors ${
+            !value ? "bg-blue-700 text-white" : "text-slate-500 hover:bg-slate-700"
+          }`}>
+          Uncategorized
+        </button>
+        {categories.map(c => (
+          <button key={c.id} disabled={saving} onClick={() => save(c.id)}
+            className={`w-full text-left text-xs px-2 py-1 rounded transition-colors ${
+              c.id === value?.id ? "bg-blue-700 text-white" : "text-slate-300 hover:bg-slate-700"
+            }`}>
+            {c.category_name}
+          </button>
+        ))}
+      </div>
+      <div className="border-t border-slate-700 pt-1.5">
+        <button onClick={() => { setEditing(false); onNewCategory(); }}
+          className="w-full text-left text-xs px-2 py-1 rounded text-blue-400 hover:bg-slate-700 hover:text-blue-300">
+          + New category…
+        </button>
+      </div>
+    </div>,
+    document.body
+  ) : null;
+
+  return (
+    <>
+      <span
+        ref={triggerRef}
+        className={`text-xs cursor-pointer hover:underline decoration-dotted ${
+          value ? "text-slate-300 hover:text-slate-100" : "text-slate-600 italic hover:text-slate-400"
+        }`}
+        onClick={openDropdown}
+        title="Click to change category"
+      >
+        {value ? value.name : "Uncategorized"}
+        {saving && <span className="ml-1 text-slate-500">…</span>}
+      </span>
+      {dropdown}
+    </>
+  );
+}
+
 // ─── Inline Notes Cell ───────────────────────────────────────────────────────
 
 function NotesCell({
@@ -473,6 +583,10 @@ export default function UnitsTable({ categories: initialCategories }: { categori
     setUnits(prev => prev.map(u => u.id === unitId ? { ...u, notes } : u));
   }
 
+  function handleCategoryUpdated(unitId: string, category: { id: string; name: string } | null) {
+    setUnits(prev => prev.map(u => u.id === unitId ? { ...u, category } : u));
+  }
+
   function handleNewCategoryCreated(cat: Category) {
     setCategories(prev => {
       if (prev.some(c => c.id === cat.id)) return prev;
@@ -557,9 +671,14 @@ export default function UnitsTable({ categories: initialCategories }: { categori
           </div>
         ) : <span className="text-xs text-slate-600">—</span>;
       case "category":
-        return unit.category
-          ? <span className="text-xs text-slate-300">{unit.category.name}</span>
-          : <span className="text-xs text-slate-600 italic">Uncategorized</span>;
+        return (
+          <CategoryCell
+            unit={unit}
+            categories={categories}
+            onUpdated={handleCategoryUpdated}
+            onNewCategory={() => setShowNewCategoryModal(true)}
+          />
+        );
       case "condition":
         return <ConditionCell unit={unit} conditions={conditions} onUpdated={handleConditionUpdated} />;
       case "state":
