@@ -80,6 +80,43 @@ export default function ConditionManager({ conditions }: { conditions: Condition
     }
   }
 
+  const [recomputing, setRecomputing] = useState(false);
+  const [recomputeResult, setRecomputeResult] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
+
+  async function handleRecompute() {
+    if (!confirm(
+      "Recompute inventory states for all units?\n\n" +
+      "This will:\n" +
+      "• Re-evaluate every return against its units\n" +
+      "• Reset good-condition units in completed returns back to On Hand\n" +
+      "• Move bad-condition units with no return to To Return\n\n" +
+      "This cannot be undone."
+    )) return;
+
+    setRecomputing(true);
+    setRecomputeResult(null);
+    try {
+      const res = await fetch("/api/admin/recompute-states", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        setRecomputeResult({
+          type: "success",
+          text: `Done. ${data.total} unit${data.total !== 1 ? "s" : ""} updated ` +
+                `(${data.returnPass} from returns, ${data.orphanPass} bad-condition orphans).`
+        });
+      } else {
+        setRecomputeResult({ type: "error", text: data.error ?? "Recompute failed." });
+      }
+    } catch {
+      setRecomputeResult({ type: "error", text: "Network error." });
+    } finally {
+      setRecomputing(false);
+    }
+  }
+
   const builtinCount = conditions.filter(c => c.isBuiltin).length;
   const customCount = conditions.filter(c => !c.isBuiltin).length;
 
@@ -180,6 +217,37 @@ export default function ConditionManager({ conditions }: { conditions: Condition
           They appear here once at least one unit uses them. To retire a custom condition, reassign all units
           using it to a different condition — it will then become deletable.
         </p>
+      </section>
+
+      {/* Recompute Inventory States */}
+      <section className="rounded-lg border border-amber-800/50 bg-amber-900/10 p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-semibold text-amber-300 mb-1">Recompute Inventory States</h2>
+            <p className="text-xs text-slate-400 max-w-xl">
+              Re-evaluates every unit&apos;s inventory state against current return data and condition.
+              Good-condition units in completed returns are reset to <span className="text-slate-300">On Hand</span>.
+              Bad-condition units with no return are moved to <span className="text-slate-300">To Return</span>.
+              Run this after bulk condition changes or if states look incorrect.
+            </p>
+            {recomputeResult && (
+              <div className={`mt-2 rounded px-3 py-2 text-xs ${
+                recomputeResult.type === "success"
+                  ? "bg-green-900/30 border border-green-800 text-green-300"
+                  : "bg-red-900/30 border border-red-800 text-red-300"
+              }`}>
+                {recomputeResult.text}
+              </div>
+            )}
+          </div>
+          <button
+            onClick={handleRecompute}
+            disabled={recomputing}
+            className="shrink-0 rounded border border-amber-700 bg-amber-900/30 px-4 py-2 text-sm font-medium text-amber-300 hover:bg-amber-900/60 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {recomputing ? "Recomputing…" : "Recompute States"}
+          </button>
+        </div>
       </section>
     </div>
   );

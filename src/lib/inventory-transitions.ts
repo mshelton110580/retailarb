@@ -81,12 +81,10 @@ export async function updateInventoryStatesFromReturns() {
       const isBadCondition = !goodConditions.has(unit.condition_status?.toLowerCase() ?? "");
 
       // PRIORITY 1: Item physically shipped or delivered back to seller.
-      // Good-condition units are kept; only non-good units are marked returned.
+      // Bad-condition units are marked returned; good-condition units are reset
+      // to on_hand (they were kept, not the ones sent back).
       if (ret.return_shipped_date || ret.return_delivered_date) {
-        if (isBadCondition) {
-          newState = "returned";
-        }
-        // good condition → leave state alone (unit was kept, not returned)
+        newState = isBadCondition ? "returned" : "on_hand";
       }
       // PRIORITY 2: Return is closed with no return tracking
       else if (isReturnClosed(ret)) {
@@ -114,6 +112,106 @@ export async function updateInventoryStatesFromReturns() {
       }
     }
   }
+}
+
+/**
+ * Full recompute of inventory states across all units.
+ * Runs three passes in order:
+ *   1. Return-based states — re-evaluates every return against its units
+ *      (handles returned/on_hand/to_be_returned/parts_repair from return data)
+ *   2. Orphan fix — units with no return but bad condition stuck at on_hand
+ *      are moved to to_be_returned
+ *
+ * Returns counts of changes made in each pass.
+ */
+export async function recomputeAllInventoryStates(): Promise<{
+  returnPass: number;
+  orphanPass: number;
+}> {
+  // Pass 1: re-run full return evaluation (handles good→on_hand correction too)
+  let returnPass = 0;
+
+  const returns = await prisma.returns.findMany({
+    where: { order_id: { not: null } },
+    select: {
+      id: true,
+      order_id: true,
+      item_id: true,
+      ebay_state: true,
+      ebay_status: true,
+      ebay_type: true,
+      return_shipped_date: true,
+      return_delivered_date: true,
+      refund_issued_date: true,
+      actual_refund: true,
+      refund_amount: true,
+      estimated_refund: true
+    }
+  });
+
+  // Track which unit IDs are covered by a return (so Pass 2 skips them)
+  const unitsWithReturn = new Set<string>();
+
+  for (const ret of returns) {
+    if (!ret.order_id) continue;
+
+    const units = await prisma.received_units.findMany({
+      where: {
+        order_id: ret.order_id,
+        item_id: ret.item_id || undefined
+      },
+      select: { id: true, inventory_state: true, condition_status: true }
+    });
+
+    const goodConditions = new Set(["good", "new", "like_new", "acceptable", "excellent"]);
+
+    for (const unit of units) {
+      unitsWithReturn.add(unit.id);
+      const isBadCondition = !goodConditions.has(unit.condition_status?.toLowerCase() ?? "");
+      let newState: string | null = null;
+
+      if (ret.return_shipped_date || ret.return_delivered_date) {
+        newState = isBadCondition ? "returned" : "on_hand";
+      } else if (isReturnClosed(ret)) {
+        if (ret.refund_issued_date || ret.actual_refund || ret.refund_amount || ret.estimated_refund) {
+          newState = isBadCondition ? "parts_repair" : "on_hand";
+        }
+      } else {
+        newState = "to_be_returned";
+      }
+
+      if (newState && unit.inventory_state !== newState) {
+        await prisma.received_units.update({
+          where: { id: unit.id },
+          data: { inventory_state: newState }
+        });
+        returnPass++;
+      }
+    }
+  }
+
+  // Pass 2: orphan fix — bad-condition units with no return record stuck at on_hand
+  const orphanUnits = await prisma.received_units.findMany({
+    where: { inventory_state: "on_hand" },
+    select: { id: true, condition_status: true }
+  });
+
+  const goodConditions = new Set(["good", "new", "like_new", "acceptable", "excellent"]);
+  let orphanPass = 0;
+
+  for (const unit of orphanUnits) {
+    if (unitsWithReturn.has(unit.id)) continue; // already handled in Pass 1
+    const isBadCondition = !goodConditions.has(unit.condition_status?.toLowerCase() ?? "");
+    if (isBadCondition) {
+      await prisma.received_units.update({
+        where: { id: unit.id },
+        data: { inventory_state: "to_be_returned" }
+      });
+      orphanPass++;
+    }
+  }
+
+  return { returnPass, orphanPass };
 }
 
 /**
