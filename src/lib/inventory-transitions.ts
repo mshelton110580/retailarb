@@ -80,9 +80,13 @@ export async function updateInventoryStatesFromReturns() {
       const goodConditions = new Set(["good", "new", "like_new", "acceptable", "excellent"]);
       const isBadCondition = !goodConditions.has(unit.condition_status?.toLowerCase() ?? "");
 
-      // PRIORITY 1: Item physically shipped or delivered back to seller
+      // PRIORITY 1: Item physically shipped or delivered back to seller.
+      // Good-condition units are kept; only non-good units are marked returned.
       if (ret.return_shipped_date || ret.return_delivered_date) {
-        newState = "returned";
+        if (isBadCondition) {
+          newState = "returned";
+        }
+        // good condition → leave state alone (unit was kept, not returned)
       }
       // PRIORITY 2: Return is closed with no return tracking
       else if (isReturnClosed(ret)) {

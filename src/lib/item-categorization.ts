@@ -485,8 +485,14 @@ export function computeInventoryState(
   hasRefundWithoutReturn: boolean = false,
   hasReturnShipped: boolean = false
 ): string {
+  // Return physically shipped/delivered: only non-good units are returned;
+  // good-condition units in the same lot are kept on hand.
   if (hasReturnShipped) {
-    return "returned";
+    const goodConditions = new Set(["good", "new", "like_new", "acceptable", "excellent"]);
+    if (!goodConditions.has(conditionStatus?.toLowerCase() ?? "")) {
+      return "returned";
+    }
+    // good condition — fall through to normal state calculation
   }
 
   // Closed return with refund received — we kept the item and were compensated
