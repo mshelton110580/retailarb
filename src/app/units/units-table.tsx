@@ -34,13 +34,6 @@ const BUILTIN_CONDITIONS = [
   "water damage", "parts only"
 ];
 
-const SORT_FIELDS = [
-  { value: "receivedAt", label: "Received Date" },
-  { value: "title", label: "Title" },
-  { value: "condition", label: "Condition" },
-  { value: "state", label: "State" },
-  { value: "category", label: "Category" },
-];
 
 const ALL_COLUMNS = [
   { key: "title",    label: "Title",     sortable: true,  defaultWidth: 260 },
@@ -864,13 +857,6 @@ export default function UnitsTable({ categories: initialCategories }: { categori
         </div>
 
         <div className="flex items-center gap-3 pt-1 border-t border-slate-800">
-          <span className="text-xs text-slate-500">Sort by:</span>
-          {SORT_FIELDS.map(f => (
-            <button key={f.value} onClick={() => toggleSort(f.value)}
-              className={`text-xs px-2 py-1 rounded border ${sortBy === f.value ? "border-blue-600 bg-blue-900/40 text-blue-300" : "border-slate-700 text-slate-500 hover:bg-slate-800"}`}>
-              {f.label}<SortIcon field={f.value} />
-            </button>
-          ))}
           <div className="relative ml-auto">
             <button onClick={() => setShowColPanel(p => !p)}
               className={`text-xs px-2.5 py-1 rounded border flex items-center gap-1.5 ${showColPanel ? "border-slate-500 bg-slate-800 text-slate-200" : "border-slate-700 text-slate-400 hover:bg-slate-800"}`}>
