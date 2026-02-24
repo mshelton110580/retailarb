@@ -144,6 +144,11 @@ function ConditionCell({
     if (trimmed) await save(trimmed);
   }
 
+  const filteredConditions = newInput.trim()
+    ? conditions.filter(c => c.toLowerCase().includes(newInput.trim().toLowerCase()))
+    : conditions;
+  const isExactMatch = conditions.some(c => c.toLowerCase() === newInput.trim().toLowerCase());
+
   const dropdown = editing && dropPos ? createPortal(
     <div
       ref={dropRef}
@@ -151,9 +156,24 @@ function ConditionCell({
       className="bg-slate-900 border border-slate-600 rounded shadow-xl p-2 space-y-1.5"
       onClick={e => e.stopPropagation()}
     >
-      <div className="text-xs text-slate-400 font-medium mb-1">Change condition</div>
+      <input
+        type="text"
+        value={newInput}
+        onChange={e => setNewInput(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === "Enter") {
+            if (filteredConditions.length === 1) save(filteredConditions[0]);
+            else if (newInput.trim() && !isExactMatch) saveNew();
+            else if (filteredConditions.length > 0) save(filteredConditions[0]);
+          }
+          if (e.key === "Escape") { setEditing(false); setNewInput(""); }
+        }}
+        placeholder="Search or add condition…"
+        className="w-full rounded border border-slate-600 bg-slate-800 px-2 py-1.5 text-xs text-slate-200 placeholder-slate-500"
+        autoFocus
+      />
       <div className="max-h-48 overflow-y-auto space-y-0.5">
-        {conditions.map(c => (
+        {filteredConditions.map(c => (
           <button key={c} disabled={saving} onClick={() => save(c)}
             className={`w-full text-left text-xs px-2 py-1 rounded capitalize transition-colors ${
               c === value ? "bg-blue-700 text-white" : "text-slate-300 hover:bg-slate-700"
@@ -161,21 +181,12 @@ function ConditionCell({
             {c}
           </button>
         ))}
-      </div>
-      <div className="border-t border-slate-700 pt-1.5 flex gap-1">
-        <input
-          type="text"
-          value={newInput}
-          onChange={e => setNewInput(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter") saveNew(); if (e.key === "Escape") { setEditing(false); setNewInput(""); } }}
-          placeholder="New condition…"
-          className="flex-1 rounded border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-slate-200 placeholder-slate-600"
-          autoFocus
-        />
-        <button disabled={saving || !newInput.trim()} onClick={saveNew}
-          className="rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700 disabled:opacity-40">
-          Add
-        </button>
+        {newInput.trim() && !isExactMatch && (
+          <button disabled={saving} onClick={saveNew}
+            className="w-full text-left text-xs px-2 py-1 rounded text-sky-400 hover:bg-slate-700 transition-colors">
+            + Add &ldquo;{newInput.trim()}&rdquo;
+          </button>
+        )}
       </div>
     </div>,
     document.body
@@ -278,6 +289,11 @@ function CategoryCell({
     } finally { setCreating(false); }
   }
 
+  const filteredCategories = newInput.trim()
+    ? categories.filter(c => c.category_name.toLowerCase().includes(newInput.trim().toLowerCase()))
+    : categories;
+  const isExactCatMatch = categories.some(c => c.category_name.toLowerCase() === newInput.trim().toLowerCase());
+
   const dropdown = editing && dropPos ? createPortal(
     <div
       ref={dropRef}
@@ -285,15 +301,32 @@ function CategoryCell({
       className="bg-slate-900 border border-slate-600 rounded shadow-xl p-2 space-y-1.5"
       onClick={e => e.stopPropagation()}
     >
-      <div className="text-xs text-slate-400 font-medium mb-1">Change category</div>
+      <input
+        type="text"
+        value={newInput}
+        onChange={e => setNewInput(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === "Enter") {
+            if (filteredCategories.length === 1 && !newInput.trim()) save(filteredCategories[0].id);
+            else if (newInput.trim() && !isExactCatMatch) createNew();
+            else if (filteredCategories.length === 1) save(filteredCategories[0].id);
+          }
+          if (e.key === "Escape") { setEditing(false); setNewInput(""); }
+        }}
+        placeholder="Search or add category…"
+        className="w-full rounded border border-slate-600 bg-slate-800 px-2 py-1.5 text-xs text-slate-200 placeholder-slate-500"
+        autoFocus
+      />
       <div className="max-h-48 overflow-y-auto space-y-0.5">
-        <button disabled={saving || creating} onClick={() => save(null)}
-          className={`w-full text-left text-xs px-2 py-1 rounded italic transition-colors ${
-            !value ? "bg-blue-700 text-white" : "text-slate-500 hover:bg-slate-700"
-          }`}>
-          Uncategorized
-        </button>
-        {categories.map(c => (
+        {!newInput.trim() && (
+          <button disabled={saving || creating} onClick={() => save(null)}
+            className={`w-full text-left text-xs px-2 py-1 rounded italic transition-colors ${
+              !value ? "bg-blue-700 text-white" : "text-slate-500 hover:bg-slate-700"
+            }`}>
+            Uncategorized
+          </button>
+        )}
+        {filteredCategories.map(c => (
           <button key={c.id} disabled={saving || creating} onClick={() => save(c.id)}
             className={`w-full text-left text-xs px-2 py-1 rounded transition-colors ${
               c.id === value?.id ? "bg-blue-700 text-white" : "text-slate-300 hover:bg-slate-700"
@@ -301,21 +334,12 @@ function CategoryCell({
             {c.category_name}
           </button>
         ))}
-      </div>
-      <div className="border-t border-slate-700 pt-1.5 flex gap-1">
-        <input
-          type="text"
-          value={newInput}
-          onChange={e => setNewInput(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter") createNew(); if (e.key === "Escape") { setEditing(false); setNewInput(""); } }}
-          placeholder="New category…"
-          className="flex-1 rounded border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-slate-200 placeholder-slate-600"
-          autoFocus
-        />
-        <button disabled={saving || creating || !newInput.trim()} onClick={createNew}
-          className="rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700 disabled:opacity-40">
-          {creating ? "…" : "Add"}
-        </button>
+        {newInput.trim() && !isExactCatMatch && (
+          <button disabled={saving || creating} onClick={createNew}
+            className="w-full text-left text-xs px-2 py-1 rounded text-sky-400 hover:bg-slate-700 transition-colors">
+            {creating ? "Creating…" : `+ Add "${newInput.trim()}"`}
+          </button>
+        )}
       </div>
     </div>,
     document.body
@@ -494,6 +518,8 @@ export default function UnitsTable({ categories: initialCategories }: { categori
   const [newBulkConditionInput, setNewBulkConditionInput] = useState("");
   const [newBulkCategoryInput, setNewBulkCategoryInput] = useState("");
   const [creatingBulkCategory, setCreatingBulkCategory] = useState(false);
+  const [bulkConditionSearch, setBulkConditionSearch] = useState("");
+  const [bulkCategorySearch, setBulkCategorySearch] = useState("");
 
   const [colWidths, setColWidths] = useState<Record<ColKey, number>>(
     () => Object.fromEntries(ALL_COLUMNS.map(c => [c.key, c.defaultWidth])) as Record<ColKey, number>
@@ -676,7 +702,7 @@ export default function UnitsTable({ categories: initialCategories }: { categori
       const data = await res.json();
       if (res.ok) {
         setBulkMessage({ type: "success", text: `Updated ${data.updated} unit(s).` });
-        setSelected(new Set()); setBulkCondition(""); setBulkCategoryId("__unchanged__"); setNewBulkConditionInput(""); setNewBulkCategoryInput("");
+        setSelected(new Set()); setBulkCondition(""); setBulkCategoryId("__unchanged__"); setNewBulkConditionInput(""); setNewBulkCategoryInput(""); setBulkConditionSearch(""); setBulkCategorySearch("");
         fetchUnits(true);
       } else {
         setBulkMessage({ type: "error", text: data.error ?? "Update failed." });
@@ -901,11 +927,25 @@ export default function UnitsTable({ categories: initialCategories }: { categori
                 <div>
                   <label className="block text-xs text-slate-400 mb-1">Set Condition</label>
                   <p className="text-xs text-slate-500 mb-1">State recalculates from condition + return status.</p>
-                  <select value={bulkCondition} onChange={e => setBulkCondition(e.target.value)}
-                    className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300 mb-2">
-                    <option value="">— no change —</option>
-                    {conditions.map(c => <option key={c} value={c} className="capitalize">{c}</option>)}
-                  </select>
+                  <input type="text" value={bulkConditionSearch}
+                    onChange={e => setBulkConditionSearch(e.target.value)}
+                    placeholder="Search conditions…"
+                    className="w-full rounded border border-slate-600 bg-slate-800 px-2 py-1.5 text-xs text-slate-200 placeholder-slate-500 mb-1" />
+                  <div className="max-h-32 overflow-y-auto rounded border border-slate-700 bg-slate-950 mb-2 space-y-0.5 p-1">
+                    <button onClick={() => { setBulkCondition(""); setBulkConditionSearch(""); }}
+                      className={`w-full text-left text-xs px-2 py-1 rounded transition-colors ${bulkCondition === "" ? "bg-blue-700 text-white" : "text-slate-500 hover:bg-slate-800 italic"}`}>
+                      — no change —
+                    </button>
+                    {conditions
+                      .filter(c => !bulkConditionSearch.trim() || c.toLowerCase().includes(bulkConditionSearch.toLowerCase()))
+                      .map(c => (
+                        <button key={c} onClick={() => { setBulkCondition(c); setBulkConditionSearch(""); }}
+                          className={`w-full text-left text-xs px-2 py-1 rounded capitalize transition-colors ${bulkCondition === c ? "bg-blue-700 text-white" : "text-slate-300 hover:bg-slate-800"}`}>
+                          {c}
+                        </button>
+                      ))
+                    }
+                  </div>
                   <div className="flex gap-1.5">
                     <input type="text" value={newBulkConditionInput}
                       onChange={e => setNewBulkConditionInput(e.target.value)}
@@ -920,12 +960,33 @@ export default function UnitsTable({ categories: initialCategories }: { categori
                 </div>
                 <div>
                   <label className="block text-xs text-slate-400 mb-1">Set Category</label>
-                  <select value={bulkCategoryId} onChange={e => setBulkCategoryId(e.target.value)}
-                    className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300 mb-2">
-                    <option value="__unchanged__">— no change —</option>
-                    <option value="__none__">Remove category</option>
-                    {categories.map(c => <option key={c.id} value={c.id}>{c.category_name}</option>)}
-                  </select>
+                  <input type="text" value={bulkCategorySearch}
+                    onChange={e => setBulkCategorySearch(e.target.value)}
+                    placeholder="Search categories…"
+                    className="w-full rounded border border-slate-600 bg-slate-800 px-2 py-1.5 text-xs text-slate-200 placeholder-slate-500 mb-1" />
+                  <div className="max-h-32 overflow-y-auto rounded border border-slate-700 bg-slate-950 mb-2 space-y-0.5 p-1">
+                    {!bulkCategorySearch.trim() && (
+                      <>
+                        <button onClick={() => { setBulkCategoryId("__unchanged__"); setBulkCategorySearch(""); }}
+                          className={`w-full text-left text-xs px-2 py-1 rounded transition-colors ${bulkCategoryId === "__unchanged__" ? "bg-blue-700 text-white" : "text-slate-500 hover:bg-slate-800 italic"}`}>
+                          — no change —
+                        </button>
+                        <button onClick={() => { setBulkCategoryId("__none__"); setBulkCategorySearch(""); }}
+                          className={`w-full text-left text-xs px-2 py-1 rounded transition-colors ${bulkCategoryId === "__none__" ? "bg-blue-700 text-white" : "text-slate-500 hover:bg-slate-800 italic"}`}>
+                          Remove category
+                        </button>
+                      </>
+                    )}
+                    {categories
+                      .filter(c => !bulkCategorySearch.trim() || c.category_name.toLowerCase().includes(bulkCategorySearch.toLowerCase()))
+                      .map(c => (
+                        <button key={c.id} onClick={() => { setBulkCategoryId(c.id); setBulkCategorySearch(""); }}
+                          className={`w-full text-left text-xs px-2 py-1 rounded transition-colors ${bulkCategoryId === c.id ? "bg-blue-700 text-white" : "text-slate-300 hover:bg-slate-800"}`}>
+                          {c.category_name}
+                        </button>
+                      ))
+                    }
+                  </div>
                   <div className="flex gap-1.5">
                     <input type="text" value={newBulkCategoryInput}
                       onChange={e => setNewBulkCategoryInput(e.target.value)}
