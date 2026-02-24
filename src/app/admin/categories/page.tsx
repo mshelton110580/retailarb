@@ -70,9 +70,14 @@ export default async function CategoriesAdminPage() {
             Merge duplicate categories and manage category mappings
           </p>
         </div>
-        <Link href="/admin/users" className="rounded border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800">
-          Users
-        </Link>
+        <div className="flex gap-2">
+          <Link href="/admin/conditions" className="rounded border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800">
+            Conditions
+          </Link>
+          <Link href="/admin/users" className="rounded border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800">
+            Users
+          </Link>
+        </div>
       </div>
 
       <CategoryManager

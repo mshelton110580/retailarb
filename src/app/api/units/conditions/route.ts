@@ -1,13 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
-
-const BUILTIN_CONDITIONS = [
-  "good", "new", "like_new", "acceptable", "excellent",
-  "pressure mark", "damaged", "wrong_item", "missing_parts",
-  "defective", "dim power/ glitchy", "no power", "cracked screen",
-  "water damage", "parts only"
-];
+import { BUILTIN_CONDITIONS } from "@/lib/conditions";
 
 /**
  * GET /api/units/conditions
@@ -27,7 +21,7 @@ export async function GET() {
     orderBy: { condition_status: "asc" }
   });
 
-  const dbConditions = rows.map(r => r.condition_status).filter(Boolean);
+  const dbConditions = rows.map(r => r.condition_status).filter(Boolean) as string[];
 
   // Merge: builtins first, then any db-only extras, deduped case-insensitively
   const seen = new Set(BUILTIN_CONDITIONS.map(c => c.toLowerCase()));
@@ -35,4 +29,43 @@ export async function GET() {
   const conditions = [...BUILTIN_CONDITIONS, ...extra];
 
   return NextResponse.json({ conditions });
+}
+
+/**
+ * DELETE /api/units/conditions
+ * Deletes a custom condition by name. Blocked if any units still use it.
+ * Built-in conditions cannot be deleted.
+ * Body: { condition: string }
+ */
+export async function DELETE(req: Request) {
+  const auth = await requireRole(["ADMIN"]);
+  if (!auth.ok) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+  }
+
+  const body = await req.json();
+  const condition = typeof body.condition === "string" ? body.condition.trim() : null;
+  if (!condition) {
+    return NextResponse.json({ error: "condition is required" }, { status: 400 });
+  }
+
+  // Block deletion of built-in conditions
+  if (BUILTIN_CONDITIONS.some(c => c.toLowerCase() === condition.toLowerCase())) {
+    return NextResponse.json({ error: "Built-in conditions cannot be deleted" }, { status: 400 });
+  }
+
+  // Block if units still use this condition
+  const count = await prisma.received_units.count({
+    where: { condition_status: { equals: condition, mode: "insensitive" } }
+  });
+  if (count > 0) {
+    return NextResponse.json(
+      { error: `Cannot delete — ${count} unit${count === 1 ? "" : "s"} still use this condition` },
+      { status: 409 }
+    );
+  }
+
+  // Conditions are derived from received_units — no separate table to delete from.
+  // Once no units use this condition it auto-disappears from the list.
+  return NextResponse.json({ ok: true });
 }

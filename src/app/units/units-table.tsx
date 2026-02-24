@@ -127,7 +127,7 @@ function ConditionCell({
   }
 
   async function save(condition: string) {
-    if (!condition || condition === value) { setEditing(false); return; }
+    if (condition === value) { setEditing(false); return; }
     setSaving(true);
     try {
       const res = await fetch(`/api/units/${unit.id}`, {
@@ -185,11 +185,13 @@ function ConditionCell({
     <>
       <span
         ref={triggerRef}
-        className="text-xs capitalize text-slate-400 cursor-pointer hover:text-slate-200 hover:underline decoration-dotted"
+        className={`text-xs capitalize cursor-pointer hover:underline decoration-dotted ${
+          value ? "text-slate-400 hover:text-slate-200" : "text-slate-600 italic hover:text-slate-400"
+        }`}
         onClick={openDropdown}
         title="Click to change condition"
       >
-        {value}
+        {value ?? "No condition"}
       </span>
       {dropdown}
     </>
