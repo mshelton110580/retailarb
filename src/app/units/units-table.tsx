@@ -120,9 +120,11 @@ function ConditionCell({
     e.stopPropagation();
     if (!triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
-    // Position below the trigger, clamped so it doesn't go off the right edge
     const left = Math.min(rect.left, window.innerWidth - 216);
-    setDropPos({ top: rect.bottom + 4, left });
+    // Flip upward if not enough space below (dropdown ~260px tall)
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const top = spaceBelow < 270 ? rect.top - 270 : rect.bottom + 4;
+    setDropPos({ top, left });
     setEditing(true);
   }
 
@@ -250,7 +252,10 @@ function CategoryCell({
     if (!triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
     const left = Math.min(rect.left, window.innerWidth - 216);
-    setDropPos({ top: rect.bottom + 4, left });
+    // Flip upward if not enough space below (dropdown ~280px tall)
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const top = spaceBelow < 290 ? rect.top - 290 : rect.bottom + 4;
+    setDropPos({ top, left });
     setEditing(true);
   }
 
