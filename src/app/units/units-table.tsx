@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
+import { useBarcodeScanner } from "@/lib/use-barcode-scanner";
 
 type Category = { id: string; category_name: string };
 
@@ -507,6 +508,14 @@ export default function UnitsTable({ categories: initialCategories }: { categori
   const [showNewCategoryModal, setShowNewCategoryModal] = useState(false);
   const [conditions, setConditions] = useState<string[]>(BUILTIN_CONDITIONS);
 
+  // Fetch conditions from database on mount
+  useEffect(() => {
+    fetch("/api/units/conditions")
+      .then(r => r.json())
+      .then(data => { if (data.conditions) setConditions(data.conditions); })
+      .catch(() => {});
+  }, []);
+
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkPanel, setBulkPanel] = useState(false);
   const [bulkCondition, setBulkCondition] = useState("");
@@ -580,6 +589,7 @@ export default function UnitsTable({ categories: initialCategories }: { categori
   const visibleCols = ALL_COLUMNS.filter(c => colVisible[c.key]);
   const colSpan = 1 + visibleCols.length;
   const trackingRef = useRef<HTMLInputElement>(null);
+  useBarcodeScanner(trackingRef, (value) => setTrackingScan(value));
 
   const fetchUnits = useCallback(async (resetOffset = false) => {
     setLoading(true);

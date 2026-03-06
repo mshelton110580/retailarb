@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Link from "next/link";
 import CheckInModal from "@/components/check-in-modal";
+import { useBarcodeScanner } from "@/lib/use-barcode-scanner";
 
 type Account = { id: string; ebay_username: string | null };
 
@@ -113,7 +114,12 @@ const ALL_COLS: ColDef[] = [
   { key: "itemId",    label: "Item ID",      defaultOn: true,  itemsOnly: true, sortValue: (_o, row) => row?.itemId ?? "" },
   { key: "qty",        label: "Qty",          defaultOn: true,  itemsOnly: true, sortValue: (_o, row) => row?.qty ?? 0 },
   { key: "price",      label: "Price",        defaultOn: true,  itemsOnly: true, sortValue: (_o, row) => row?.price ?? 0 },
-  { key: "itemRefund", label: "Item Refund",  defaultOn: true,  itemsOnly: true, sortValue: (_o, row) => row?.refund ?? 0 },
+  { key: "itemRefund", label: "Item Refund",  defaultOn: true,  itemsOnly: true, sortValue: (o, row) => {
+    if (!row || !o.hasRefund || row.refund == null || row.refund === 0) return 0;
+    if (row.needsAudit) return 1; // Audit
+    const itemSub = row.price * row.qty;
+    return row.refund >= itemSub - 0.02 ? 3 : 2; // Full : Partial
+  }},
   { key: "total",      label: "Order Total",  defaultOn: true,  sortValue: o => o.originalTotal ?? 0 },
   { key: "refund",     label: "Refund",       defaultOn: true,  sortValue: o => o.hasRefund ? (o.currentTotal != null && o.currentTotal <= 0 ? 2 : 1) : 0 },
   { key: "shipStatus", label: "Ship Status",  defaultOn: true,  sortValue: o => o.shipment?.derivedStatus ?? "" },
@@ -579,6 +585,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   }
 
   const trackingRef = useRef<HTMLInputElement>(null);
+  useBarcodeScanner(trackingRef, (value) => setTrackingScan(value));
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Cancel token: increment to abort in-flight background loads on filter change
   const fetchGenRef = useRef(0);

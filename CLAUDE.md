@@ -196,30 +196,35 @@ npx prisma db seed       # Seed admin user
 
 ### Deployment (`deploy.sh`)
 
-All environments: install deps → generate Prisma client → run migrations → build → restart services.
-
 ```bash
-./deploy.sh dev          # Pull arbdesk-dev, install, migrate, build, restart
-./deploy.sh staging      # Merge dev→staging, copy prod DB to staging, build
+./deploy.sh dev          # Pull latest dev code, install, migrate, build, restart
+./deploy.sh staging      # Merge dev→staging, seed both staging+dev DBs from prod, build both
 ./deploy.sh production   # Backup prod DB, merge staging→main, build
 ```
 
 **Dev** (`./deploy.sh dev`):
-1. `git reset --hard origin/arbdesk-dev`
-2. Install, migrate, build, restart `arbdesk-dev` + `arbdesk-dev-worker`
+1. `git reset --hard origin/arbdesk-dev` (pull latest code)
+2. Install deps, generate Prisma client, run migrations, build
+3. Restart `arbdesk-dev` + `arbdesk-dev-worker`
+4. Database is NOT refreshed — use `./deploy.sh staging` to reseed from production
 
 **Staging** (`./deploy.sh staging`):
-1. Push `arbdesk-dev`, merge into `staging`, push `staging`
-2. Stop staging services
+1. Push `arbdesk-dev` to GitHub
+2. Merge `arbdesk-dev` into `staging` branch, push `staging`
 3. `pg_dump` production DB (`arbdesk`) — read-only, production is never modified
-4. Drop and recreate `arbdesk_staging`, restore production dump
-5. Install, migrate (applies any new migrations on top of prod data), build
-6. Restart `arbdesk-staging` + `arbdesk-staging-worker`
+4. **Restore to staging**: stop staging services, drop/recreate `arbdesk_staging`, restore dump
+5. **Restore to dev**: stop dev services, drop/recreate `arbdesk_dev`, restore same dump
+6. **Rebuild dev**: install deps, migrate, build, restart `arbdesk-dev` + `arbdesk-dev-worker`
+7. **Build staging**: install deps, migrate, build, restart `arbdesk-staging` + `arbdesk-staging-worker`
+8. Both environments now have identical production data with any new migrations applied
+9. Dev test data is wiped — this is intentional since dev changes have been promoted
 
 **Production** (`./deploy.sh production`):
 1. Backup production DB to `/root/backups/arbdesk_pre_deploy_YYYYMMDD_HHMMSS.sql`
-2. Push `staging`, merge into `main`, push `main`
-3. Install, migrate, build, restart `arbdesk` + `arbdesk-worker`
+2. Push `staging` to GitHub
+3. Merge `staging` into `main` branch, push `main`
+4. Install deps, generate Prisma client, run migrations, build
+5. Restart `arbdesk` + `arbdesk-worker`
 
 ### Systemd Services
 - **Web**: `arbdesk-dev` / `arbdesk-staging` / `arbdesk`
@@ -228,8 +233,8 @@ All environments: install deps → generate Prisma client → run migrations →
 
 ### Git Workflow
 - Develop on `arbdesk-dev` branch in `/opt/retailarb-dev/`
-- Deploy to staging merges `arbdesk-dev → staging` and copies production data
-- Deploy to production merges `staging → main` with DB backup
+- Deploy to staging merges `arbdesk-dev → staging` and seeds both staging+dev DBs from production
+- Deploy to production merges `staging → main` with DB backup first
 - Git identity: Mark Shelton / mshelton110580@users.noreply.github.com
 
 ## Conventions
@@ -242,3 +247,18 @@ All environments: install deps → generate Prisma client → run migrations →
 - **Database**: All IDs are cuid strings, timestamps are `DateTime @default(now())`
 - **Decimals**: Financial values use `Decimal @db.Decimal(12, 2)`
 - **JSON fields**: `totals`, `status_history`, `lot_manifest`, `raw_json` stored as JSONB
+
+## To Do
+
+### Lot Reimport Creates Duplicate Units
+**File**: `src/app/api/receiving/import-csv/route.ts` (line 166)
+
+**Issue**: When reimporting scan records for orders already flagged as lots (`is_lot = true`), the duplicate guard is bypassed because `!isAlreadyLot` is false, making `checkedInPreviously` always false for lots. This means every reimport creates additional units on top of existing ones, inflating the scanned count.
+
+The lot exception exists so that *within a single import batch*, repeated tracking numbers correctly create additional lot units. But it also prevents the skip logic from working on *subsequent* reimports of identical data.
+
+**Possible solutions**:
+1. **Compare scanned count to batch total**: Before creating units, count how many rows in the current batch share this tracking number. If `existingCount` already equals `expected_units * lot_size` (or the batch's total qty for this tracking), skip instead of creating more.
+2. **Deduplicate by timestamp + tracking**: Track `(tracking_number, scanned_at)` pairs on received_units. If an identical pair already exists, skip the row as a duplicate reimport.
+3. **Add an import batch ID**: Tag each received_unit with an import batch identifier. On reimport, detect that all rows in the batch already have units with the same batch signature and skip.
+

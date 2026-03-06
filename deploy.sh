@@ -32,7 +32,7 @@ esac
 
 echo "==> Deploying to $ENV ($DIR on branch $BRANCH)"
 
-# For staging: merge dev into staging first
+# For staging: merge dev into staging, copy prod DB to both staging and dev
 if [ "$ENV" = "staging" ]; then
   echo "--- Merging arbdesk-dev into staging..."
   cd /opt/retailarb-dev
@@ -42,24 +42,49 @@ if [ "$ENV" = "staging" ]; then
   git merge origin/arbdesk-dev --no-edit
   git push origin staging
 
-  echo "--- Copying production database to staging..."
-  echo "    Stopping staging services to release connections..."
+  echo "--- Dumping production DB (arbdesk)..."
+  sudo -u postgres pg_dump --no-owner --no-acl arbdesk > /tmp/arbdesk_prod_snapshot.sql
+
+  echo "--- Copying production data to staging..."
+  echo "    Stopping staging services..."
   systemctl stop $SERVICES 2>/dev/null || true
-
-  echo "    Dumping production DB (arbdesk)..."
-  sudo -u postgres pg_dump --no-owner --no-acl arbdesk > /tmp/arbdesk_prod_to_staging.sql
-
-  echo "    Dropping and recreating arbdesk_staging..."
   sudo -u postgres psql -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'arbdesk_staging' AND pid <> pg_backend_pid();" >/dev/null 2>&1 || true
   sudo -u postgres dropdb --if-exists arbdesk_staging
   sudo -u postgres createdb arbdesk_staging
   sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE arbdesk_staging TO postgres;"
+  sudo -u postgres psql -d arbdesk_staging -f /tmp/arbdesk_prod_snapshot.sql >/dev/null 2>&1
+  echo "    ✓ arbdesk_staging restored"
 
-  echo "    Restoring production data into arbdesk_staging..."
-  sudo -u postgres psql -d arbdesk_staging -f /tmp/arbdesk_prod_to_staging.sql >/dev/null 2>&1
-  rm -f /tmp/arbdesk_prod_to_staging.sql
+  echo "--- Copying production data to dev..."
+  echo "    Stopping dev services..."
+  systemctl stop arbdesk-dev arbdesk-dev-worker 2>/dev/null || true
+  sudo -u postgres psql -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'arbdesk_dev' AND pid <> pg_backend_pid();" >/dev/null 2>&1 || true
+  sudo -u postgres dropdb --if-exists arbdesk_dev
+  sudo -u postgres createdb arbdesk_dev
+  sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE arbdesk_dev TO postgres;"
+  sudo -u postgres psql -d arbdesk_dev -f /tmp/arbdesk_prod_snapshot.sql >/dev/null 2>&1
+  echo "    ✓ arbdesk_dev restored"
 
-  echo "    Production data restored to staging"
+  rm -f /tmp/arbdesk_prod_snapshot.sql
+
+  echo "--- Rebuilding dev environment..."
+  cd /opt/retailarb-dev
+  npm ci --legacy-peer-deps
+  npx prisma generate
+  npx prisma migrate deploy
+  npm run build
+  systemctl restart arbdesk-dev arbdesk-dev-worker
+  sleep 3
+  for SVC in arbdesk-dev arbdesk-dev-worker; do
+    if systemctl is-active --quiet "$SVC"; then
+      echo "    ✓ $SVC is running"
+    else
+      echo "    ✗ $SVC FAILED to start"
+      systemctl status "$SVC" --no-pager | tail -5
+    fi
+  done
+  echo "    Dev environment rebuilt with production data"
+  cd "$DIR"
 fi
 
 # For production: merge staging into main + backup DB first

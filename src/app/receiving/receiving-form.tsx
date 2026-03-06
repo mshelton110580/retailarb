@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import ImageUploadPanel from "@/components/image-upload-panel";
+import { useBarcodeScanner } from "@/lib/use-barcode-scanner";
 
 type ScanResultItem = {
   orderId: string;
@@ -56,6 +57,16 @@ export default function ReceivingForm() {
     title: string;
   } | null>(null);
 
+  const [conditions, setConditions] = useState<string[]>([]);
+
+  // Fetch conditions from database on mount
+  useEffect(() => {
+    fetch("/api/units/conditions")
+      .then(r => r.json())
+      .then(data => { if (data.conditions) setConditions(data.conditions); })
+      .catch(() => {});
+  }, []);
+
   const [pendingCategorySelection, setPendingCategorySelection] = useState<{
     unitId: string;
     unitIndex: number;
@@ -66,19 +77,10 @@ export default function ReceivingForm() {
   const [editedCategoryName, setEditedCategoryName] = useState<string>("");
   const [createMergeMapping, setCreateMergeMapping] = useState<boolean>(true);
 
-  // Keep tracking input focused at all times for barcode scanner
-  useEffect(() => {
-    trackingRef.current?.focus();
-
-    const handleClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.tagName === "SELECT" || target.tagName === "BUTTON" || target.tagName === "INPUT" || target.tagName === "A") return;
-      setTimeout(() => trackingRef.current?.focus(), 50);
-    };
-
-    document.addEventListener("click", handleClick);
-    return () => document.removeEventListener("click", handleClick);
-  }, []);
+  // Detect barcode scanner input and route to tracking field
+  useBarcodeScanner(trackingRef, (value) => {
+    submitScan(value);
+  });
 
   const submitScan = useCallback(async (trackingValue: string) => {
     if (!trackingValue.trim() || loading) return;
@@ -347,20 +349,15 @@ export default function ReceivingForm() {
             name="condition_status"
             defaultValue="good"
           >
-            <option value="good">Good</option>
-            <option value="new">New / Sealed</option>
-            <option value="like_new">Like New</option>
-            <option value="acceptable">Acceptable</option>
-            <option value="pressure mark">Pressure Mark</option>
-            <option value="damaged">Damaged</option>
-            <option value="wrong_item">Wrong Item</option>
-            <option value="missing_parts">Missing Parts</option>
-            <option value="defective">Defective</option>
-            <option value="dim power/ glitchy">Dim Power / Glitchy</option>
-            <option value="no power">No Power</option>
-            <option value="cracked screen">Cracked Screen</option>
-            <option value="water damage">Water Damage</option>
-            <option value="parts only">Parts Only</option>
+            {conditions.length === 0 ? (
+              <option value="good">Good</option>
+            ) : (
+              conditions.map(c => (
+                <option key={c} value={c}>
+                  {c.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())}
+                </option>
+              ))
+            )}
           </select>
           <input
             className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
