@@ -39,7 +39,7 @@ const BUILTIN_CONDITIONS = [
 const ALL_COLUMNS = [
   { key: "title",    label: "Title",     sortable: true,  defaultWidth: 260 },
   { key: "order",    label: "Order",     sortable: false, defaultWidth: 140 },
-  { key: "tracking", label: "Tracking",  sortable: false, defaultWidth: 130 },
+  { key: "tracking", label: "Tracking",  sortable: false, defaultWidth: 220 },
   { key: "category", label: "Category",  sortable: true,  defaultWidth: 140 },
   { key: "condition",label: "Condition", sortable: true,  defaultWidth: 150 },
   { key: "state",    label: "State",     sortable: true,  defaultWidth: 110 },
@@ -491,7 +491,6 @@ function NewCategoryModal({
 
 export default function UnitsTable({ categories: initialCategories }: { categories: Category[] }) {
   const [search, setSearch] = useState("");
-  const [trackingScan, setTrackingScan] = useState("");
   const [filterStates, setFilterStates] = useState<string[]>([]);
   const [filterConditions, setFilterConditions] = useState<string[]>([]);
   const [filterCategoryId, setFilterCategoryId] = useState("");
@@ -588,8 +587,8 @@ export default function UnitsTable({ categories: initialCategories }: { categori
 
   const visibleCols = ALL_COLUMNS.filter(c => colVisible[c.key]);
   const colSpan = 1 + visibleCols.length;
-  const trackingRef = useRef<HTMLInputElement>(null);
-  useBarcodeScanner(trackingRef, (value) => setTrackingScan(value));
+  const searchRef = useRef<HTMLInputElement>(null);
+  useBarcodeScanner(searchRef, (value) => setSearch(value));
 
   const fetchUnits = useCallback(async (resetOffset = false) => {
     setLoading(true);
@@ -597,7 +596,6 @@ export default function UnitsTable({ categories: initialCategories }: { categori
     if (resetOffset) setOffset(0);
     const params = new URLSearchParams();
     if (search) params.set("search", search);
-    if (trackingScan) params.set("tracking", trackingScan);
     if (filterStates.length) params.set("state", filterStates.join(","));
     if (filterConditions.length) params.set("condition", filterConditions.join(","));
     if (filterCategoryId) params.set("categoryId", filterCategoryId);
@@ -611,10 +609,10 @@ export default function UnitsTable({ categories: initialCategories }: { categori
       setUnits(data.units ?? []);
       setTotal(data.total ?? 0);
     } finally { setLoading(false); }
-  }, [search, trackingScan, filterStates, filterConditions, filterCategoryId, sortBy, sortDir, offset]);
+  }, [search, filterStates, filterConditions, filterCategoryId, sortBy, sortDir, offset]);
 
   useEffect(() => { fetchUnits(true); }, // eslint-disable-next-line react-hooks/exhaustive-deps
-  [search, trackingScan, filterStates, filterConditions, filterCategoryId, sortBy, sortDir]);
+  [search, filterStates, filterConditions, filterCategoryId, sortBy, sortDir]);
 
   useEffect(() => { if (offset > 0) fetchUnits(false); }, // eslint-disable-next-line react-hooks/exhaustive-deps
   [offset]);
@@ -719,10 +717,6 @@ export default function UnitsTable({ categories: initialCategories }: { categori
     finally { setBulkLoading(false); }
   }
 
-  function handleTrackingKey(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter") setTrackingScan((e.target as HTMLInputElement).value.trim());
-  }
-
   const SortIcon = ({ field }: { field: string }) => {
     if (sortBy !== field) return <span className="text-slate-600 ml-1">↕</span>;
     return <span className="text-blue-400 ml-1">{sortDir === "asc" ? "↑" : "↓"}</span>;
@@ -752,7 +746,7 @@ export default function UnitsTable({ categories: initialCategories }: { categori
         return unit.trackingNumbers.length > 0 ? (
           <div className="space-y-0.5">
             {unit.trackingNumbers.slice(0, 2).map((t, i) => (
-              <div key={i} className="font-mono text-xs text-slate-500 truncate" title={t}>…{t.slice(-12)}</div>
+              <div key={i} className="font-mono text-xs text-slate-500 break-all" title={t}>{t}</div>
             ))}
             {unit.trackingNumbers.length > 2 && (
               <div className="text-xs text-slate-600">+{unit.trackingNumbers.length - 2} more</div>
@@ -805,24 +799,11 @@ export default function UnitsTable({ categories: initialCategories }: { categori
       {/* Filters */}
       <div className="rounded-lg border border-slate-800 bg-slate-900 p-4 space-y-3">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div>
-            <label className="block text-xs text-slate-400 mb-1">Search (title, order, condition, notes)</label>
-            <input type="text" value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="Search..."
+          <div className="md:col-span-2">
+            <label className="block text-xs text-slate-400 mb-1">Search (title, order, condition, notes, tracking — also accepts barcode scans)</label>
+            <input ref={searchRef} type="text" value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="Type or scan to search..."
               className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300 placeholder-slate-600" />
-          </div>
-          <div>
-            <label className="block text-xs text-slate-400 mb-1">Tracking number / barcode scan</label>
-            <div className="flex gap-2">
-              <input ref={trackingRef} type="text" defaultValue={trackingScan} onKeyDown={handleTrackingKey}
-                placeholder="Scan or type tracking..."
-                className="flex-1 rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300 placeholder-slate-600" />
-              {trackingScan && (
-                <button onClick={() => { setTrackingScan(""); if (trackingRef.current) trackingRef.current.value = ""; }}
-                  className="rounded border border-slate-700 px-2 py-1 text-xs text-slate-400 hover:bg-slate-800">Clear</button>
-              )}
-            </div>
-            {trackingScan && <p className="text-xs text-blue-400 mt-1">Filtering: …{trackingScan.slice(-12)}</p>}
           </div>
           <div>
             <div className="flex items-center justify-between mb-1">

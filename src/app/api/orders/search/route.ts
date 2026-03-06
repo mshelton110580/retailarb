@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
+import { findTrackingOrderIds } from "@/lib/tracking-search";
 
 /**
  * GET /api/orders/search
  * Full-featured order search with filtering, sorting, and pagination.
  *
  * Query params:
- *   search      - global text search: order ID, item ID, item title, tracking number, eBay account username
- *   tracking    - barcode scan input (matches last 12 digits of any tracking number)
+ *   search      - global text search: order ID, item ID, item title, tracking number (including barcodes), eBay account username
  *   status      - comma-separated order_status values (e.g. "Complete,Active")
  *   shipStatus  - comma-separated shipment derived_status values (e.g. "delivered,shipped")
  *   checkedIn   - "yes" | "no" | "" (filter by shipment check-in state)
@@ -26,7 +26,6 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const search = searchParams.get("search")?.trim() ?? "";
-  const tracking = searchParams.get("tracking")?.trim() ?? "";
   const statusParam = searchParams.get("status") ?? "";
   const shipStatusParam = searchParams.get("shipStatus") ?? "";
   const checkedIn = searchParams.get("checkedIn") ?? "";
@@ -81,14 +80,8 @@ export async function GET(req: Request) {
     });
     if (titleMatches.length > 0) orderIdSets.push(titleMatches.map(r => r.order_id));
 
-    // 4. Tracking number match (typed, partial)
-    const trackingMatches = await prisma.tracking_numbers.findMany({
-      where: { tracking_number: { contains: search, mode: "insensitive" } },
-      select: { shipment: { select: { order_id: true } } },
-    });
-    const trackingOrderIds = trackingMatches
-      .map(t => t.shipment?.order_id)
-      .filter((id): id is string => Boolean(id));
+    // 4. Tracking number match (handles typed partials, USPS barcodes, UPS alphanumeric)
+    const trackingOrderIds = await findTrackingOrderIds(search);
     if (trackingOrderIds.length > 0) orderIdSets.push(trackingOrderIds);
 
     // 5. eBay account username match → find accounts → get order_ids
@@ -118,25 +111,6 @@ export async function GET(req: Request) {
     }
 
     where.order_id = { in: Array.from(allMatchedIds) };
-  }
-
-  // Tracking barcode scan (last 12 digits)
-  if (tracking) {
-    const last12 = tracking.replace(/\D/g, "").slice(-12);
-    const trackingMatches = await prisma.tracking_numbers.findMany({
-      where: { tracking_number: { endsWith: last12 } },
-      select: { shipment: { select: { order_id: true } } },
-    });
-    const scanOrderIds = trackingMatches
-      .map(t => t.shipment?.order_id)
-      .filter((id): id is string => Boolean(id));
-    // Intersect with existing where if search is also set
-    if (where.order_id) {
-      const existing = new Set(where.order_id.in as string[]);
-      where.order_id = { in: scanOrderIds.filter(id => existing.has(id)) };
-    } else {
-      where.order_id = { in: scanOrderIds };
-    }
   }
 
   // Shipment-level filters (derived_status, checked_in)

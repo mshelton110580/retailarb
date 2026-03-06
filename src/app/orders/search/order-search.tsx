@@ -92,6 +92,7 @@ type ColKey =
   | "itemRefund"
   | "total"
   | "refund"
+  | "tracking"
   | "shipStatus"
   | "checkedIn"
   | "returnCase"
@@ -122,6 +123,7 @@ const ALL_COLS: ColDef[] = [
   }},
   { key: "total",      label: "Order Total",  defaultOn: true,  sortValue: o => o.originalTotal ?? 0 },
   { key: "refund",     label: "Refund",       defaultOn: true,  sortValue: o => o.hasRefund ? (o.currentTotal != null && o.currentTotal <= 0 ? 2 : 1) : 0 },
+  { key: "tracking",   label: "Tracking",     defaultOn: false, sortValue: o => o.shipment?.trackingNumbers?.[0]?.number ?? "" },
   { key: "shipStatus", label: "Ship Status",  defaultOn: true,  sortValue: o => o.shipment?.derivedStatus ?? "" },
   { key: "checkedIn",  label: "Check-in",     defaultOn: true,  sortValue: o => o.shipment?.checkedInAt ? 1 : 0 },
   { key: "returnCase", label: "Return",       defaultOn: true,  sortValue: o => o.returnCase ? (o.returnCase.escalated ? 2 : 1) : 0 },
@@ -382,6 +384,7 @@ const DEFAULT_COL_WIDTHS: Partial<Record<ColKey, number>> = {
   price:      64,
   total:      80,
   refund:     144,
+  tracking:   220,
   shipStatus: 112,
   checkedIn:  80,
   returnCase: 80,
@@ -495,14 +498,13 @@ function matchesCaseFilter(order: Order, filters: CaseFilter[]): boolean {
 // ── Fetch params builder ──────────────────────────────────────────────────────
 
 function buildParams(opts: {
-  search: string; trackingScan: string; filterShipStatus: string[];
+  search: string; filterShipStatus: string[];
   filterOrderStatus: string[]; filterCheckedIn: string; filterAccountId: string;
   effectiveDateFrom: string; dateTo: string; sortBy: ColKey; sortDir: "asc" | "desc";
   limit: number; offset: number;
 }) {
   const p = new URLSearchParams();
   if (opts.search) p.set("search", opts.search);
-  if (opts.trackingScan) p.set("tracking", opts.trackingScan);
   if (opts.filterShipStatus.length) p.set("shipStatus", opts.filterShipStatus.join(","));
   if (opts.filterOrderStatus.length) p.set("status", opts.filterOrderStatus.join(","));
   if (opts.filterCheckedIn) p.set("checkedIn", opts.filterCheckedIn);
@@ -549,7 +551,6 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   const [datePreset, setDatePreset] = useState<DatePreset>(saved.datePreset ?? "90");
 
   const [search, setSearch] = useState(saved.search ?? "");
-  const [trackingScan, setTrackingScan] = useState("");
   const [filterShipStatus, setFilterShipStatus] = useState<string[]>(saved.filterShipStatus ?? []);
   const [filterOrderStatus, setFilterOrderStatus] = useState<string[]>(saved.filterOrderStatus ?? []);
   const [filterCheckedIn, setFilterCheckedIn] = useState(saved.filterCheckedIn ?? "");
@@ -584,8 +585,8 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
     setCheckInTarget({ orderId: order.orderId, trackingNumber: tracking, itemTitle: title, totalQty, alreadyScanned });
   }
 
-  const trackingRef = useRef<HTMLInputElement>(null);
-  useBarcodeScanner(trackingRef, (value) => setTrackingScan(value));
+  const searchRef = useRef<HTMLInputElement>(null);
+  useBarcodeScanner(searchRef, (value) => setSearch(value));
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Cancel token: increment to abort in-flight background loads on filter change
   const fetchGenRef = useRef(0);
@@ -595,7 +596,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   // ── Fetch all pages for current filters ──────────────────────────────────
 
   const fetchAll = useCallback(async (filterSnapshot: {
-    search: string; trackingScan: string; filterShipStatus: string[];
+    search: string; filterShipStatus: string[];
     filterOrderStatus: string[]; filterCheckedIn: string; filterAccountId: string;
     effectiveDateFrom: string; dateTo: string; sortBy: ColKey; sortDir: "asc" | "desc";
   }) => {
@@ -669,14 +670,14 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    const snapshot = { search, trackingScan, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo, sortBy, sortDir };
+    const snapshot = { search, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo, sortBy, sortDir };
     debounceRef.current = setTimeout(() => { fetchAll(snapshot); }, 300);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, trackingScan, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo]);
+  }, [search, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo]);
 
   useEffect(() => {
-    const snapshot = { search, trackingScan, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo, sortBy, sortDir };
+    const snapshot = { search, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo, sortBy, sortDir };
     fetchAll(snapshot);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -763,10 +764,6 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
       return next;
     });
   }
-  function handleTrackingKey(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter") setTrackingScan((e.target as HTMLInputElement).value.trim());
-  }
-
   // ── Column resize ─────────────────────────────────────────────────────────
 
   function getCellStyle(key: ColKey): React.CSSProperties {
@@ -860,6 +857,11 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
         );
       case "refund":
         return <RefundBadge order={order} />;
+      case "tracking": {
+        const nums = shipment?.trackingNumbers ?? [];
+        if (nums.length === 0) return <span className="text-xs text-slate-600">—</span>;
+        return <span className="text-xs font-mono text-slate-300 break-all" title={nums.map(t => t.number).join(", ")}>{nums[0].number}{nums.length > 1 ? ` +${nums.length - 1}` : ""}</span>;
+      }
       case "shipStatus":
         return shipment
           ? <span className={`inline-block rounded px-2 py-0.5 text-[10px] font-medium ${shipStatusColor[shipment.derivedStatus] ?? "bg-slate-700 text-slate-300"}`}>
@@ -947,6 +949,11 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
         );
       case "refund":
         return <RefundBadge order={order} />;
+      case "tracking": {
+        const nums = shipment?.trackingNumbers ?? [];
+        if (nums.length === 0) return <span className="text-xs text-slate-600">—</span>;
+        return <span className="text-xs font-mono text-slate-300 break-all" title={nums.map(t => t.number).join(", ")}>{nums[0].number}{nums.length > 1 ? ` +${nums.length - 1}` : ""}</span>;
+      }
       case "shipStatus":
         return shipment
           ? <span className={`inline-block rounded px-2 py-0.5 text-[10px] font-medium ${shipStatusColor[shipment.derivedStatus] ?? "bg-slate-700 text-slate-300"}`}>
@@ -1262,26 +1269,10 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
       <div className="rounded-lg border border-slate-800 bg-slate-900 p-4 space-y-4">
 
         {/* Row 1: Global search + tracking scan */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <label className="mb-1 block text-xs text-slate-500">Search (order, item ID, title, tracking, account)</label>
-            <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Type to search…"
-              className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-blue-600" />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs text-slate-500">Tracking scan (barcode or last digits)</label>
-            <div className="flex gap-2">
-              <input ref={trackingRef} type="text" placeholder="Scan or type tracking…" onKeyDown={handleTrackingKey}
-                className="flex-1 rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-blue-600" />
-              <button onClick={() => { const val = trackingRef.current?.value.trim() ?? ""; setTrackingScan(val); }}
-                className="rounded bg-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-600">Find</button>
-              {trackingScan && (
-                <button onClick={() => { setTrackingScan(""); if (trackingRef.current) trackingRef.current.value = ""; }}
-                  className="rounded bg-slate-800 px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-700">×</button>
-              )}
-            </div>
-            {trackingScan && <p className="mt-1 text-xs text-blue-400">Filtering by tracking: …{trackingScan.slice(-12)}</p>}
-          </div>
+        <div>
+          <label className="mb-1 block text-xs text-slate-500">Search (order, item ID, title, tracking, account — also accepts barcode scans)</label>
+          <input ref={searchRef} type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Type or scan to search…"
+            className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-blue-600" />
         </div>
 
         {/* Row 2: Date presets + account + checked-in */}
@@ -1459,11 +1450,10 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
             <ColumnPicker visibleCols={visibleCols} onChange={setVisibleCols} groupBy={groupBy} />
             <button
               onClick={() => {
-                setSearch(""); setTrackingScan(""); setFilterShipStatus([]); setFilterOrderStatus([]);
+                setSearch(""); setFilterShipStatus([]); setFilterOrderStatus([]);
                 setFilterCheckedIn(""); setFilterAccountId(""); setFilterCase([]); setDateFrom(""); setDateTo("");
                 setDatePreset("90");
                 setSortBy("date"); setSortDir("desc");
-                if (trackingRef.current) trackingRef.current.value = "";
               }}
               className="rounded border border-slate-700 px-3 py-1 text-xs text-slate-400 hover:bg-slate-800"
             >
@@ -1576,7 +1566,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
           onSuccess={() => {
             setCheckInTarget(null);
             // Refresh order data to reflect new check-in status
-            const snapshot = { search, trackingScan, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo, sortBy, sortDir };
+            const snapshot = { search, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo, sortBy, sortDir };
             fetchAll(snapshot);
           }}
         />

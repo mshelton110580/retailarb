@@ -6,6 +6,9 @@ import { useEffect, useRef, useCallback } from "react";
  * characters within 150ms, which is distinguishable from human typing.
  *
  * Does NOT intercept paste events — only raw keystrokes.
+ *
+ * The target ref should point to the search input. When a scan is detected,
+ * the scanned value replaces the search input content and triggers onScan.
  */
 export function useBarcodeScanner(
   targetRef: React.RefObject<HTMLInputElement | null>,
@@ -25,7 +28,12 @@ export function useBarcodeScanner(
     if (value.length >= minLength) {
       // Scanner detected — route to target and trigger callback
       if (targetRef.current) {
-        targetRef.current.value = value;
+        // Set value via native setter to trigger React's onChange
+        const nativeSetter = Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype, "value"
+        )?.set;
+        nativeSetter?.call(targetRef.current, value);
+        targetRef.current.dispatchEvent(new Event("input", { bubbles: true }));
         targetRef.current.focus();
       }
       onScan(value);

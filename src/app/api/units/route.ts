@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
+import { findTrackingOrderIds } from "@/lib/tracking-search";
 
 /**
  * GET /api/units
  * Returns received units with filtering, search, and sorting.
  *
  * Query params:
- *   search        - text search against title, order_id, condition_status, notes
- *   tracking      - filter by tracking number last-12 digits
+ *   search        - text search against title, order_id, condition_status, notes, tracking numbers (including barcodes)
  *   categoryId    - filter by category ID ("none" for uncategorized)
  *   state         - filter by inventory_state (comma-separated for multiple)
  *   condition     - filter by condition_status (comma-separated)
@@ -25,7 +25,6 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const search = searchParams.get("search") ?? "";
-  const tracking = searchParams.get("tracking") ?? "";
   const categoryId = searchParams.get("categoryId") ?? "";
   const stateParam = searchParams.get("state") ?? "";
   const conditionParam = searchParams.get("condition") ?? "";
@@ -52,20 +51,6 @@ export async function GET(req: Request) {
     where.category_id = categoryId;
   }
 
-  // Tracking filter — match against tracking_numbers table
-  let orderIdsFromTracking: string[] | null = null;
-  if (tracking) {
-    const last12 = tracking.replace(/\D/g, "").slice(-12);
-    const matches = await prisma.tracking_numbers.findMany({
-      where: { tracking_number: { endsWith: last12 } },
-      select: { shipment: { select: { order_id: true } } }
-    });
-    orderIdsFromTracking = matches
-      .map(m => m.shipment?.order_id)
-      .filter((id): id is string => Boolean(id));
-    where.order_id = { in: orderIdsFromTracking };
-  }
-
   // Text search across title (listing + order_item), order_id, condition, notes
   let searchOrderIds: string[] | null = null;
   if (search) {
@@ -79,6 +64,7 @@ export async function GET(req: Request) {
 
     const searchOr: any[] = [
       { order_id: { contains: search, mode: "insensitive" } },
+      { item_id: { contains: search, mode: "insensitive" } },
       { condition_status: { contains: search, mode: "insensitive" } },
       { notes: { contains: search, mode: "insensitive" } },
     ];
@@ -92,6 +78,12 @@ export async function GET(req: Request) {
     });
     if (orderItemMatches.length > 0) {
       searchOr.push({ order_id: { in: orderItemMatches.map(o => o.order_id) } });
+    }
+
+    // Search tracking numbers (handles typed partials, USPS barcodes, UPS alphanumeric)
+    const trackingOrderIds = await findTrackingOrderIds(search);
+    if (trackingOrderIds.length > 0) {
+      searchOr.push({ order_id: { in: trackingOrderIds } });
     }
 
     where.OR = searchOr;
