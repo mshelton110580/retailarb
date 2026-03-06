@@ -41,6 +41,25 @@ if [ "$ENV" = "staging" ]; then
   git fetch origin
   git merge origin/arbdesk-dev --no-edit
   git push origin staging
+
+  echo "--- Copying production database to staging..."
+  echo "    Stopping staging services to release connections..."
+  systemctl stop $SERVICES 2>/dev/null || true
+
+  echo "    Dumping production DB (arbdesk)..."
+  sudo -u postgres pg_dump --no-owner --no-acl arbdesk > /tmp/arbdesk_prod_to_staging.sql
+
+  echo "    Dropping and recreating arbdesk_staging..."
+  sudo -u postgres psql -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'arbdesk_staging' AND pid <> pg_backend_pid();" >/dev/null 2>&1 || true
+  sudo -u postgres dropdb --if-exists arbdesk_staging
+  sudo -u postgres createdb arbdesk_staging
+  sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE arbdesk_staging TO postgres;"
+
+  echo "    Restoring production data into arbdesk_staging..."
+  sudo -u postgres psql -d arbdesk_staging -f /tmp/arbdesk_prod_to_staging.sql >/dev/null 2>&1
+  rm -f /tmp/arbdesk_prod_to_staging.sql
+
+  echo "    Production data restored to staging"
 fi
 
 # For production: merge staging into main + backup DB first

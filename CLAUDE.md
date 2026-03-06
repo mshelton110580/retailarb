@@ -194,12 +194,32 @@ npx prisma generate      # Regenerate Prisma client
 npx prisma db seed       # Seed admin user
 ```
 
-### Deployment
+### Deployment (`deploy.sh`)
+
+All environments: install deps → generate Prisma client → run migrations → build → restart services.
+
 ```bash
 ./deploy.sh dev          # Pull arbdesk-dev, install, migrate, build, restart
-./deploy.sh staging      # Merge dev→staging, push, then build
-./deploy.sh production   # Backup DB, merge staging→main, push, then build
+./deploy.sh staging      # Merge dev→staging, copy prod DB to staging, build
+./deploy.sh production   # Backup prod DB, merge staging→main, build
 ```
+
+**Dev** (`./deploy.sh dev`):
+1. `git reset --hard origin/arbdesk-dev`
+2. Install, migrate, build, restart `arbdesk-dev` + `arbdesk-dev-worker`
+
+**Staging** (`./deploy.sh staging`):
+1. Push `arbdesk-dev`, merge into `staging`, push `staging`
+2. Stop staging services
+3. `pg_dump` production DB (`arbdesk`) — read-only, production is never modified
+4. Drop and recreate `arbdesk_staging`, restore production dump
+5. Install, migrate (applies any new migrations on top of prod data), build
+6. Restart `arbdesk-staging` + `arbdesk-staging-worker`
+
+**Production** (`./deploy.sh production`):
+1. Backup production DB to `/root/backups/arbdesk_pre_deploy_YYYYMMDD_HHMMSS.sql`
+2. Push `staging`, merge into `main`, push `main`
+3. Install, migrate, build, restart `arbdesk` + `arbdesk-worker`
 
 ### Systemd Services
 - **Web**: `arbdesk-dev` / `arbdesk-staging` / `arbdesk`
@@ -208,7 +228,7 @@ npx prisma db seed       # Seed admin user
 
 ### Git Workflow
 - Develop on `arbdesk-dev` branch in `/opt/retailarb-dev/`
-- Deploy to staging merges `arbdesk-dev → staging`
+- Deploy to staging merges `arbdesk-dev → staging` and copies production data
 - Deploy to production merges `staging → main` with DB backup
 - Git identity: Mark Shelton / mshelton110580@users.noreply.github.com
 
