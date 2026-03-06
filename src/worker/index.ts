@@ -10,9 +10,15 @@ import { syncOrders } from "../app/api/orders/sync/route";
 
 const connection = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", { maxRetriesPerRequest: null });
 
+const ebayDisabled = process.env.DISABLE_EBAY_SYNC === "true";
+if (ebayDisabled) {
+  console.log("[Worker] DISABLE_EBAY_SYNC=true — eBay sync/scrape/snipe jobs will be skipped");
+}
+
 const syncOrdersWorker = new Worker(
   "sync_orders_job",
   async (job) => {
+    if (ebayDisabled) return;
     await syncOrders(job.data.ebayAccountId);
   },
   { connection: connection as any }
@@ -21,6 +27,7 @@ const syncOrdersWorker = new Worker(
 const enrichListingWorker = new Worker(
   "enrich_listing_job",
   async (job) => {
+    if (ebayDisabled) return;
     const { itemId, ebayAccountId } = job.data;
     if (!itemId) return;
     const accountId = ebayAccountId
@@ -63,6 +70,7 @@ const enrichListingWorker = new Worker(
 const returnsWorker = new Worker(
   "returns_scrape_job",
   async (job) => {
+    if (ebayDisabled) return;
     const record = await prisma.returns.findUnique({
       where: { id: job.data.returnId },
       include: { order: { include: { ebay_account: true } } }
@@ -120,6 +128,7 @@ const returnsWorker = new Worker(
 const snipeWorker = new Worker(
   "snipe_job",
   async (job) => {
+    if (ebayDisabled) return;
     const target = await prisma.targets.findUnique({ where: { item_id: job.data.itemId } });
     if (!target || target.type !== "AUCTION") return;
     const featureEnabled = process.env.FEATURE_OFFER_API === "true";
@@ -157,6 +166,7 @@ const snipeWorker = new Worker(
 const reconcileWorker = new Worker(
   "reconcile_auction_job",
   async (job) => {
+    if (ebayDisabled) return;
     const target = await prisma.targets.findUnique({ where: { item_id: job.data.itemId } });
     if (!target) return;
     const orderItem = await prisma.order_items.findFirst({
