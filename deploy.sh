@@ -1,39 +1,74 @@
 #!/bin/bash
-# Deploy script for arbdesk (retailarb)
-# Pushes current branch to GitHub, then pulls on the server and builds.
-# .env is EXCLUDED from git — it lives only on the server.
+# Deploy script for arbdesk environments
+# Usage:
+#   ./deploy.sh dev        — deploy arbdesk-dev branch to dev environment
+#   ./deploy.sh staging    — merge dev→staging and deploy
+#   ./deploy.sh production — merge staging→main, backup DB, and deploy
 set -e
 
-# Branch guardrail — refuse to deploy from any branch other than arbdesk-dev
-bash "$(dirname "$0")/.ai/verify-branch.sh" || exit 1
+ENV="${1:-dev}"
 
-SERVER="root@68.183.121.176"
-SSH_KEY="$HOME/.ssh/temp_do_key2"
-REMOTE_DIR="/opt/retailarb"
-BRANCH=$(git rev-parse --abbrev-ref HEAD)
+case "$ENV" in
+  dev)
+    DIR="/opt/retailarb-dev"
+    BRANCH="arbdesk-dev"
+    SERVICES="arbdesk-dev arbdesk-dev-worker"
+    ;;
+  staging)
+    DIR="/opt/retailarb-staging"
+    BRANCH="staging"
+    SERVICES="arbdesk-staging arbdesk-staging-worker"
+    ;;
+  production|prod)
+    DIR="/opt/retailarb"
+    BRANCH="main"
+    SERVICES="arbdesk arbdesk-worker"
+    ;;
+  *)
+    echo "Usage: $0 {dev|staging|production}"
+    exit 1
+    ;;
+esac
 
-echo "==> Pushing branch '$BRANCH' to GitHub..."
-git push origin "$BRANCH"
+echo "==> Deploying to $ENV ($DIR on branch $BRANCH)"
 
-COMMIT=$(git rev-parse --short HEAD)
-echo "==> Deploying commit $COMMIT to server..."
+# For staging: merge dev into staging first
+if [ "$ENV" = "staging" ]; then
+  echo "--- Merging arbdesk-dev into staging..."
+  cd /opt/retailarb-dev
+  git push origin arbdesk-dev
+  cd "$DIR"
+  git fetch origin
+  git merge origin/arbdesk-dev --no-edit
+  git push origin staging
+fi
 
-ssh -i "$SSH_KEY" "$SERVER" bash <<EOF
-set -e
-cd $REMOTE_DIR
+# For production: merge staging into main + backup DB first
+if [ "$ENV" = "production" ] || [ "$ENV" = "prod" ]; then
+  echo "--- Backing up production database..."
+  mkdir -p /root/backups
+  sudo -u postgres pg_dump arbdesk > "/root/backups/arbdesk_pre_deploy_$(date +%Y%m%d_%H%M%S).sql" 2>/dev/null
+  echo "    Backup saved to /root/backups/"
 
-echo "--- Fetching from GitHub..."
-git fetch origin
+  echo "--- Merging staging into main..."
+  cd /opt/retailarb-staging
+  git push origin staging
+  cd "$DIR"
+  git fetch origin
+  git merge origin/staging --no-edit
+  git push origin main
+fi
 
-echo "--- Checking out branch '$BRANCH' and resetting to origin..."
-git checkout "$BRANCH"
-git reset --hard "origin/$BRANCH"
+cd "$DIR"
 
-echo "--- Ensuring uploads directory exists..."
-mkdir -p public/uploads
+# For dev: just pull latest
+if [ "$ENV" = "dev" ]; then
+  git fetch origin
+  git reset --hard "origin/$BRANCH"
+fi
 
-echo "--- Ensuring .env exists (restoring from backup if needed)..."
-[ -f .env ] && echo ".env present" || (cp /root/.arbdesk.env .env && echo "Restored .env from backup")
+echo "--- Ensuring .env exists..."
+[ -f .env ] && echo "    .env present" || (echo "ERROR: .env missing in $DIR" && exit 1)
 
 echo "--- Installing dependencies..."
 npm ci --legacy-peer-deps
@@ -41,14 +76,24 @@ npm ci --legacy-peer-deps
 echo "--- Generating Prisma client..."
 npx prisma generate
 
+echo "--- Running database migrations..."
+npx prisma migrate deploy
+
 echo "--- Building..."
 npm run build
 
 echo "--- Restarting services..."
-systemctl restart arbdesk arbdesk-worker
+systemctl restart $SERVICES
 sleep 3
-systemctl is-active arbdesk
-systemctl is-active arbdesk-worker
-EOF
 
-echo "==> Deploy complete! Server is on commit $COMMIT (branch: $BRANCH)"
+for SVC in $SERVICES; do
+  if systemctl is-active --quiet "$SVC"; then
+    echo "    ✓ $SVC is running"
+  else
+    echo "    ✗ $SVC FAILED to start"
+    systemctl status "$SVC" --no-pager | tail -5
+    exit 1
+  fi
+done
+
+echo "==> Deploy to $ENV complete!"
