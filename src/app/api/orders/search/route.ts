@@ -200,6 +200,7 @@ export async function GET(req: Request) {
             title: true,
             qty: true,
             transaction_price: true,
+            order_line_item_id: true,
           }
         },
         shipments: {
@@ -218,7 +219,7 @@ export async function GET(req: Request) {
           }
         },
         received_units: {
-          select: { inventory_state: true },
+          select: { inventory_state: true, order_item_id: true },
         },
         returns: {
           select: {
@@ -228,8 +229,9 @@ export async function GET(req: Request) {
             ebay_status: true,
             escalated: true,
             refund_amount: true,
+            actual_refund: true,
+            ebay_item_id: true,
           },
-          take: 1,
           orderBy: { created_at: "desc" },
         },
         inr_cases: {
@@ -240,8 +242,8 @@ export async function GET(req: Request) {
             escalated_to_case: true,
             case_id: true,
             claim_amount: true,
+            ebay_item_id: true,
           },
-          take: 1,
           orderBy: { created_at: "desc" },
         },
       }
@@ -257,8 +259,74 @@ export async function GET(req: Request) {
         : null;
       const originalTotal = o.original_total ? Number(o.original_total) : null;
       const hasRefund = currentTotal != null && originalTotal != null && currentTotal < originalTotal;
+      const orderRefund = hasRefund ? Math.round((originalTotal! - currentTotal!) * 100) / 100 : 0;
       // Matches inventory page logic: needs return if any received unit has inventory_state === "to_be_returned"
       const needsReturn = o.received_units.some(u => u.inventory_state === "to_be_returned");
+
+      // ── Per-item refund calculation ────────────────────────────────
+      const distinctItems = new Set(o.order_items.map(i => i.item_id)).size;
+      const itemRefunds = new Map<string, { refund: number; needsAudit: boolean; method: string }>();
+
+      if (orderRefund > 0) {
+        if (distinctItems === 1) {
+          // Single-item order: entire order refund belongs to this item
+          for (const i of o.order_items) {
+            itemRefunds.set(i.id, { refund: orderRefund, needsAudit: false, method: "single_item" });
+          }
+        } else {
+          // Multi-item: use return/INR actual_refund matched by ebay_item_id
+          const returnByItem = new Map<string, number>();
+          for (const r of o.returns) {
+            if (r.ebay_item_id && r.actual_refund != null) {
+              returnByItem.set(r.ebay_item_id, (returnByItem.get(r.ebay_item_id) ?? 0) + Number(r.actual_refund));
+            }
+          }
+          const inrByItem = new Map<string, number>();
+          for (const c of o.inr_cases) {
+            if (c.ebay_item_id && c.claim_amount != null) {
+              inrByItem.set(c.ebay_item_id, (inrByItem.get(c.ebay_item_id) ?? 0) + Number(c.claim_amount));
+            }
+          }
+
+          const knownTotal = [...returnByItem.values()].reduce((s, v) => s + v, 0)
+            + [...inrByItem.values()].reduce((s, v) => s + v, 0);
+          const remainder = Math.round((orderRefund - knownTotal) * 100) / 100;
+          const fullyAccounted = Math.abs(remainder) < 0.02;
+
+          // Items without return/INR data — for proportional fallback
+          const unmatchedItems = o.order_items.filter(
+            i => !returnByItem.has(i.item_id) && !inrByItem.has(i.item_id)
+          );
+          const unmatchedSubtotal = unmatchedItems.reduce(
+            (s, i) => s + Number(i.transaction_price) * i.qty, 0
+          );
+
+          for (const i of o.order_items) {
+            const returnRefund = returnByItem.get(i.item_id);
+            const inrRefund = inrByItem.get(i.item_id);
+
+            if (returnRefund != null || inrRefund != null) {
+              // Exact from return/INR
+              itemRefunds.set(i.id, {
+                refund: Math.round(((returnRefund ?? 0) + (inrRefund ?? 0)) * 100) / 100,
+                needsAudit: false,
+                method: returnRefund != null ? "return" : "inr",
+              });
+            } else if (fullyAccounted) {
+              // Return/INR covers full order refund — this item has no refund
+              itemRefunds.set(i.id, { refund: 0, needsAudit: false, method: "no_refund" });
+            } else if (remainder > 0 && unmatchedSubtotal > 0) {
+              // Remainder not covered by return/INR — needs audit
+              const itemSub = Number(i.transaction_price) * i.qty;
+              const proportional = Math.round((remainder * itemSub / unmatchedSubtotal) * 100) / 100;
+              itemRefunds.set(i.id, { refund: proportional, needsAudit: true, method: "proportional" });
+            } else {
+              itemRefunds.set(i.id, { refund: 0, needsAudit: remainder > 0.01, method: "unknown" });
+            }
+          }
+        }
+      }
+
       return {
         orderId: o.order_id,
         purchaseDate: o.purchase_date.toISOString(),
@@ -269,6 +337,7 @@ export async function GET(req: Request) {
         taxAmount: o.tax_amount ? Number(o.tax_amount) : null,
         currentTotal,
         hasRefund,
+        orderRefund: orderRefund > 0 ? orderRefund : null,
         needsReturn,
         shipToCity: o.ship_to_city,
         shipToState: o.ship_to_state,
@@ -276,12 +345,18 @@ export async function GET(req: Request) {
         orderUrl: o.order_url,
         ebayAccountId: o.ebay_account_id,
         ebayUsername: o.ebay_account?.ebay_username ?? null,
-        items: o.order_items.map(i => ({
-          itemId: i.item_id,
-          title: i.title,
-          qty: i.qty,
-          price: Number(i.transaction_price),
-        })),
+        items: o.order_items.map(i => {
+          const ir = itemRefunds.get(i.id);
+          return {
+            itemId: i.item_id,
+            title: i.title,
+            qty: i.qty,
+            price: Number(i.transaction_price),
+            refund: ir?.refund ?? null,
+            refundMethod: ir?.method ?? null,
+            needsAudit: ir?.needsAudit ?? false,
+          };
+        }),
         shipment: shipment ? {
           derivedStatus: shipment.derived_status,
           deliveredAt: shipment.delivered_at?.toISOString() ?? null,
@@ -308,6 +383,8 @@ export async function GET(req: Request) {
             url: `https://www.ebay.com/rt/ReturnDetails?returnId=${r.ebay_return_id}`,
           };
         })(),
+        // Escalated if ANY return or INR is escalated
+        hasEscalatedReturn: o.returns.some(r => r.escalated),
         inrCase: (() => {
           const c = o.inr_cases[0];
           if (!c) return null;

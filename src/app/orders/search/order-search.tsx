@@ -13,6 +13,9 @@ type OrderItem = {
   title: string;
   qty: number;
   price: number;
+  refund: number | null;
+  refundMethod: string | null;
+  needsAudit: boolean;
 };
 
 type TrackingNumber = {
@@ -61,6 +64,7 @@ type Order = {
   taxAmount: number | null;
   currentTotal: number | null;
   hasRefund: boolean;
+  orderRefund: number | null;
   needsReturn: boolean;
   shipToCity: string | null;
   shipToState: string | null;
@@ -84,6 +88,7 @@ type ColKey =
   | "itemId"
   | "qty"
   | "price"
+  | "itemRefund"
   | "total"
   | "refund"
   | "shipStatus"
@@ -108,6 +113,7 @@ const ALL_COLS: ColDef[] = [
   { key: "itemId",    label: "Item ID",      defaultOn: true,  itemsOnly: true, sortValue: (_o, row) => row?.itemId ?? "" },
   { key: "qty",        label: "Qty",          defaultOn: true,  itemsOnly: true, sortValue: (_o, row) => row?.qty ?? 0 },
   { key: "price",      label: "Price",        defaultOn: true,  itemsOnly: true, sortValue: (_o, row) => row?.price ?? 0 },
+  { key: "itemRefund", label: "Item Refund",  defaultOn: true,  itemsOnly: true, sortValue: (_o, row) => row?.refund ?? 0 },
   { key: "total",      label: "Order Total",  defaultOn: true,  sortValue: o => o.originalTotal ?? 0 },
   { key: "refund",     label: "Refund",       defaultOn: true,  sortValue: o => o.hasRefund ? (o.currentTotal != null && o.currentTotal <= 0 ? 2 : 1) : 0 },
   { key: "shipStatus", label: "Ship Status",  defaultOn: true,  sortValue: o => o.shipment?.derivedStatus ?? "" },
@@ -154,6 +160,9 @@ type ItemRow = {
   title: string;
   qty: number;
   price: number;
+  refund: number | null;
+  refundMethod: string | null;
+  needsAudit: boolean;
   order: Order;
 };
 
@@ -235,6 +244,44 @@ function RefundBadge({ order }: { order: Order }) {
       {refundAmt != null && order.originalTotal != null && (
         <span className="text-[10px] text-amber-400 mt-0.5">{fmt$(refundAmt)} / {fmt$(order.originalTotal)}</span>
       )}
+    </span>
+  );
+}
+
+function ItemRefundBadge({ row }: { row: ItemRow }) {
+  const { order, refund, needsAudit, price, qty } = row;
+  if (!order.hasRefund || refund == null || refund === 0) {
+    return <span className="text-xs text-slate-600">—</span>;
+  }
+  const itemSubtotal = price * qty;
+  const isFull = refund >= itemSubtotal - 0.02;
+
+  if (needsAudit) {
+    return (
+      <span className="inline-flex flex-col">
+        <span className="inline-block rounded px-2 py-0.5 text-[10px] font-medium bg-yellow-950 border border-yellow-800 text-yellow-300">
+          Audit
+        </span>
+        <span className="text-[10px] text-yellow-400 mt-0.5">{fmt$(refund)}</span>
+      </span>
+    );
+  }
+  if (isFull) {
+    return (
+      <span className="inline-flex flex-col">
+        <span className="inline-block rounded px-2 py-0.5 text-[10px] font-medium bg-red-950 border border-red-800 text-red-300">
+          Full
+        </span>
+        <span className="text-[10px] text-red-400 mt-0.5">{fmt$(refund)}</span>
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex flex-col">
+      <span className="inline-block rounded px-2 py-0.5 text-[10px] font-medium bg-amber-950 border border-amber-800 text-amber-300">
+        Partial
+      </span>
+      <span className="text-[10px] text-amber-400 mt-0.5">{fmt$(refund)} / {fmt$(itemSubtotal)}</span>
     </span>
   );
 }
@@ -472,8 +519,16 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   const saved = useMemo(() => loadSaved(), []);
 
   const [groupBy, setGroupBy] = useState<GroupBy>(saved.groupBy ?? "items");
-  const [visibleCols, setVisibleCols] = useState<Set<ColKey>>(
-    saved.visibleCols ? new Set(saved.visibleCols) : DEFAULT_ON
+  const [visibleCols, setVisibleCols] = useState<Set<ColKey>>(() => {
+    if (!saved.visibleCols) return DEFAULT_ON;
+    const restored = new Set<ColKey>(saved.visibleCols);
+    // Auto-add new default-on columns not present in saved state
+    const savedSet = new Set(saved.visibleCols);
+    for (const col of ALL_COLS) {
+      if (col.defaultOn && !savedSet.has(col.key)) restored.add(col.key);
+    }
+    return restored;
+  }
   );
   const [colWidths, setColWidths] = useState<Partial<Record<ColKey, number>>>(() => ({
     ...DEFAULT_COL_WIDTHS,
@@ -625,10 +680,10 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
     const rows: ItemRow[] = [];
     for (const order of orders) {
       if (order.items.length === 0) {
-        rows.push({ key: `${order.orderId}-__empty`, itemId: "", title: "—", qty: 0, price: 0, order });
+        rows.push({ key: `${order.orderId}-__empty`, itemId: "", title: "—", qty: 0, price: 0, refund: null, refundMethod: null, needsAudit: false, order });
       } else {
         order.items.forEach((item, idx) => {
-          rows.push({ key: `${order.orderId}-${item.itemId}-${idx}`, itemId: item.itemId, title: item.title, qty: item.qty, price: item.price, order });
+          rows.push({ key: `${order.orderId}-${item.itemId}-${idx}`, itemId: item.itemId, title: item.title, qty: item.qty, price: item.price, refund: item.refund, refundMethod: item.refundMethod, needsAudit: item.needsAudit, order });
         });
       }
     }
@@ -788,6 +843,8 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
         return <span className="text-xs text-slate-400">{row.qty > 0 ? `×${row.qty}` : "—"}</span>;
       case "price":
         return <span className="text-xs text-slate-300">{row.qty > 0 ? fmt$(row.price) : "—"}</span>;
+      case "itemRefund":
+        return <ItemRefundBadge row={row} />;
       case "total":
         return (
           <span className={`text-xs ${order.hasRefund ? "text-amber-400" : "text-slate-400"}`}>
@@ -933,7 +990,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
       }
       case "escalated":
         return <EscalatedBadge order={order} />;
-      case "itemId": case "qty": case "price": return null;
+      case "itemId": case "qty": case "price": case "itemRefund": return null;
       default: return null;
 
     }
