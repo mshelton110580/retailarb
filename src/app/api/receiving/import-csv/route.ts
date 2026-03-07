@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
 import { TargetType, TargetStatus } from "@prisma/client";
 import { findOrCreateCategory, computeInventoryState, generateCategoryName } from "@/lib/item-categorization";
+import { onCategoryCreated } from "@/lib/ai";
 
 // Parse a Google Sheets timestamp in various formats:
 //   "2023/07/01 12:05.45"  "7/1/2023 12:05:45"  "2/18/2026 14:05:45"  "2026-02-18T14:05:45"
@@ -250,7 +251,7 @@ export async function POST(req: Request) {
           let categoryResult = await findOrCreateCategory(listing.gtin, listing.title);
           if (categoryResult.categoryId === null && categoryResult.requiresManualSelection) {
             // Auto-create from the suggested name (or derive one fresh)
-            const suggestedName = categoryResult.suggestedCategoryName ?? generateCategoryName(listing.title ?? "");
+            const suggestedName = categoryResult.suggestedCategoryName ?? await generateCategoryName(listing.title ?? "");
             if (suggestedName) {
               // Check if a category with this name already exists (race-safe)
               const existing = await prisma.item_categories.findFirst({
@@ -263,6 +264,7 @@ export async function POST(req: Request) {
                 const created = await prisma.item_categories.create({
                   data: { category_name: suggestedName, category_keywords: [] }
                 });
+                await onCategoryCreated(created.id, suggestedName);
                 categoryResult = { categoryId: created.id, confidence: "low", requiresManualSelection: false, reason: "Auto-created from suggested name during import" };
               }
             }

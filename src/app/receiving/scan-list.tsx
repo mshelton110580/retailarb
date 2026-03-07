@@ -341,8 +341,10 @@ export default function ScanList({ entries }: { entries: ScanEntry[] }) {
             </div>
             <span className="text-xs text-slate-400 whitespace-nowrap">
               {order.isLot
-                ? order.lotSize && order.orderQty > 1
-                  ? `${order.orderQty} lots × ${order.lotSize} units (${order.scannedUnits} total)`
+                ? order.lotSize
+                  ? order.orderQty > 1
+                    ? `${order.orderQty} lots × ${order.lotSize} units (${order.scannedUnits} scanned)`
+                    : `Lot of ${order.lotSize} (${order.scannedUnits} scanned)`
                   : `${order.scannedUnits} scanned (qty: ${order.orderQty})`
                 : `${order.scannedUnits}/${order.expectedUnits} units`}
             </span>
@@ -377,9 +379,12 @@ export default function ScanList({ entries }: { entries: ScanEntry[] }) {
                     <span className="font-mono font-medium">...{entry.trackingLast8}</span>
                     {entry.source === "scan" ? (
                       <>
-                        {entry.scanCount > 1 && (
-                          <span className="rounded bg-fuchsia-900 px-1.5 py-0.5 text-xs text-fuchsia-300">{entry.scanCount} units</span>
-                        )}
+                        {(() => {
+                          const totalUnits = entry.matchedOrders.reduce((sum, o) => sum + o.receivedUnits.length, 0);
+                          return totalUnits > 1 ? (
+                            <span className="rounded bg-fuchsia-900 px-1.5 py-0.5 text-xs text-fuchsia-300">{totalUnits} units</span>
+                          ) : null;
+                        })()}
                         <span className={`rounded px-1.5 py-0.5 text-xs ${entry.resolutionState === "MATCHED" ? "bg-green-900 text-green-300" : "bg-yellow-900 text-yellow-300"}`}>
                           {entry.resolutionState}
                         </span>

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
 import { z } from "zod";
+import { onCategoryDeleted } from "@/lib/ai";
 
 const schema = z.object({
   fromCategoryId: z.string(),
@@ -92,6 +93,8 @@ export async function POST(req: Request) {
         aliasesPreserved: 1 + mappingsToRedirect.length // The deleted category + any mappings it had
       };
     });
+
+    onCategoryDeleted(fromCategoryId);
 
     return NextResponse.json({
       ok: true,

@@ -51,6 +51,10 @@ export async function DELETE(
 
   if (shipment) {
     const isLot = remainingUnits > shipment.expected_units;
+    const orderQty = shipment.expected_units;
+    const lotSize = isLot && orderQty > 0
+      ? Math.ceil(remainingUnits / orderQty)
+      : null;
     let scanStatus: string;
 
     if (remainingUnits === 0) {
@@ -69,10 +73,31 @@ export async function DELETE(
         scanned_units: remainingUnits,
         scan_status: scanStatus,
         is_lot: isLot,
+        lot_size: lotSize,
         checked_in_at: remainingUnits === 0 ? null : shipment.checked_in_at,
         checked_in_by: remainingUnits === 0 ? null : shipment.checked_in_by
       }
     });
+
+    // Clean up orphaned receiving_scans — keep only as many as remaining units
+    const trackingNums = await prisma.tracking_numbers.findMany({
+      where: { shipment_id: shipment.id },
+      select: { tracking_number: true }
+    });
+    for (const tn of trackingNums) {
+      const last8 = tn.tracking_number.replace(/\D/g, "").slice(-8);
+      const scansForTracking = await prisma.receiving_scans.findMany({
+        where: { tracking_last8: last8 },
+        orderBy: { scanned_at: "desc" }
+      });
+      // Delete excess scan records (keep at most remainingUnits, minimum 0)
+      const toDelete = scansForTracking.slice(remainingUnits);
+      if (toDelete.length > 0) {
+        await prisma.receiving_scans.deleteMany({
+          where: { id: { in: toDelete.map(s => s.id) } }
+        });
+      }
+    }
   }
 
   return NextResponse.json({

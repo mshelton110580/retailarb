@@ -14,6 +14,7 @@ type ScanResultItem = {
   remaining: number | null;
   scanStatus: string;
   isLot: boolean;
+  lotSize: number | null;
   condition: string;
   categoryInfo: {
     categoryId: string | null;
@@ -22,7 +23,7 @@ type ScanResultItem = {
     reason?: string;
     suggestedCategoryName?: string;
   };
-  item: { title: string; itemId: string; qty: number };
+  item: { title: string; itemId: string; qty: number; scannedForItem?: number; remainingForItem?: number | null };
   allItems: Array<{ title: string; qty: number; itemId: string }>;
   error?: string;
 };
@@ -122,13 +123,28 @@ export default function ReceivingForm() {
         } else if (data.results?.[0]) {
           const r = data.results[0];
           if (r.isLot) {
-            setStatus(`📦 Lot — Unit ${r.unitIndex} scanned (${r.scannedSoFar} total, qty: ${r.item?.qty ?? "?"}). Needs reconciliation.`);
+            const lotDesc = r.lotSize ? `AI detected lot of ${r.lotSize}` : `${r.scannedSoFar} scanned`;
+            setStatus(`📦 Lot — ${lotDesc} (${r.scannedSoFar} scanned so far). Needs reconciliation.`);
             setStatusType("lot");
           } else if (r.scanStatus === "complete") {
             setStatus(`✓ Unit ${r.unitIndex} of ${r.expectedUnits} — All units checked in!`);
             setStatusType("success");
           } else if (r.scanStatus === "partial") {
-            setStatus(`📋 Unit ${r.unitIndex} of ${r.expectedUnits} checked in — ${r.remaining} remaining`);
+            const itemInfo = r.item;
+            const hasMultipleItems = (r.allItems?.length ?? 0) > 1;
+            if (hasMultipleItems && itemInfo) {
+              const itemRemaining = itemInfo.remainingForItem ?? 0;
+              if (itemRemaining === 0) {
+                // Just finished this item, next scan will be a different item
+                const nextItemIdx = r.allItems!.findIndex(i => i.itemId === itemInfo.itemId) + 1;
+                const nextItem = r.allItems![nextItemIdx];
+                setStatus(`✓ "${itemInfo.title}" complete (${itemInfo.qty}/${itemInfo.qty}). Next: "${nextItem?.title ?? "?"}" (${nextItem?.qty ?? "?"} units)`);
+              } else {
+                setStatus(`📋 "${itemInfo.title}" — ${itemInfo.scannedForItem} of ${itemInfo.qty} scanned, ${itemRemaining} remaining. (${r.scannedSoFar}/${r.expectedUnits} total)`);
+              }
+            } else {
+              setStatus(`📋 Unit ${r.unitIndex} of ${r.expectedUnits} checked in — ${r.remaining} remaining`);
+            }
             setStatusType("warning");
           }
 
@@ -405,38 +421,103 @@ export default function ReceivingForm() {
 
               {/* Progress bar */}
               {!r.isLot && typeof r.expectedUnits === "number" && r.expectedUnits > 0 && (
-                <div className="mt-2">
-                  <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all ${
-                        r.scanStatus === "complete" ? "bg-green-500" : "bg-yellow-500"
-                      }`}
-                      style={{ width: `${Math.min(100, (r.scannedSoFar / (r.expectedUnits as number)) * 100)}%` }}
-                    />
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500">
-                    {r.scannedSoFar} of {r.expectedUnits} units scanned
-                    {r.remaining !== null && r.remaining > 0 && ` — ${r.remaining} remaining`}
-                  </p>
+                <div className="mt-2 space-y-2">
+                  {/* Per-item progress for multi-item orders */}
+                  {(r.allItems?.length ?? 0) > 1 && r.item?.scannedForItem != null ? (
+                    <>
+                      {r.allItems!.map((item, j) => {
+                        // Calculate scanned count per item from overall progress
+                        let itemScanned = 0;
+                        let runningBefore = 0;
+                        for (let k = 0; k < j; k++) runningBefore += r.allItems![k].qty;
+                        const runningAfter = runningBefore + item.qty;
+                        if (r.scannedSoFar >= runningAfter) {
+                          itemScanned = item.qty; // fully done
+                        } else if (r.scannedSoFar > runningBefore) {
+                          itemScanned = r.scannedSoFar - runningBefore; // partially done
+                        }
+                        const isCurrentItem = item.itemId === r.item!.itemId;
+                        const isDone = itemScanned >= item.qty;
+                        return (
+                          <div key={j} className={`rounded p-2 ${isCurrentItem ? "bg-slate-800 border border-blue-800" : "bg-slate-800/50"}`}>
+                            <div className="flex items-center justify-between">
+                              <p className={`text-xs ${isCurrentItem ? "text-blue-300 font-medium" : isDone ? "text-green-400" : "text-slate-500"}`}>
+                                {isCurrentItem && "▶ "}{item.title}
+                              </p>
+                              <span className={`text-xs ${isDone ? "text-green-400" : isCurrentItem ? "text-blue-300" : "text-slate-500"}`}>
+                                {itemScanned}/{item.qty}
+                              </span>
+                            </div>
+                            <div className="mt-1 h-1.5 rounded-full bg-slate-700 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all ${isDone ? "bg-green-500" : isCurrentItem ? "bg-blue-500" : "bg-slate-600"}`}
+                                style={{ width: `${Math.min(100, item.qty > 0 ? (itemScanned / item.qty) * 100 : 0)}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                      <p className="text-xs text-slate-500">
+                        {r.scannedSoFar} of {r.expectedUnits} total units scanned
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all ${
+                            r.scanStatus === "complete" ? "bg-green-500" : "bg-yellow-500"
+                          }`}
+                          style={{ width: `${Math.min(100, (r.scannedSoFar / (r.expectedUnits as number)) * 100)}%` }}
+                        />
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        {r.scannedSoFar} of {r.expectedUnits} units scanned
+                        {r.remaining !== null && r.remaining > 0 && ` — ${r.remaining} remaining`}
+                      </p>
+                    </>
+                  )}
                 </div>
               )}
 
               {r.isLot && (
-                <div className="mt-2">
-                  <p className="text-xs text-purple-400">
-                    {r.scannedSoFar} units scanned so far (listed qty: 1). Keep scanning to count all units in the lot.
-                  </p>
+                <div className="mt-2 space-y-1">
+                  {r.lotSize ? (
+                    <>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-purple-400">Lot of {r.lotSize}</span>
+                        <span className="text-xs text-purple-300 font-medium">{r.scannedSoFar}/{r.lotSize}</span>
+                      </div>
+                      <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all ${r.scannedSoFar >= r.lotSize ? "bg-green-500" : "bg-purple-500"}`}
+                          style={{ width: `${Math.min(100, r.lotSize > 0 ? (r.scannedSoFar / r.lotSize) * 100 : 0)}%` }}
+                        />
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        {r.scannedSoFar >= r.lotSize
+                          ? "All units scanned — ready for reconciliation"
+                          : `${r.lotSize - r.scannedSoFar} remaining — keep scanning`}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-xs text-purple-400">
+                      {r.scannedSoFar} units scanned so far. Keep scanning to count all units in the lot.
+                    </p>
+                  )}
                 </div>
               )}
 
-              {/* Item details */}
-              <div className="mt-2">
-                {r.allItems?.map((item, j) => (
-                  <p key={j} className="text-xs text-slate-400">
-                    {item.title} (listed qty: {item.qty})
-                  </p>
-                ))}
-              </div>
+              {/* Item details (single-item orders only — multi-item shown in progress above) */}
+              {(r.allItems?.length ?? 0) <= 1 && (
+                <div className="mt-2">
+                  {r.allItems?.map((item, j) => (
+                    <p key={j} className="text-xs text-slate-400">
+                      {item.title} (listed qty: {item.qty})
+                    </p>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>

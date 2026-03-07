@@ -241,7 +241,14 @@ export default async function ReceivingPage({
       notes: latestScan.notes,
       resolutionState: latestScan.resolution_state,
       scanCount: group.scans.length,
-      matchedOrders: group.scans.flatMap(s => s.matchedOrders)
+      matchedOrders: (() => {
+        const seen = new Set<string>();
+        return group.scans.flatMap(s => s.matchedOrders).filter(o => {
+          if (seen.has(o.orderId)) return false;
+          seen.add(o.orderId);
+          return true;
+        });
+      })()
     });
   }
 

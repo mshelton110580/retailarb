@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
 import { z } from "zod";
+import { onCategoryCreated } from "@/lib/ai";
 
 const schema = z.object({
   categoryName: z.string().min(1).max(60),
@@ -48,6 +49,8 @@ export async function POST(req: Request) {
         category_keywords: []
       }
     });
+
+    await onCategoryCreated(category.id, category.category_name);
 
     return NextResponse.json({
       ok: true,

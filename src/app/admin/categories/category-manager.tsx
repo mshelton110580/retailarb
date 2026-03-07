@@ -42,6 +42,12 @@ export default function CategoryManager({
   const [searchTerm, setSearchTerm] = useState("");
   const [deletingMerge, setDeletingMerge] = useState<string | null>(null);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+  const [showAddMapping, setShowAddMapping] = useState(false);
+  const [newMappingFrom, setNewMappingFrom] = useState("");
+  const [newMappingTo, setNewMappingTo] = useState("");
+  const [savingMapping, setSavingMapping] = useState(false);
+  const [editingMerge, setEditingMerge] = useState<string | null>(null);
+  const [editMappingTo, setEditMappingTo] = useState("");
   const [categoryUnits, setCategoryUnits] = useState<Record<string, {
     id: string; orderId: string; unitIndex: number; title: string;
     condition: string; state: string; receivedAt: string;
@@ -190,6 +196,87 @@ export default function CategoryManager({
   const getCategoryName = (id: string) => {
     return allCategories.find(c => c.id === id)?.category_name || "Unknown";
   };
+
+  async function handleAddMapping() {
+    if (!newMappingFrom.trim() || !newMappingTo) {
+      setMessage("Please enter a category name and select a target category");
+      setMessageType("error");
+      return;
+    }
+
+    setSavingMapping(true);
+    setMessage(null);
+
+    try {
+      const res = await fetch("/api/categories/merge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fromCategoryName: newMappingFrom.trim(),
+          toCategoryId: newMappingTo
+        })
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        setMessage(`Mapping added: "${newMappingFrom.trim()}" → "${getCategoryName(newMappingTo)}"`);
+        setMessageType("success");
+        setNewMappingFrom("");
+        setNewMappingTo("");
+        setShowAddMapping(false);
+        router.refresh();
+      } else {
+        setMessage(`Error: ${data.error}`);
+        setMessageType("error");
+      }
+    } catch {
+      setMessage("Network error. Please try again.");
+      setMessageType("error");
+    } finally {
+      setSavingMapping(false);
+    }
+  }
+
+  async function handleEditMapping(mergeId: string, fromCategoryName: string) {
+    if (!editMappingTo) {
+      setMessage("Please select a target category");
+      setMessageType("error");
+      return;
+    }
+
+    setSavingMapping(true);
+    setMessage(null);
+
+    try {
+      const res = await fetch("/api/categories/merge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fromCategoryName,
+          toCategoryId: editMappingTo
+        })
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        setMessage(`Mapping updated: "${fromCategoryName}" → "${getCategoryName(editMappingTo)}"`);
+        setMessageType("success");
+        setEditingMerge(null);
+        setEditMappingTo("");
+        router.refresh();
+      } else {
+        setMessage(`Error: ${data.error}`);
+        setMessageType("error");
+      }
+    } catch {
+      setMessage("Network error. Please try again.");
+      setMessageType("error");
+    } finally {
+      setSavingMapping(false);
+    }
+  }
 
   async function handleQuickMerge(duplicateGroup: DuplicateGroup) {
     // Find the category with the most units as the target
@@ -462,37 +549,136 @@ export default function CategoryManager({
 
       {/* Merge Mappings */}
       <section className="rounded-lg border border-slate-800 bg-slate-900 p-6">
-        <h2 className="text-lg font-semibold mb-4">Category Merge Mappings ({merges.length})</h2>
-        <p className="text-sm text-slate-400 mb-4">
-          These mappings automatically redirect detected category names to existing categories.
-        </p>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-lg font-semibold">Category Merge Mappings ({merges.length})</h2>
+            <p className="text-sm text-slate-400 mt-1">
+              These mappings automatically redirect detected category names to existing categories.
+            </p>
+          </div>
+          <button
+            onClick={() => { setShowAddMapping(!showAddMapping); setEditingMerge(null); }}
+            className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+          >
+            {showAddMapping ? "Cancel" : "Add Mapping"}
+          </button>
+        </div>
 
-        {merges.length === 0 ? (
+        {showAddMapping && (
+          <div className="mb-4 rounded border border-blue-800 bg-blue-900/20 p-4">
+            <h3 className="text-sm font-medium text-blue-300 mb-3">New Category Mapping</h3>
+            <div className="grid gap-3 md:grid-cols-[1fr_auto_1fr_auto] items-end">
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">From Category Name</label>
+                <input
+                  type="text"
+                  value={newMappingFrom}
+                  onChange={(e) => setNewMappingFrom(e.target.value)}
+                  placeholder="e.g. TI-84 Plus CE Calculator"
+                  className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300"
+                />
+              </div>
+              <span className="text-slate-600 pb-2 hidden md:block">→</span>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">To Category</label>
+                <select
+                  value={newMappingTo}
+                  onChange={(e) => setNewMappingTo(e.target.value)}
+                  className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300"
+                >
+                  <option value="">-- Select target category --</option>
+                  {allCategories.map(cat => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.category_name} ({cat.unitCount} units)
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button
+                onClick={handleAddMapping}
+                disabled={savingMapping || !newMappingFrom.trim() || !newMappingTo}
+                className="rounded bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {savingMapping ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {merges.length === 0 && !showAddMapping ? (
           <p className="text-sm text-slate-500 text-center py-8">
-            No merge mappings yet. They will appear here when you merge categories during scanning.
+            No merge mappings yet. Click "Add Mapping" to create one, or they will appear here when you merge categories.
           </p>
         ) : (
           <div className="space-y-2">
             {merges.map(merge => (
               <div
                 key={merge.id}
-                className="flex items-center justify-between rounded border border-slate-800 bg-slate-950 px-4 py-2"
+                className="rounded border border-slate-800 bg-slate-950 px-4 py-2"
               >
-                <div className="flex items-center gap-3">
-                  <span className="text-sm text-slate-400">"{merge.fromCategoryName}"</span>
-                  <span className="text-slate-600">→</span>
-                  <span className="text-sm text-slate-300">{getCategoryName(merge.toCategoryId)}</span>
-                  <span className="text-xs text-slate-600">
-                    {new Date(merge.createdAt).toLocaleDateString()}
-                  </span>
-                </div>
-                <button
-                  onClick={() => handleDeleteMerge(merge.id)}
-                  disabled={deletingMerge === merge.id}
-                  className="rounded border border-red-800 px-2 py-1 text-xs text-red-400 hover:bg-red-900 disabled:opacity-50"
-                >
-                  {deletingMerge === merge.id ? "..." : "Delete"}
-                </button>
+                {editingMerge === merge.id ? (
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <span className="text-sm text-slate-400">"{merge.fromCategoryName}"</span>
+                    <span className="text-slate-600">→</span>
+                    <select
+                      value={editMappingTo}
+                      onChange={(e) => setEditMappingTo(e.target.value)}
+                      className="flex-1 min-w-[200px] rounded border border-slate-700 bg-slate-950 px-3 py-1.5 text-sm text-slate-300"
+                    >
+                      <option value="">-- Select target category --</option>
+                      {allCategories.map(cat => (
+                        <option key={cat.id} value={cat.id}>
+                          {cat.category_name} ({cat.unitCount} units)
+                        </option>
+                      ))}
+                    </select>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleEditMapping(merge.id, merge.fromCategoryName)}
+                        disabled={savingMapping || !editMappingTo}
+                        className="rounded bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                      >
+                        {savingMapping ? "..." : "Save"}
+                      </button>
+                      <button
+                        onClick={() => { setEditingMerge(null); setEditMappingTo(""); }}
+                        className="rounded border border-slate-700 px-3 py-1 text-xs text-slate-400 hover:bg-slate-800"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm text-slate-400">"{merge.fromCategoryName}"</span>
+                      <span className="text-slate-600">→</span>
+                      <span className="text-sm text-slate-300">{getCategoryName(merge.toCategoryId)}</span>
+                      <span className="text-xs text-slate-600">
+                        {new Date(merge.createdAt).toLocaleDateString()}
+                      </span>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          setEditingMerge(merge.id);
+                          setEditMappingTo(merge.toCategoryId);
+                          setShowAddMapping(false);
+                        }}
+                        className="rounded border border-slate-700 px-2 py-1 text-xs text-slate-400 hover:bg-slate-800"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDeleteMerge(merge.id)}
+                        disabled={deletingMerge === merge.id}
+                        className="rounded border border-red-800 px-2 py-1 text-xs text-red-400 hover:bg-red-900 disabled:opacity-50"
+                      >
+                        {deletingMerge === merge.id ? "..." : "Delete"}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>

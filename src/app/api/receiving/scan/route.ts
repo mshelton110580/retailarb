@@ -4,6 +4,8 @@ import { prisma } from "@/lib/db";
 import { TargetType, TargetStatus } from "@prisma/client";
 import { z } from "zod";
 import { findOrCreateCategory, computeInventoryState } from "@/lib/item-categorization";
+import { extractProductAndLotInfo } from "@/lib/ai";
+import type { ProductInfo } from "@/lib/ai";
 
 const schema = z.object({
   tracking: z.string().min(8),
@@ -85,6 +87,36 @@ export async function POST(req: Request) {
       shipment.expected_units = orderQty;
     }
 
+    // On first scan, use AI to predict lot from title
+    let aiLotPrediction: { isLot: boolean; itemsPerUnit: number; confidence: string } | null = null;
+    let aiProductInfo: ProductInfo | null = null;
+    if (!shipment.checked_in_at && !shipment.is_lot && orderItems[0]?.title) {
+      try {
+        const aiResult = await extractProductAndLotInfo(orderItems[0].title, orderQty);
+        aiProductInfo = aiResult.product;
+        if (aiResult.lot.isLot && aiResult.lot.confidence !== "low") {
+          aiLotPrediction = {
+            isLot: true,
+            itemsPerUnit: aiResult.lot.itemsPerUnit,
+            confidence: aiResult.lot.confidence
+          };
+          // Pre-set lot info on shipment so it's treated as a lot from the start
+          shipment.is_lot = true;
+          shipment.lot_size = aiResult.lot.itemsPerUnit;
+          await prisma.shipments.update({
+            where: { id: shipment.id },
+            data: {
+              is_lot: true,
+              lot_size: aiResult.lot.itemsPerUnit,
+              scan_status: "check_quantity"
+            }
+          });
+        }
+      } catch (err) {
+        console.error("AI lot prediction failed (non-blocking):", err);
+      }
+    }
+
     // Count how many units have already been scanned for this shipment
     const currentScannedCount = await prisma.received_units.count({
       where: { order_id: shipment.order_id }
@@ -99,20 +131,31 @@ export async function POST(req: Request) {
     const justBecameLot = !shipment.is_lot && newScannedCount > orderQty;
     const isLot = shipment.is_lot || newScannedCount > orderQty;
 
-    // lot_size = ceil(scanned / qty) — always reflects current best estimate.
-    // e.g. qty=2, scanned=11 → ceil(11/2)=6, with 1 missing unit implied.
-    const lotSize = isLot && orderQty > 0
+    // lot_size: use the greater of AI prediction and scan-based estimate.
+    // AI may predict 24 on first scan; scan-based = ceil(scanned/qty).
+    // As scans accumulate, scan-based catches up or exceeds AI prediction.
+    const scanBasedLotSize = isLot && orderQty > 0
       ? Math.ceil(newScannedCount / orderQty)
+      : null;
+    const lotSize = isLot
+      ? Math.max(scanBasedLotSize ?? 0, shipment.lot_size ?? 0) || null
       : (shipment.lot_size ?? null);
 
     // For lots all units belong to the first (and only meaningful) order item.
     // For normal multi-qty orders walk items linearly.
+    let targetItemScannedSoFar = 0;
+    let targetItemStartIndex = 0;
     const targetItem = (() => {
       if (isLot) return orderItems[0];
       let running = 0;
       for (const item of orderItems) {
+        const prevRunning = running;
         running += item.qty;
-        if (newUnitIndex <= running) return item;
+        if (newUnitIndex <= running) {
+          targetItemStartIndex = prevRunning;
+          targetItemScannedSoFar = newUnitIndex - prevRunning;
+          return item;
+        }
       }
       return orderItems[0];
     })();
@@ -171,7 +214,8 @@ export async function POST(req: Request) {
       }
 
       // Find or create category based on GTIN and title
-      const categoryResult = await findOrCreateCategory(listing.gtin, listing.title);
+      // Reuse AI product info from lot detection if available (avoids duplicate API call)
+      const categoryResult = await findOrCreateCategory(listing.gtin, listing.title, aiProductInfo);
       const categoryId = categoryResult.categoryId;
 
       // Check if there's an existing return for this order/item
@@ -271,6 +315,7 @@ export async function POST(req: Request) {
         remaining,
         scanStatus,
         isLot,
+        aiLotPrediction,
         condition: body.data.condition_status,
         categoryInfo: {
           categoryId: categoryResult.categoryId,
@@ -282,7 +327,9 @@ export async function POST(req: Request) {
         item: {
           title: targetItem.title,
           itemId: targetItem.item_id,
-          qty: targetItem.qty
+          qty: targetItem.qty,
+          scannedForItem: isLot ? newScannedCount : targetItemScannedSoFar,
+          remainingForItem: isLot ? null : targetItem.qty - targetItemScannedSoFar
         },
         allItems: orderItems.map((i) => ({
           title: i.title,

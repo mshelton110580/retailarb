@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
 import { z } from "zod";
+import { onCategoryCreated } from "@/lib/ai";
 
 /**
  * GET /api/categories - List all categories (deduplicated)
@@ -80,6 +81,8 @@ export async function POST(req: Request) {
         gtin: null
       }
     });
+
+    await onCategoryCreated(category.id, category.category_name);
 
     return NextResponse.json({ category, message: `Category "${category.category_name}" created successfully` });
   } catch (error: any) {

@@ -13,6 +13,7 @@
     "worker": "ts-node --project tsconfig.worker.json -r tsconfig-paths/register src/worker/index.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.78.0",
     "@prisma/client": "^5.18.0",
     "@types/adm-zip": "^0.5.7",
     "@types/react-virtualized-auto-sizer": "^1.0.4",
