@@ -40,6 +40,20 @@ export default function UserManagement({ initialUsers }: { initialUsers: User[] 
     }
   }
 
+  async function onChangeRole(userId: string, role: string) {
+    const res = await fetch(`/api/admin/users/${userId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role }),
+    });
+    if (res.ok) {
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, role } : u));
+    } else {
+      const data = await res.json().catch(() => null);
+      alert(data?.error ?? "Failed to change role.");
+    }
+  }
+
   async function onDelete(userId: string, email: string) {
     if (!confirm(`Delete user ${email}? This cannot be undone.`)) return;
     const res = await fetch(`/api/admin/users/${userId}`, { method: "DELETE" });
@@ -114,11 +128,18 @@ export default function UserManagement({ initialUsers }: { initialUsers: User[] 
           {users.map(user => (
             <div key={user.id} className="rounded border border-slate-800 p-3">
               <div className="flex items-center justify-between">
-                <div>
+                <div className="flex items-center gap-3">
                   <p className="font-medium">{user.email}</p>
-                  <p className="text-xs text-slate-400">
-                    Role: {user.role} &middot; Created: {user.created_at.slice(0, 10)}
-                  </p>
+                  <select
+                    value={user.role}
+                    onChange={e => onChangeRole(user.id, e.target.value)}
+                    className="rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-xs"
+                  >
+                    <option value="ADMIN">Admin</option>
+                    <option value="RECEIVER">Receiver</option>
+                    <option value="VIEWER">Viewer</option>
+                  </select>
+                  <span className="text-xs text-slate-500">{user.created_at.slice(0, 10)}</span>
                 </div>
                 <div className="flex gap-2">
                   <button

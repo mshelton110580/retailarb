@@ -28,12 +28,7 @@ const STATES = [
   { value: "returned", label: "Returned", color: "text-slate-500" },
 ];
 
-const BUILTIN_CONDITIONS = [
-  "good", "new", "like_new", "acceptable", "excellent",
-  "pressure mark", "damaged", "wrong_item", "missing_parts",
-  "defective", "dim power/ glitchy", "no power", "cracked screen",
-  "water damage", "parts only"
-];
+const BUILTIN_CONDITIONS = ["good"];
 
 
 const ALL_COLUMNS = [

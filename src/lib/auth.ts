@@ -42,10 +42,19 @@ export const authOptions: NextAuthOptions = {
     async jwt({ token, user }) {
       if (user) {
         token.role = (user as unknown as { role: string }).role;
+      } else if (token.sub) {
+        // Re-validate user exists and sync role on every token refresh
+        const dbUser = await prisma.users.findUnique({
+          where: { id: token.sub },
+          select: { role: true },
+        });
+        if (!dbUser) return { ...token, invalidated: true };
+        token.role = dbUser.role;
       }
       return token;
     },
     async session({ session, token }) {
+      if ((token as Record<string, unknown>).invalidated) return null as unknown as typeof session;
       if (session.user) {
         session.user.role = token.role as string;
         session.user.id = token.sub ?? "";
