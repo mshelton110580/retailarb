@@ -14,15 +14,17 @@ export default function LoginForm() {
     const password = String(form.get("password") ?? "");
     setLoading(true);
     const result = await signIn("credentials", {
-      redirect: true,
+      redirect: false,
       email,
       password,
       callbackUrl: "/"
     });
     if (result?.error) {
-      setError("Invalid credentials.");
+      setError("Invalid email or password.");
+      setLoading(false);
+      return;
     }
-    setLoading(false);
+    window.location.href = result?.url || "/";
   }
 
   return (
