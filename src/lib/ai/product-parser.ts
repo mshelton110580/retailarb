@@ -79,16 +79,25 @@ export async function extractProductInfo(title: string): Promise<ProductInfo> {
  * Combined product parsing + lot detection in a single API call.
  * Used on first scan to detect lots from title analysis.
  */
-export async function extractProductAndLotInfo(title: string, qty: number): Promise<ProductAndLotInfo> {
+export async function extractProductAndLotInfo(title: string, qty: number, description?: string | null, categoryNames?: string[]): Promise<ProductAndLotInfo> {
   try {
     const client = getAnthropicClient();
+    let userMessage = `Listing title: "${title}"\nPurchase quantity: ${qty}`;
+    if (description) {
+      userMessage += `\n\nListing description:\n${description}`;
+    }
+    if (categoryNames && categoryNames.length > 0) {
+      userMessage += `\n\nTracked inventory categories:\n${categoryNames.join(", ")}`;
+    }
+    userMessage += `\n\nExtract product info and detect if this is a lot.`;
+
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: 512,
       temperature: 0,
       system: PRODUCT_AND_LOT_SYSTEM_PROMPT,
       messages: [
-        { role: "user", content: `Listing title: "${title}"\nPurchase quantity: ${qty}\n\nExtract product info and detect if this is a lot.` }
+        { role: "user", content: userMessage }
       ],
       tools: [PRODUCT_AND_LOT_TOOL],
       tool_choice: { type: "tool", name: "analyze_listing" }

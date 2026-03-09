@@ -4,8 +4,10 @@ import { prisma } from "@/lib/db";
 import { TargetType, TargetStatus } from "@prisma/client";
 import { z } from "zod";
 import { findOrCreateCategory, computeInventoryState } from "@/lib/item-categorization";
-import { extractProductAndLotInfo } from "@/lib/ai";
-import type { ProductInfo } from "@/lib/ai";
+import { extractProductAndLotInfo, getCachedCategories } from "@/lib/ai";
+import type { ProductInfo, LotItem } from "@/lib/ai";
+import { getValidAccessToken } from "@/lib/ebay/token";
+import { getItemByLegacyId } from "@/lib/ebay/browse";
 
 const schema = z.object({
   tracking: z.string().min(8),
@@ -16,6 +18,74 @@ const schema = z.object({
 function last8(value: string) {
   const digits = value.replace(/\D/g, "");
   return digits.slice(-8);
+}
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/?(p|div|li|tr|td|th)[^>]*>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 2000);
+}
+
+/**
+ * Get listing description for AI lot detection.
+ * Checks cached raw_json first, falls back to on-demand Browse API fetch.
+ */
+async function getListingDescription(
+  itemId: string,
+  ebayAccountId: string | null
+): Promise<string | null> {
+  // 1. Check cached raw_json
+  const listing = await prisma.listings.findUnique({
+    where: { item_id: itemId },
+    select: { raw_json: true }
+  });
+
+  const rawJson = listing?.raw_json as Record<string, any> | null;
+  if (rawJson && Object.keys(rawJson).length > 0) {
+    const desc = rawJson.description || rawJson.shortDescription;
+    return desc ? stripHtml(desc) : null;
+  }
+
+  // 2. On-demand Browse API fetch
+  if (!ebayAccountId) return null;
+
+  try {
+    const { token } = await getValidAccessToken(ebayAccountId);
+    const browseItem = await getItemByLegacyId(token, itemId);
+    if (!browseItem) return null;
+
+    // Cache raw_json for future use (fire-and-forget)
+    // Use update-only (not upsert) to avoid FK issues if listing/target doesn't exist yet
+    if (listing) {
+      prisma.listings.update({
+        where: { item_id: itemId },
+        data: {
+          raw_json: browseItem.raw,
+          title: browseItem.title,
+          gtin: browseItem.gtin ?? null,
+          brand: browseItem.brand ?? null,
+          mpn: browseItem.mpn ?? null,
+        }
+      }).catch(err => console.error(`Failed to cache raw_json for ${itemId}:`, err));
+    }
+
+    const raw = browseItem.raw;
+    const desc = raw?.description || raw?.shortDescription;
+    return desc ? stripHtml(desc) : null;
+  } catch (err) {
+    console.error(`On-demand Browse API fetch failed for ${itemId}:`, err);
+    return null;
+  }
 }
 
 export async function POST(req: Request) {
@@ -66,16 +136,28 @@ export async function POST(req: Request) {
     });
   }
 
-  // Process each matched shipment
-  const results: any[] = [];
+  // === Pre-analyze all matched shipments ===
+  // When multiple shipments share a tracking number (e.g. two lots in one box),
+  // we need to determine lot sizes upfront and allocate each scan to ONE shipment.
+  type ShipmentAnalysis = {
+    match: typeof matches[0];
+    shipment: NonNullable<typeof matches[0]["shipment"]>;
+    orderItems: NonNullable<NonNullable<typeof matches[0]["shipment"]>["order"]>["order_items"];
+    orderQty: number;
+    currentScanned: number;
+    capacity: number;
+    aiProductInfo: ProductInfo | null;
+    aiLotPrediction: { isLot: boolean; itemsPerUnit: number; confidence: string } | null;
+    aiLotBreakdown: LotItem[] | null;
+  };
+
+  const shipmentAnalyses: ShipmentAnalysis[] = [];
 
   for (const match of matches) {
     const shipment = match.shipment;
     if (!shipment?.order) continue;
 
     const orderItems = shipment.order.order_items ?? [];
-
-    // Total qty purchased (e.g. qty=2 means 2 items/lots ordered)
     const orderQty = orderItems.reduce((sum, item) => sum + item.qty, 0);
 
     // Set expected_units = orderQty on first scan if not already set
@@ -87,12 +169,23 @@ export async function POST(req: Request) {
       shipment.expected_units = orderQty;
     }
 
-    // On first scan, use AI to predict lot from title
+    // Run AI lot detection for unprocessed shipments
     let aiLotPrediction: { isLot: boolean; itemsPerUnit: number; confidence: string } | null = null;
+    let aiLotBreakdown: LotItem[] | null = null;
     let aiProductInfo: ProductInfo | null = null;
     if (!shipment.checked_in_at && !shipment.is_lot && orderItems[0]?.title) {
       try {
-        const aiResult = await extractProductAndLotInfo(orderItems[0].title, orderQty);
+        // Fetch listing description for enhanced lot detection
+        const description = await getListingDescription(
+          orderItems[0].item_id,
+          shipment.order?.ebay_account_id ?? null
+        );
+
+        // Get category names from cache so AI treats them as separate items in lots
+        const categoryCache = await getCachedCategories();
+        const categoryNames = Array.from(categoryCache.values()).map(info => info.canonicalName);
+
+        const aiResult = await extractProductAndLotInfo(orderItems[0].title, orderQty, description, categoryNames);
         aiProductInfo = aiResult.product;
         if (aiResult.lot.isLot && aiResult.lot.confidence !== "low") {
           aiLotPrediction = {
@@ -100,7 +193,7 @@ export async function POST(req: Request) {
             itemsPerUnit: aiResult.lot.itemsPerUnit,
             confidence: aiResult.lot.confidence
           };
-          // Pre-set lot info on shipment so it's treated as a lot from the start
+          aiLotBreakdown = aiResult.lot.itemBreakdown;
           shipment.is_lot = true;
           shipment.lot_size = aiResult.lot.itemsPerUnit;
           await prisma.shipments.update({
@@ -108,6 +201,7 @@ export async function POST(req: Request) {
             data: {
               is_lot: true,
               lot_size: aiResult.lot.itemsPerUnit,
+              lot_manifest: aiResult.lot.itemBreakdown.map(i => ({ desc: i.product, qty: i.quantity })),
               scan_status: "check_quantity"
             }
           });
@@ -117,10 +211,188 @@ export async function POST(req: Request) {
       }
     }
 
-    // Count how many units have already been scanned for this shipment
-    const currentScannedCount = await prisma.received_units.count({
+    const currentScanned = await prisma.received_units.count({
       where: { order_id: shipment.order_id }
     });
+
+    // Capacity = total physical items expected.
+    // lot_size is "items per purchase unit" from AI; multiply by orderQty for total.
+    // e.g., "LOT OF 6" with qty=2 → capacity = 6 * 2 = 12
+    const capacity = shipment.lot_size
+      ? shipment.lot_size * orderQty
+      : orderQty;
+
+    shipmentAnalyses.push({
+      match, shipment, orderItems, orderQty,
+      currentScanned, capacity, aiProductInfo, aiLotPrediction, aiLotBreakdown
+    });
+  }
+
+  // === Select target shipment for this scan ===
+  // For shared tracking numbers: allocate to the first shipment that isn't full.
+  // Items are the same product so it doesn't matter which order gets which unit.
+  let targetIdx = 0;
+  let poolInfo: {
+    isSharedTracking: boolean;
+    totalCapacity: number;
+    totalScanned: number;
+    orders: Array<{
+      orderId: string;
+      title: string;
+      capacity: number;
+      scanned: number;
+      isTarget: boolean;
+    }>;
+  } | null = null;
+
+  if (shipmentAnalyses.length > 1) {
+    const notFullIdx = shipmentAnalyses.findIndex(a => a.currentScanned < a.capacity);
+    targetIdx = notFullIdx >= 0 ? notFullIdx : shipmentAnalyses.length - 1;
+
+    poolInfo = {
+      isSharedTracking: true,
+      totalCapacity: shipmentAnalyses.reduce((s, a) => s + a.capacity, 0),
+      totalScanned: shipmentAnalyses.reduce((s, a) => s + a.currentScanned, 0) + 1,
+      orders: shipmentAnalyses.map((a, i) => ({
+        orderId: a.shipment.order_id,
+        title: a.orderItems[0]?.title ?? "Unknown",
+        capacity: a.capacity,
+        scanned: a.currentScanned + (i === targetIdx ? 1 : 0),
+        isTarget: i === targetIdx
+      }))
+    };
+  }
+
+  // === Shared tracking: combined confirmation ===
+  // When multiple shipments share a tracking number and ALL are first-scan
+  // (no units created yet), return a combined confirmation modal so the user
+  // can confirm the entire box at once instead of one shipment at a time.
+  if (shipmentAnalyses.length > 1) {
+    const allFirstScan = shipmentAnalyses.every(a => a.currentScanned === 0);
+    const allHaveBreakdown = shipmentAnalyses.every(a => {
+      const breakdown = a.aiLotBreakdown
+        ?? (a.shipment.lot_manifest as Array<{ desc: string; qty: number }> | null)?.map(
+          m => ({ product: m.desc, quantity: m.qty })
+        );
+      return (breakdown && breakdown.length > 0) || a.orderQty > 1;
+    });
+
+    if (allFirstScan && allHaveBreakdown) {
+      const results: any[] = [];
+      const combinedShipments: Array<{
+        shipmentId: string;
+        orderId: string;
+        itemId: string;
+        orderItemId: string;
+        title: string;
+        expectedUnits: number;
+        itemBreakdown: LotItem[];
+        isLot: boolean;
+        orderItems?: Array<{ itemId: string; orderItemId: string; title: string; qty: number }>;
+      }> = [];
+
+      for (const analysis of shipmentAnalyses) {
+        const { shipment, orderItems, orderQty } = analysis;
+        const isLot = shipment.is_lot || orderQty > 1;
+
+        let breakdown = analysis.aiLotBreakdown
+          ?? (shipment.lot_manifest as Array<{ desc: string; qty: number }> | null)?.map(
+            m => ({ product: m.desc, quantity: m.qty })
+          )
+          ?? null;
+
+        // For non-lot multi-qty, build breakdown from order items
+        if (!breakdown || breakdown.length === 0) {
+          breakdown = orderItems.map(item => ({
+            product: item.title,
+            quantity: item.qty,
+          }));
+        }
+
+        // Scale lot breakdowns by orderQty
+        const scaledBreakdown = (shipment.is_lot && orderQty > 1)
+          ? breakdown.map(item => ({
+              ...item,
+              quantity: item.quantity > 0 ? item.quantity * orderQty : 0
+            }))
+          : breakdown;
+
+        const totalUnits = shipment.is_lot
+          ? (shipment.lot_size ? shipment.lot_size * orderQty : scaledBreakdown.reduce((s, i) => s + i.quantity, 0))
+          : orderQty;
+
+        combinedShipments.push({
+          shipmentId: shipment.id,
+          orderId: shipment.order_id,
+          itemId: orderItems[0].item_id,
+          orderItemId: orderItems[0].id,
+          title: orderItems[0].title,
+          expectedUnits: totalUnits,
+          itemBreakdown: scaledBreakdown,
+          isLot: shipment.is_lot,
+          ...(!shipment.is_lot && orderQty > 1 ? {
+            orderItems: orderItems.map(i => ({
+              itemId: i.item_id,
+              orderItemId: i.id,
+              title: i.title,
+              qty: i.qty,
+            })),
+          } : {}),
+        });
+      }
+
+      const totalUnitsAll = combinedShipments.reduce((s, sh) => s + sh.expectedUnits, 0);
+
+      results.push({
+        orderId: combinedShipments[0].orderId,
+        isLot: true,
+        lotSize: null,
+        scanStatus: "check_quantity",
+        scannedSoFar: 0,
+        expectedUnits: totalUnitsAll,
+        condition: body.data.condition_status,
+        lotConfirmation: {
+          shipmentId: combinedShipments[0].shipmentId,
+          orderId: combinedShipments[0].orderId,
+          itemId: combinedShipments[0].itemId,
+          orderItemId: combinedShipments[0].orderItemId,
+          title: `Shared box — ${combinedShipments.length} orders`,
+          totalUnits: totalUnitsAll,
+          itemBreakdown: combinedShipments.flatMap(sh => sh.itemBreakdown),
+          shipments: combinedShipments,
+        },
+        item: {
+          title: combinedShipments[0].title,
+          itemId: combinedShipments[0].itemId,
+          qty: 1,
+        },
+        allItems: combinedShipments.map(sh => ({
+          title: sh.title,
+          qty: sh.expectedUnits,
+          itemId: sh.itemId,
+        })),
+      });
+
+      const message = `Shared box — ${combinedShipments.length} orders, ${totalUnitsAll} total items — confirm all`;
+      return NextResponse.json({
+        scan,
+        resolution: resolutionState,
+        matchCount: matches.length,
+        message,
+        results,
+        poolInfo
+      });
+    }
+  }
+
+  // === Process only the target shipment ===
+  const results: any[] = [];
+  const target = shipmentAnalyses[targetIdx];
+
+  if (target) {
+    const { match, shipment, orderItems, orderQty, aiProductInfo, aiLotPrediction } = target;
+
+    const currentScannedCount = target.currentScanned;
 
     const newUnitIndex = currentScannedCount + 1;
     const newScannedCount = currentScannedCount + 1;
@@ -175,6 +447,111 @@ export async function POST(req: Request) {
       shipment.is_lot &&
       (shipment.reconciliation_status === "reviewed" ||
         shipment.reconciliation_status === "overridden");
+
+    // === Lot confirmation flow ===
+    // On first scan of an AI-detected lot, return the breakdown for the
+    // confirmation modal instead of creating units one at a time.
+    // Also handle re-scans before confirmation: if lot_manifest exists but
+    // no units have been created yet, re-serve the confirmation.
+    const lotBreakdown = target.aiLotBreakdown
+      ?? (shipment.lot_manifest as Array<{ desc: string; qty: number }> | null)?.map(
+        m => ({ product: m.desc, quantity: m.qty })
+      )
+      ?? null;
+
+    if (isLot && lotBreakdown && lotBreakdown.length > 0 && currentScannedCount === 0) {
+      // Build per-lot-unit breakdown when qty > 1
+      // e.g., "LOT OF 6" with qty=2 → Lot A (6 items) + Lot B (6 items)
+      const scaledBreakdown: Array<LotItem & { group?: string }> = [];
+      if (orderQty > 1) {
+        const labels = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        for (let pu = 0; pu < orderQty; pu++) {
+          const label = `Lot ${labels[pu] ?? (pu + 1)}`;
+          for (const item of lotBreakdown) {
+            scaledBreakdown.push({
+              product: item.product,
+              quantity: item.quantity > 0 ? item.quantity : 0,
+              group: label,
+            });
+          }
+        }
+      } else {
+        scaledBreakdown.push(...lotBreakdown);
+      }
+      const totalPhysicalUnits = lotSize
+        ? (lotSize as number) * orderQty
+        : scaledBreakdown.reduce((s, i) => s + i.quantity, 0);
+
+      results.push({
+        orderId: shipment.order_id,
+        isLot: true,
+        lotSize,
+        scanStatus: "check_quantity",
+        scannedSoFar: 0,
+        expectedUnits: orderQty,
+        condition: body.data.condition_status,
+        lotConfirmation: {
+          shipmentId: shipment.id,
+          orderId: shipment.order_id,
+          itemId: orderItems[0].item_id,
+          orderItemId: orderItems[0].id,
+          title: orderItems[0].title,
+          totalUnits: totalPhysicalUnits,
+          itemBreakdown: scaledBreakdown,
+        },
+        item: {
+          title: orderItems[0].title,
+          itemId: orderItems[0].item_id,
+          qty: orderItems[0].qty,
+        },
+        allItems: orderItems.map(i => ({ title: i.title, qty: i.qty, itemId: i.item_id })),
+      });
+    } else if (!isLot && orderQty > 1 && currentScannedCount === 0) {
+      // === Multi-qty confirmation flow ===
+      // Orders with qty > 1 (not lots) get the same confirmation modal
+      // so the user can set conditions per unit instead of scanning one at a time.
+      const breakdown: LotItem[] = orderItems.map(item => ({
+        product: (orderItems.length === 1 && aiProductInfo?.canonicalName)
+          ? aiProductInfo.canonicalName
+          : item.title,
+        quantity: item.qty,
+      }));
+
+      const orderItemsInfo = orderItems.map(i => ({
+        itemId: i.item_id,
+        orderItemId: i.id,
+        title: i.title,
+        qty: i.qty,
+      }));
+
+      results.push({
+        orderId: shipment.order_id,
+        isLot: false,
+        lotSize: null,
+        scanStatus: "pending",
+        scannedSoFar: 0,
+        expectedUnits: orderQty,
+        condition: body.data.condition_status,
+        lotConfirmation: {
+          shipmentId: shipment.id,
+          orderId: shipment.order_id,
+          itemId: orderItems[0].item_id,
+          orderItemId: orderItems[0].id,
+          title: orderItems[0].title,
+          totalUnits: orderQty,
+          itemBreakdown: breakdown,
+          isMultiQty: true,
+          orderItems: orderItemsInfo,
+        },
+        item: {
+          title: orderItems[0].title,
+          itemId: orderItems[0].item_id,
+          qty: orderItems[0].qty,
+        },
+        allItems: orderItems.map(i => ({ title: i.title, qty: i.qty, itemId: i.item_id })),
+      });
+    } else {
+    // === Normal unit creation flow ===
 
     try {
       // Ensure target exists (listings FK requires it)
@@ -345,13 +722,26 @@ export async function POST(req: Request) {
         error: err.message
       });
     }
-  }
+    } // end else (normal unit creation)
+  } // end if (target)
 
   // Build response message
   const firstResult = results[0];
   let message = "";
   if (firstResult) {
-    if (firstResult.isLot) {
+    if (poolInfo) {
+      // Shared tracking: show combined pool progress
+      const { totalScanned, totalCapacity } = poolInfo;
+      const remaining = totalCapacity - totalScanned;
+      message = `Shared box — ${totalScanned} of ${totalCapacity} total units scanned`;
+      if (remaining > 0) {
+        message += ` (${remaining} remaining)`;
+      } else {
+        message += ` — All units checked in!`;
+      }
+    } else if (firstResult.lotConfirmation) {
+      message = `Lot detected — confirm items`;
+    } else if (firstResult.isLot) {
       const lotDesc = firstResult.lotSize
         ? `${firstResult.scannedSoFar} scanned (${firstResult.lotSize} per lot × qty ${firstResult.expectedUnits})`
         : `${firstResult.scannedSoFar} scanned (qty: ${firstResult.expectedUnits})`;
@@ -368,6 +758,7 @@ export async function POST(req: Request) {
     resolution: resolutionState,
     matchCount: matches.length,
     message,
-    results
+    results,
+    poolInfo
   });
 }

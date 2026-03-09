@@ -5,6 +5,40 @@ import { useRouter } from "next/navigation";
 import ImageUploadPanel from "@/components/image-upload-panel";
 import { useBarcodeScanner } from "@/lib/use-barcode-scanner";
 
+type LotBreakdownItem = { product: string; quantity: number; group?: string };
+
+type OrderItemInfo = {
+  itemId: string;
+  orderItemId: string;
+  title: string;
+  qty: number;
+};
+
+type ShipmentInfo = {
+  shipmentId: string;
+  orderId: string;
+  itemId: string;
+  orderItemId: string;
+  title: string;
+  expectedUnits: number;
+  itemBreakdown: LotBreakdownItem[];
+  isLot: boolean;
+  orderItems?: OrderItemInfo[];
+};
+
+type LotConfirmation = {
+  shipmentId: string;
+  orderId: string;
+  itemId: string;
+  orderItemId: string;
+  title: string;
+  totalUnits: number;
+  itemBreakdown: LotBreakdownItem[];
+  isMultiQty?: boolean;
+  orderItems?: OrderItemInfo[];
+  shipments?: ShipmentInfo[];
+};
+
 type ScanResultItem = {
   orderId: string;
   unitIndex: number;
@@ -16,6 +50,7 @@ type ScanResultItem = {
   isLot: boolean;
   lotSize: number | null;
   condition: string;
+  lotConfirmation?: LotConfirmation;
   categoryInfo: {
     categoryId: string | null;
     confidence: "high" | "medium" | "low";
@@ -28,11 +63,27 @@ type ScanResultItem = {
   error?: string;
 };
 
+type PoolOrder = {
+  orderId: string;
+  title: string;
+  capacity: number;
+  scanned: number;
+  isTarget: boolean;
+};
+
+type PoolInfo = {
+  isSharedTracking: boolean;
+  totalCapacity: number;
+  totalScanned: number;
+  orders: PoolOrder[];
+};
+
 type ScanResponse = {
   resolution: string;
   matchCount: number;
   message: string;
   results: ScanResultItem[];
+  poolInfo?: PoolInfo | null;
 };
 
 type Category = {
@@ -47,6 +98,7 @@ export default function ReceivingForm() {
   const [statusType, setStatusType] = useState<"success" | "warning" | "error" | "lot">("success");
   const [result, setResult] = useState<ScanResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const submittingRef = useRef(false); // Synchronous guard against double-submission
   const formRef = useRef<HTMLFormElement>(null);
   const trackingRef = useRef<HTMLInputElement>(null);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -59,6 +111,17 @@ export default function ReceivingForm() {
   } | null>(null);
 
   const [conditions, setConditions] = useState<string[]>([]);
+
+  // Lot confirmation modal state
+  type LotUnitState = { product: string; condition: string; notes: string };
+  type LotBreakdownEdit = { product: string; quantity: number };
+  type LotReceivedEdit = { product: string; expected: number; received: number; shipmentIdx?: number; group?: string };
+  const [lotConfirmation, setLotConfirmation] = useState<LotConfirmation | null>(null);
+  const [lotUnits, setLotUnits] = useState<LotUnitState[]>([]);
+  const [lotBreakdownEdit, setLotBreakdownEdit] = useState<LotBreakdownEdit[]>([]);
+  const [lotReceivedEdit, setLotReceivedEdit] = useState<LotReceivedEdit[]>([]);
+  const [lotStep, setLotStep] = useState<"breakdown" | "confirm" | "conditions">("confirm");
+  const [lotSubmitting, setLotSubmitting] = useState(false);
 
   // Fetch conditions from database on mount
   useEffect(() => {
@@ -84,7 +147,8 @@ export default function ReceivingForm() {
   });
 
   const submitScan = useCallback(async (trackingValue: string) => {
-    if (!trackingValue.trim() || loading) return;
+    if (!trackingValue.trim() || loading || submittingRef.current) return;
+    submittingRef.current = true;
 
     setLoading(true);
     setStatus(null);
@@ -120,6 +184,59 @@ export default function ReceivingForm() {
         if (data.resolution === "UNRESOLVED") {
           setStatus("⚠ No matching tracking number found. Scan saved as UNRESOLVED.");
           setStatusType("warning");
+        } else if (data.results?.[0]?.lotConfirmation) {
+          // Lot detected — open confirmation modal
+          const lc = data.results[0].lotConfirmation;
+          setLotConfirmation(lc);
+
+          // Check if AI knows the per-product quantities
+          const hasUnknownQty = lc.itemBreakdown.some(i => i.quantity === 0);
+
+          if (hasUnknownQty && !lc.shipments) {
+            // Unknown split — user needs to enter quantities (single shipment only)
+            setLotBreakdownEdit(lc.itemBreakdown.map(i => ({ product: i.product, quantity: i.quantity })));
+            setLotStep("breakdown");
+            setLotUnits([]);
+            setLotReceivedEdit([]);
+          } else {
+            // Known quantities — go to received confirmation step
+            setLotStep("confirm");
+            if (lc.shipments && lc.shipments.length > 0) {
+              // Shared tracking: build received edit per shipment
+              const received: LotReceivedEdit[] = [];
+              lc.shipments.forEach((sh, shIdx) => {
+                for (const item of sh.itemBreakdown) {
+                  received.push({
+                    product: item.product,
+                    expected: item.quantity,
+                    received: item.quantity,
+                    shipmentIdx: shIdx,
+                  });
+                }
+              });
+              setLotReceivedEdit(received);
+            } else {
+              setLotReceivedEdit(lc.itemBreakdown.map(i => ({
+                product: i.product,
+                expected: i.quantity,
+                received: i.quantity,
+                group: i.group,
+              })));
+            }
+            setLotUnits([]);
+          }
+          setStatus(null);
+        } else if (data.poolInfo?.isSharedTracking && !data.results?.[0]?.lotConfirmation) {
+          // Shared tracking without confirmation modal: show pool progress
+          const { totalScanned, totalCapacity } = data.poolInfo;
+          const remaining = totalCapacity - totalScanned;
+          if (remaining <= 0) {
+            setStatus(`✓ Shared box — ${totalScanned} of ${totalCapacity} total units — All done!`);
+            setStatusType("success");
+          } else {
+            setStatus(`📦 Shared box — ${totalScanned} of ${totalCapacity} total units (${remaining} remaining)`);
+            setStatusType("warning");
+          }
         } else if (data.results?.[0]) {
           const r = data.results[0];
           if (r.isLot) {
@@ -166,7 +283,11 @@ export default function ReceivingForm() {
         // Clear only the tracking field, keep condition and notes for batch scanning
         if (trackingRef.current) trackingRef.current.value = "";
         trackingRef.current?.focus();
-        router.refresh();
+        // Skip router.refresh() when lot confirmation modal is open —
+        // the refresh can cause a re-render that loses modal state.
+        if (!data.results?.[0]?.lotConfirmation) {
+          router.refresh();
+        }
       } else {
         setStatus(`Error: ${(data as any).error || "Scan failed"}`);
         setStatusType("error");
@@ -184,12 +305,14 @@ export default function ReceivingForm() {
       setTimeout(() => router.refresh(), 1000);
     } finally {
       setLoading(false);
+      submittingRef.current = false;
     }
   }, [loading, router]);
 
   function handleTrackingKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter") {
       e.preventDefault();
+      e.stopPropagation(); // Prevent form onSubmit from also firing
       const value = (e.target as HTMLInputElement).value;
       if (value.trim().length >= 8) {
         submitScan(value);
@@ -318,6 +441,208 @@ export default function ReceivingForm() {
     }
   }
 
+  function applyBreakdownToUnits(breakdown: LotBreakdownEdit[]) {
+    // Move to the received confirmation step with expected = breakdown quantities
+    setLotReceivedEdit(breakdown.map(i => ({
+      product: i.product,
+      expected: i.quantity,
+      received: i.quantity,
+    })));
+    setLotUnits([]);
+    setLotStep("confirm");
+  }
+
+  function buildUnitsFromReceived(receivedEdit: LotReceivedEdit[]): LotUnitState[] {
+    const units: LotUnitState[] = [];
+    for (const item of receivedEdit) {
+      // Received units
+      for (let i = 0; i < item.received; i++) {
+        units.push({ product: item.product, condition: "good", notes: "" });
+      }
+      // Missing units
+      const missing = item.expected - item.received;
+      for (let i = 0; i < missing; i++) {
+        units.push({ product: item.product, condition: "missing", notes: "Not received" });
+      }
+    }
+    return units;
+  }
+
+  function handleReceivedConfirmAllGood() {
+    const units = buildUnitsFromReceived(lotReceivedEdit);
+    setLotUnits(units);
+    handleLotConfirmWithUnits(units);
+  }
+
+  function handleReceivedGoToConditions() {
+    const units = buildUnitsFromReceived(lotReceivedEdit);
+    setLotUnits(units);
+    setLotStep("conditions");
+  }
+
+  /** Send confirm request(s) — one per shipment for shared tracking, one otherwise */
+  async function handleLotConfirmWithUnits(unitsOverride: LotUnitState[]) {
+    if (!lotConfirmation || lotSubmitting) return;
+    setLotSubmitting(true);
+    try {
+      if (lotConfirmation.shipments && lotConfirmation.shipments.length > 1) {
+        // Shared tracking: split units by shipment and send parallel requests
+        const shipmentUnits = new Map<number, LotUnitState[]>();
+        // First build units from lotReceivedEdit which has shipmentIdx
+        // But unitsOverride is a flat list built from lotReceivedEdit order.
+        // We need to map them back. Rebuild from lotReceivedEdit with shipmentIdx.
+        let unitIdx = 0;
+        for (const item of lotReceivedEdit) {
+          const shIdx = item.shipmentIdx ?? 0;
+          if (!shipmentUnits.has(shIdx)) shipmentUnits.set(shIdx, []);
+          // Received units
+          for (let i = 0; i < item.received; i++) {
+            const override = unitsOverride[unitIdx];
+            shipmentUnits.get(shIdx)!.push(override ?? { product: item.product, condition: "good", notes: "" });
+            unitIdx++;
+          }
+          // Missing units
+          const missing = item.expected - item.received;
+          for (let i = 0; i < missing; i++) {
+            const override = unitsOverride[unitIdx];
+            shipmentUnits.get(shIdx)!.push(override ?? { product: item.product, condition: "missing", notes: "Not received" });
+            unitIdx++;
+          }
+        }
+
+        let totalCreated = 0;
+        const errors: string[] = [];
+
+        const requests = Array.from(shipmentUnits.entries()).map(async ([shIdx, units]) => {
+          const sh = lotConfirmation.shipments![shIdx];
+          const res = await fetch("/api/receiving/confirm-lot", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              shipmentId: sh.shipmentId,
+              orderId: sh.orderId,
+              itemId: sh.itemId,
+              orderItemId: sh.orderItemId,
+              units: units.map(u => ({
+                product: u.product,
+                condition: u.condition,
+                notes: u.notes || undefined,
+              })),
+              ...(!sh.isLot && sh.orderItems ? {
+                isMultiQty: true,
+                orderItems: sh.orderItems,
+              } : {}),
+            }),
+          });
+          const data = await res.json();
+          if (res.ok) {
+            totalCreated += data.unitsCreated;
+          } else {
+            errors.push(`Order ${sh.orderId}: ${data.error}`);
+          }
+        });
+
+        await Promise.all(requests);
+
+        if (errors.length > 0) {
+          setStatus(`Partially saved — ${totalCreated} units. Errors: ${errors.join("; ")}`);
+          setStatusType("warning");
+        } else {
+          setLotConfirmation(null);
+          setResult(null);
+          setStatus(`✓ ${totalCreated} units checked in across ${lotConfirmation.shipments.length} orders`);
+          setStatusType("success");
+        }
+        if (trackingRef.current) trackingRef.current.value = "";
+        trackingRef.current?.focus();
+        router.refresh();
+      } else {
+        // Single shipment
+        const res = await fetch("/api/receiving/confirm-lot", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            shipmentId: lotConfirmation.shipmentId,
+            orderId: lotConfirmation.orderId,
+            itemId: lotConfirmation.itemId,
+            orderItemId: lotConfirmation.orderItemId,
+            units: unitsOverride.map(u => ({
+              product: u.product,
+              condition: u.condition,
+              notes: u.notes || undefined,
+            })),
+            ...(lotConfirmation.isMultiQty ? {
+              isMultiQty: true,
+              orderItems: lotConfirmation.orderItems,
+            } : {}),
+          }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          setLotConfirmation(null);
+          setResult(null);
+          setStatus(`✓ ${data.unitsCreated} units checked in`);
+          setStatusType("success");
+          if (trackingRef.current) trackingRef.current.value = "";
+          trackingRef.current?.focus();
+          router.refresh();
+        } else {
+          setStatus(`Error: ${data.error}`);
+          setStatusType("error");
+        }
+      }
+    } catch {
+      setStatus("Network error confirming lot");
+      setStatusType("error");
+    } finally {
+      setLotSubmitting(false);
+    }
+  }
+
+  async function handleLotConfirm() {
+    if (!lotConfirmation || lotSubmitting) return;
+    setLotSubmitting(true);
+    try {
+      const res = await fetch("/api/receiving/confirm-lot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shipmentId: lotConfirmation.shipmentId,
+          orderId: lotConfirmation.orderId,
+          itemId: lotConfirmation.itemId,
+          orderItemId: lotConfirmation.orderItemId,
+          units: lotUnits.map(u => ({
+            product: u.product,
+            condition: u.condition,
+            notes: u.notes || undefined,
+          })),
+          ...(lotConfirmation.isMultiQty ? {
+            isMultiQty: true,
+            orderItems: lotConfirmation.orderItems,
+          } : {}),
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setLotConfirmation(null);
+        setResult(null);
+        setStatus(`✓ ${data.unitsCreated} units checked in`);
+        setStatusType("success");
+        if (trackingRef.current) trackingRef.current.value = "";
+        trackingRef.current?.focus();
+        router.refresh();
+      } else {
+        setStatus(`Error: ${data.error}`);
+        setStatusType("error");
+      }
+    } catch {
+      setStatus("Network error confirming lot");
+      setStatusType("error");
+    } finally {
+      setLotSubmitting(false);
+    }
+  }
+
   // Check if scan result requires manual category selection
   useEffect(() => {
     if (result?.results?.[0]?.categoryInfo?.requiresManualSelection) {
@@ -395,7 +720,24 @@ export default function ReceivingForm() {
         <div className={`rounded-lg border p-4 ${statusColor} bg-slate-900`}>
           <p className="text-sm font-semibold">{status}</p>
 
-          {result?.results?.map((r, i) => (
+          {/* Shared tracking: single combined progress bar */}
+          {result?.poolInfo?.isSharedTracking && (
+            <div className="mt-3">
+              <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${
+                    result.poolInfo.totalScanned >= result.poolInfo.totalCapacity ? "bg-green-500" : "bg-blue-500"
+                  }`}
+                  style={{ width: `${Math.min(100, result.poolInfo.totalCapacity > 0 ? (result.poolInfo.totalScanned / result.poolInfo.totalCapacity) * 100 : 0)}%` }}
+                />
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                {result.poolInfo.totalScanned} of {result.poolInfo.totalCapacity} units · {result.poolInfo.orders.length} orders in this box
+              </p>
+            </div>
+          )}
+
+          {!result?.poolInfo?.isSharedTracking && result?.results?.map((r, i) => (
             <div key={i} className="mt-3 rounded border border-slate-800 p-3">
               <div className="flex items-center justify-between">
                 <p className="text-sm font-medium text-blue-400">Order {r.orderId}</p>
@@ -531,6 +873,327 @@ export default function ReceivingForm() {
           unitIndex={imageUploadUnit.unitIndex}
           onClose={() => setImageUploadUnit(null)}
         />
+      )}
+
+      {/* Lot confirmation modal */}
+      {lotConfirmation && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-lg border border-blue-800 bg-slate-900 p-6 shadow-2xl mx-4 max-h-[90vh] overflow-y-auto">
+            <h3 className="text-lg font-semibold text-blue-400">
+              {lotConfirmation.shipments
+                ? `Shared Box — ${lotConfirmation.shipments.length} Orders (${lotConfirmation.totalUnits} items)`
+                : lotConfirmation.isMultiQty
+                  ? `Multi-Qty Order (${lotConfirmation.totalUnits} items)`
+                  : "Lot Detected"}
+            </h3>
+            <p className="mt-1 text-xs text-slate-500 truncate">{lotConfirmation.title}</p>
+
+            {/* Step 1: Edit breakdown — shown when AI doesn't know per-product quantities */}
+            {lotStep === "breakdown" && (
+              <div className="mt-4">
+                <p className="text-sm text-slate-300 mb-3">
+                  {lotConfirmation.totalUnits} items detected — how many of each?
+                </p>
+                <div className="space-y-2">
+                  {lotBreakdownEdit.map((item, i) => (
+                    <div key={i} className="flex items-center gap-3 rounded bg-slate-800 px-3 py-2">
+                      <span className="flex-1 text-sm text-slate-200">{item.product}</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={lotConfirmation.totalUnits}
+                        value={item.quantity || ""}
+                        onChange={(e) => {
+                          const updated = [...lotBreakdownEdit];
+                          updated[i] = { ...item, quantity: parseInt(e.target.value) || 0 };
+                          setLotBreakdownEdit(updated);
+                        }}
+                        className="w-16 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-center text-slate-200"
+                        placeholder="qty"
+                      />
+                    </div>
+                  ))}
+                </div>
+                {(() => {
+                  const total = lotBreakdownEdit.reduce((s, i) => s + i.quantity, 0);
+                  const expected = lotConfirmation.totalUnits;
+                  const isValid = total === expected;
+                  return (
+                    <div className="mt-3">
+                      <p className={`text-xs ${isValid ? "text-green-400" : "text-yellow-400"}`}>
+                        {total} of {expected} assigned
+                        {!isValid && ` — must equal ${expected}`}
+                      </p>
+                      <button
+                        onClick={() => applyBreakdownToUnits(lotBreakdownEdit)}
+                        disabled={!isValid}
+                        className="mt-3 w-full rounded-lg bg-blue-600 hover:bg-blue-700 px-4 py-3 text-sm font-medium text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Continue
+                      </button>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* Step 2: Expected vs Received — user confirms what arrived */}
+            {lotStep === "confirm" && (
+              <>
+                <div className="mt-4 space-y-2">
+                  {(() => {
+                    const hasShipments = lotConfirmation.shipments && lotConfirmation.shipments.length > 1;
+
+                    // Group items by shipment for display
+                    const shipmentGroups: Array<{ label: string; orderId: string; items: Array<{ item: LotReceivedEdit; globalIdx: number }> }> = [];
+
+                    if (hasShipments) {
+                      const byShipment = new Map<number, Array<{ item: LotReceivedEdit; globalIdx: number }>>();
+                      lotReceivedEdit.forEach((item, i) => {
+                        const shIdx = item.shipmentIdx ?? 0;
+                        if (!byShipment.has(shIdx)) byShipment.set(shIdx, []);
+                        byShipment.get(shIdx)!.push({ item, globalIdx: i });
+                      });
+                      for (const [shIdx, items] of byShipment) {
+                        const sh = lotConfirmation.shipments![shIdx];
+                        shipmentGroups.push({
+                          label: `Order ${sh.orderId} — ${sh.expectedUnits} items`,
+                          orderId: sh.orderId,
+                          items,
+                        });
+                      }
+                    } else {
+                      // Group by lot label (e.g., "Lot A", "Lot B") if present
+                      const hasGroups = lotReceivedEdit.some(i => i.group);
+                      if (hasGroups) {
+                        const byGroup = new Map<string, Array<{ item: LotReceivedEdit; globalIdx: number }>>();
+                        lotReceivedEdit.forEach((item, i) => {
+                          const g = item.group ?? "";
+                          if (!byGroup.has(g)) byGroup.set(g, []);
+                          byGroup.get(g)!.push({ item, globalIdx: i });
+                        });
+                        for (const [g, items] of byGroup) {
+                          const groupExpected = items.reduce((s, i) => s + i.item.expected, 0);
+                          shipmentGroups.push({
+                            label: g ? `${g} — ${groupExpected} items` : "",
+                            orderId: lotConfirmation.orderId,
+                            items,
+                          });
+                        }
+                      } else {
+                        shipmentGroups.push({
+                          label: "",
+                          orderId: lotConfirmation.orderId,
+                          items: lotReceivedEdit.map((item, i) => ({ item, globalIdx: i })),
+                        });
+                      }
+                    }
+
+                    return shipmentGroups.map((group, gIdx) => (
+                      <div key={gIdx}>
+                        {group.label && (
+                          <p className="text-xs font-medium text-slate-400 mt-3 mb-1 px-1">{group.label}</p>
+                        )}
+                        {gIdx === 0 && (
+                          <div className="grid grid-cols-[1fr_auto_auto] gap-x-3 gap-y-1 items-center text-xs text-slate-500 px-3 mb-1">
+                            <span>Product</span>
+                            <span className="w-16 text-center">Expected</span>
+                            <span className="w-20 text-center">Received</span>
+                          </div>
+                        )}
+                        {group.items.map(({ item, globalIdx }) => {
+                          const isMissing = item.received < item.expected;
+                          return (
+                            <div key={globalIdx} className={`grid grid-cols-[1fr_auto_auto] gap-x-3 items-center rounded px-3 py-2 ${isMissing ? "bg-red-950/40 border border-red-900/50" : "bg-slate-800"}`}>
+                              <span className="text-sm text-slate-200">{item.product}</span>
+                              <span className="w-16 text-center text-sm text-slate-400">{item.expected}</span>
+                              <input
+                                type="number"
+                                min={0}
+                                max={item.expected}
+                                value={item.received}
+                                onChange={(e) => {
+                                  const updated = [...lotReceivedEdit];
+                                  const val = parseInt(e.target.value) || 0;
+                                  updated[globalIdx] = { ...item, received: Math.min(val, item.expected) };
+                                  setLotReceivedEdit(updated);
+                                }}
+                                className="w-20 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-center text-slate-200"
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ));
+                  })()}
+                </div>
+
+                {(() => {
+                  const totalExpected = lotReceivedEdit.reduce((s, i) => s + i.expected, 0);
+                  const totalReceived = lotReceivedEdit.reduce((s, i) => s + i.received, 0);
+                  const totalMissing = totalExpected - totalReceived;
+                  return (
+                    <>
+                      <div className="mt-3 flex justify-between text-xs px-1">
+                        <span className="text-slate-500">{totalReceived} of {totalExpected} received</span>
+                        {totalMissing > 0 && (
+                          <span className="text-red-400 font-medium">{totalMissing} missing</span>
+                        )}
+                      </div>
+
+                      <div className="mt-4">
+                        <p className="text-sm font-medium text-slate-200">
+                          {totalReceived === 0
+                            ? "No items received?"
+                            : `Are all ${totalReceived} received items in good condition?`}
+                        </p>
+                        <div className="mt-3 flex gap-3">
+                          <button
+                            onClick={() => handleReceivedConfirmAllGood()}
+                            disabled={lotSubmitting || totalReceived === 0}
+                            className="flex-1 rounded-lg bg-green-600 hover:bg-green-700 px-4 py-3 text-sm font-medium text-white transition-colors disabled:opacity-50"
+                          >
+                            {lotSubmitting ? "Saving..." : "Yes, All Good"}
+                          </button>
+                          <button
+                            onClick={() => handleReceivedGoToConditions()}
+                            disabled={totalReceived === 0}
+                            className="flex-1 rounded-lg border border-yellow-700 px-4 py-3 text-sm font-medium text-yellow-400 hover:bg-yellow-900/30 transition-colors disabled:opacity-50"
+                          >
+                            No, Some Have Issues
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  );
+                })()}
+              </>
+            )}
+
+            {/* Step 3: Set conditions per unit */}
+            {lotStep === "conditions" && (
+              <div className="mt-4 space-y-2">
+                {(() => {
+                  // Split into received (editable) and missing (read-only)
+                  const receivedUnits = lotUnits.filter(u => u.condition !== "missing");
+                  const missingUnits = lotUnits.filter(u => u.condition === "missing");
+
+                  // Group received units by product for display
+                  const groups: Array<{ product: string; indices: number[] }> = [];
+                  const productIndices = new Map<string, number[]>();
+                  lotUnits.forEach((u, idx) => {
+                    if (u.condition === "missing") return;
+                    const existing = productIndices.get(u.product);
+                    if (existing) {
+                      existing.push(idx);
+                    } else {
+                      const arr = [idx];
+                      productIndices.set(u.product, arr);
+                      groups.push({ product: u.product, indices: arr });
+                    }
+                  });
+
+                  return (
+                    <>
+                      {groups.map((group) => (
+                        <div key={group.product} className="rounded border border-slate-800 p-3">
+                          <p className="text-sm font-medium text-slate-300 mb-2">{group.product}</p>
+                          {group.indices.map((unitIdx, j) => {
+                            const unit = lotUnits[unitIdx];
+                            if (!unit) return null;
+                            const isGood = unit.condition === "good";
+                            return (
+                              <div key={unitIdx} className={`flex items-center gap-2 py-1 ${!isGood ? "bg-red-950/30 rounded px-2 -mx-1" : ""}`}>
+                                <span className="text-xs text-slate-500 w-6">#{j + 1}</span>
+                                <select
+                                  value={unit.condition}
+                                  onChange={(e) => {
+                                    const updated = [...lotUnits];
+                                    updated[unitIdx] = { ...unit, condition: e.target.value };
+                                    setLotUnits(updated);
+                                  }}
+                                  className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-300"
+                                >
+                                  {conditions.length === 0 ? (
+                                    <option value="good">Good</option>
+                                  ) : (
+                                    conditions.filter(c => c !== "missing").map(c => (
+                                      <option key={c} value={c}>
+                                        {c.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())}
+                                      </option>
+                                    ))
+                                  )}
+                                </select>
+                                {!isGood && (
+                                  <input
+                                    type="text"
+                                    value={unit.notes}
+                                    onChange={(e) => {
+                                      const updated = [...lotUnits];
+                                      updated[unitIdx] = { ...unit, notes: e.target.value };
+                                      setLotUnits(updated);
+                                    }}
+                                    placeholder="Notes"
+                                    className="w-32 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-300"
+                                  />
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))}
+
+                      {missingUnits.length > 0 && (
+                        <div className="rounded border border-red-900/50 bg-red-950/20 p-3">
+                          <p className="text-sm font-medium text-red-400 mb-1">Missing ({missingUnits.length})</p>
+                          {(() => {
+                            const missingByProduct = new Map<string, number>();
+                            for (const u of missingUnits) {
+                              missingByProduct.set(u.product, (missingByProduct.get(u.product) ?? 0) + 1);
+                            }
+                            return Array.from(missingByProduct).map(([product, count]) => (
+                              <div key={product} className="flex items-center justify-between text-xs text-red-300 py-0.5">
+                                <span>{product}</span>
+                                <span>x{count}</span>
+                              </div>
+                            ));
+                          })()}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+
+                <div className="flex gap-3 pt-3">
+                  <button
+                    onClick={() => setLotStep("confirm")}
+                    className="rounded border border-slate-700 px-4 py-2 text-sm text-slate-400 hover:bg-slate-800"
+                  >
+                    Back
+                  </button>
+                  <button
+                    onClick={() => handleLotConfirm()}
+                    disabled={lotSubmitting}
+                    className="flex-1 rounded-lg bg-blue-600 hover:bg-blue-700 px-4 py-2 text-sm font-medium text-white transition-colors disabled:opacity-50"
+                  >
+                    {lotSubmitting ? "Saving..." : `Confirm ${lotUnits.length} Items`}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <button
+              onClick={() => {
+                setLotConfirmation(null);
+                setStatus("Lot confirmation skipped — scan items individually");
+                setStatusType("warning");
+              }}
+              className="mt-4 w-full text-center text-xs text-slate-500 hover:text-slate-400"
+            >
+              Skip — scan items one at a time instead
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Category selection modal (blocking overlay) */}

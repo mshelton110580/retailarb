@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { getValidAccessToken } from "@/lib/ebay/token";
 import { getOrders } from "@/lib/ebay/trading";
 import { deriveShippingStatus } from "@/lib/shipping";
+import { queues } from "@/lib/queue";
 import { z } from "zod";
 
 const schema = z.object({
@@ -164,6 +165,24 @@ export async function syncOrders(ebayAccountId?: string): Promise<{ synced: numb
                 purchase_date: new Date(order.createdTime)
               }
             });
+
+            // Queue listing enrichment if raw_json is not yet populated
+            const existingListing = await prisma.listings.findUnique({
+              where: { item_id: itemId },
+              select: { raw_json: true }
+            });
+            const rawJson = existingListing?.raw_json as Record<string, any> | null;
+            const needsEnrichment = !rawJson || Object.keys(rawJson).length === 0;
+            if (needsEnrichment) {
+              await queues.enrichListing.add("enrich", {
+                itemId,
+                ebayAccountId: account.id
+              }, {
+                jobId: `enrich-${itemId}`,
+                removeOnComplete: true,
+                removeOnFail: 10
+              });
+            }
           }
 
           // Derive shipping status

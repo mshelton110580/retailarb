@@ -26,16 +26,36 @@ Lot detection rules:
 - A number prefix like "5 - " or "4x" means that many items
 - Multiple distinct model numbers listed (e.g., "TI-84 Plus, TI-83 Plus") means multiple items — count them
 - Explicit quantity breakdowns like "3 TI-83 Plus & 2 TI-84 Plus" should be summed (= 5 items)
-- "w/Cover", "w/Cable", "Charging Station", "Dock" are accessories, NOT separate items
+- "w/Cover", "w/Cable", "Charging Station", "Dock" in the TITLE are typically accessories, NOT separate items — but if the description explicitly counts them as separate physical items (e.g., "9 calculators + 1 Charging Station"), include them in the lot count
 - If purchase qty > 1, itemsPerUnit should be the count PER SINGLE PURCHASE UNIT (not multiplied by qty)
 - If no lot indicators are present, it is a single item (isLot=false, itemsPerUnit=1)
+
+CRITICAL — mixed lot detection:
+- "&" or "and" between model names means DISTINCT products (e.g., "TI-83 Plus & TI-83 Plus Silver Edition" = 2 different models)
+- "TI-83 Plus" and "TI-83 Plus Silver Edition" are DIFFERENT models — "Silver Edition" is a distinct product, not a variant
+- When the title has a total count (e.g., "5 -") but does NOT specify how many of each model, list each distinct model in itemBreakdown with quantity 0 to indicate "unknown split". The total itemsPerUnit should still be the overall count (5).
+- Example: "5 - TI-83 Plus & TI-83 Plus Silver Edition Graphing Calculators" → isLot=true, itemsPerUnit=5, itemBreakdown=[{product: "TI-83 Plus", quantity: 0}, {product: "TI-83 Plus Silver Edition", quantity: 0}]
+- When quantities ARE specified per model (e.g., "3 TI-83 Plus & 2 TI-84"), use exact quantities in itemBreakdown
 
 Product identification rules:
 - Use the most standard/official formatting (e.g., "TI-84 Plus CE" not "Ti-84 Plus Ce")
 - For lots, the canonicalName should describe the primary product, not the lot
 - Canonical Name format: "[Product Line] [Model] [Color]" or "[Brand] [Product Type] [Color]" if no specific model exists. Concise (under 60 characters), do NOT include product type if a model exists (e.g., "TI-84 Plus CE Python" not "TI-84 Plus CE Python Graphing Calculator")
 - Ignore seller additions like "FREE SHIPPING", condition descriptions, etc.
-- If the title contains typos, correct them`;
+- If the title contains typos, correct them
+
+LISTING DESCRIPTION (when provided):
+- The listing description is ADDITIONAL evidence for lot detection — it often contains the actual item count or manifest that the title abbreviates or omits entirely
+- If the title looks like a single item but the description clearly lists multiple units with quantities (e.g., "9 calculators and a charging station"), TRUST the description
+- If the title says "lot" but the description clarifies the exact count and breakdown, use the description's specifics
+- Descriptions may contain seller boilerplate, shipping policies, and condition notes — focus on product-relevant content (item counts, model numbers, what's included)
+- If no description is provided, rely solely on the title
+
+TRACKED INVENTORY CATEGORIES (when provided):
+- You may receive a list of the user's existing inventory categories (e.g., "TI-84 Plus CE", "Charging Station", "TI-83 Plus Silver Edition")
+- Any item in a lot that matches one of these categories MUST be counted as a SEPARATE physical item, even if it would normally be considered an accessory
+- Example: if "Charging Station" is a tracked category and the listing includes a charging station, count it as a separate item in the lot breakdown
+- This overrides the default accessory rule — the user explicitly tracks these as inventory`;
 
 export const PRODUCT_INFO_TOOL = {
   name: "extract_product_info" as const,
