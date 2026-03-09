@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
 import { z } from "zod";
-import { onProductCreated } from "@/lib/ai";
+import { onProductCreated, onProductDeleted } from "@/lib/ai";
 
 /**
  * GET /api/products - List all products (deduplicated)
@@ -89,6 +89,64 @@ export async function POST(req: Request) {
     console.error("Failed to create product:", error);
     return NextResponse.json(
       { error: error.message ?? "Failed to create product" },
+      { status: 500 }
+    );
+  }
+}
+
+const deleteSchema = z.object({
+  productId: z.string().min(1, "Product ID is required")
+});
+
+/**
+ * DELETE /api/products - Delete a product (only if it has no units)
+ */
+export async function DELETE(req: Request) {
+  const auth = await requireRole(["ADMIN"]);
+  if (!auth.ok) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+  }
+
+  const body = deleteSchema.safeParse(await req.json());
+  if (!body.success) {
+    return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+  }
+
+  try {
+    const product = await prisma.products.findUnique({
+      where: { id: body.data.productId },
+      select: {
+        id: true,
+        product_name: true,
+        _count: { select: { received_units: true } }
+      }
+    });
+
+    if (!product) {
+      return NextResponse.json({ error: "Product not found" }, { status: 404 });
+    }
+
+    if (product._count.received_units > 0) {
+      return NextResponse.json(
+        { error: `Cannot delete "${product.product_name}" — it has ${product._count.received_units} unit(s) assigned` },
+        { status: 409 }
+      );
+    }
+
+    // Delete any merge mappings pointing to this product
+    await prisma.$executeRawUnsafe(
+      `DELETE FROM product_aliases WHERE to_product_id = $1`,
+      product.id
+    );
+
+    await prisma.products.delete({ where: { id: product.id } });
+    await onProductDeleted(product.id);
+
+    return NextResponse.json({ message: `Product "${product.product_name}" deleted` });
+  } catch (error: any) {
+    console.error("Failed to delete product:", error);
+    return NextResponse.json(
+      { error: error.message ?? "Failed to delete product" },
       { status: 500 }
     );
   }

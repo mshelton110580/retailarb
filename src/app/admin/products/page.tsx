@@ -106,7 +106,7 @@ export default async function ProductsAdminPage() {
           id: m.id,
           fromProductName: m.from_product_name,
           toProductId: m.to_product_id,
-          createdAt: m.created_at.toISOString()
+          createdAt: m.created_at instanceof Date ? m.created_at.toISOString() : String(m.created_at)
         }))}
       />
     </div>

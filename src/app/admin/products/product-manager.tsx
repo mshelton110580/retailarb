@@ -53,6 +53,7 @@ export default function ProductManager({
     condition: string; state: string; receivedAt: string;
   }[]>>({});
   const [loadingUnits, setLoadingUnits] = useState<string | null>(null);
+  const [deletingProduct, setDeletingProduct] = useState<string | null>(null);
 
   async function toggleProduct(productId: string) {
     if (expandedProduct === productId) {
@@ -71,6 +72,39 @@ export default function ProductManager({
       setProductUnits(prev => ({ ...prev, [productId]: [] }));
     } finally {
       setLoadingUnits(null);
+    }
+  }
+
+  async function handleDeleteProduct(product: Product) {
+    if (!confirm(`Delete "${product.product_name}"?\n\nThis will also remove any merge mappings pointing to this product.`)) {
+      return;
+    }
+
+    setDeletingProduct(product.id);
+    setMessage(null);
+
+    try {
+      const res = await fetch("/api/products", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productId: product.id })
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        setMessage(data.message);
+        setMessageType("success");
+        router.refresh();
+      } else {
+        setMessage(`Error: ${data.error}`);
+        setMessageType("error");
+      }
+    } catch {
+      setMessage("Network error. Please try again.");
+      setMessageType("error");
+    } finally {
+      setDeletingProduct(null);
     }
   }
 
@@ -494,9 +528,20 @@ export default function ProductManager({
                     ({cat.unitCount} {cat.unitCount === 1 ? "unit" : "units"})
                   </span>
                 </div>
-                {cat.gtin && (
-                  <span className="text-xs text-slate-600">GTIN: {cat.gtin}</span>
-                )}
+                <div className="flex items-center gap-2">
+                  {cat.gtin && (
+                    <span className="text-xs text-slate-600">GTIN: {cat.gtin}</span>
+                  )}
+                  {cat.unitCount === 0 && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDeleteProduct(cat); }}
+                      disabled={deletingProduct === cat.id}
+                      className="rounded border border-red-800 px-2 py-0.5 text-xs text-red-400 hover:bg-red-900 disabled:opacity-50"
+                    >
+                      {deletingProduct === cat.id ? "..." : "Delete"}
+                    </button>
+                  )}
+                </div>
               </div>
 
               {expandedProduct === cat.id && (
