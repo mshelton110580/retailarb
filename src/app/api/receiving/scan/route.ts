@@ -4,8 +4,9 @@ import { prisma } from "@/lib/db";
 import { TargetType, TargetStatus } from "@prisma/client";
 import { z } from "zod";
 import { findOrCreateProduct, computeInventoryState } from "@/lib/product-matching";
-import { extractProductAndLotInfo, getCachedProducts } from "@/lib/ai";
+import { extractProductAndLotInfo } from "@/lib/ai";
 import type { ProductInfo, LotItem } from "@/lib/ai";
+import type { ListingMetadata } from "@/lib/ai/product-parser";
 import { getValidAccessToken } from "@/lib/ebay/token";
 import { getItemByLegacyId } from "@/lib/ebay/browse";
 
@@ -37,55 +38,78 @@ function stripHtml(html: string): string {
 }
 
 /**
- * Get listing description for AI lot detection.
+ * Extract GTIN, MPN, and Color from a listing's raw_json (Browse API data).
+ */
+function extractListingMetadata(rawJson: Record<string, any> | null): ListingMetadata | null {
+  if (!rawJson || Object.keys(rawJson).length === 0) return null;
+
+  const gtin = rawJson.gtin || null;
+  const mpn = rawJson.mpn || null;
+
+  // Color from localizedAspects (item specifics)
+  let color: string | null = null;
+  if (Array.isArray(rawJson.localizedAspects)) {
+    const colorAspect = rawJson.localizedAspects.find(
+      (a: any) => a.name === "Color"
+    );
+    if (colorAspect) color = colorAspect.value;
+  }
+
+  if (!gtin && !mpn && !color) return null;
+  return { gtin, mpn, color };
+}
+
+/**
+ * Get listing description and metadata for AI lot detection.
  * Checks cached raw_json first, falls back to on-demand Browse API fetch.
  */
-async function getListingDescription(
+async function getListingDetails(
   itemId: string,
   ebayAccountId: string | null
-): Promise<string | null> {
+): Promise<{ description: string | null; metadata: ListingMetadata | null }> {
   // 1. Check cached raw_json
   const listing = await prisma.listings.findUnique({
     where: { item_id: itemId },
     select: { raw_json: true }
   });
 
-  const rawJson = listing?.raw_json as Record<string, any> | null;
-  if (rawJson && Object.keys(rawJson).length > 0) {
-    const desc = rawJson.description || rawJson.shortDescription;
-    return desc ? stripHtml(desc) : null;
-  }
+  let rawJson = listing?.raw_json as Record<string, any> | null;
 
-  // 2. On-demand Browse API fetch
-  if (!ebayAccountId) return null;
+  // 2. On-demand Browse API fetch if no cached data
+  if (!rawJson || Object.keys(rawJson).length === 0) {
+    if (!ebayAccountId) return { description: null, metadata: null };
 
-  try {
-    const { token } = await getValidAccessToken(ebayAccountId);
-    const browseItem = await getItemByLegacyId(token, itemId);
-    if (!browseItem) return null;
+    try {
+      const { token } = await getValidAccessToken(ebayAccountId);
+      const browseItem = await getItemByLegacyId(token, itemId);
+      if (!browseItem) return { description: null, metadata: null };
 
-    // Cache raw_json for future use (fire-and-forget)
-    // Use update-only (not upsert) to avoid FK issues if listing/target doesn't exist yet
-    if (listing) {
-      prisma.listings.update({
-        where: { item_id: itemId },
-        data: {
-          raw_json: browseItem.raw,
-          title: browseItem.title,
-          gtin: browseItem.gtin ?? null,
-          brand: browseItem.brand ?? null,
-          mpn: browseItem.mpn ?? null,
-        }
-      }).catch(err => console.error(`Failed to cache raw_json for ${itemId}:`, err));
+      rawJson = browseItem.raw;
+
+      // Cache raw_json for future use (fire-and-forget)
+      if (listing) {
+        prisma.listings.update({
+          where: { item_id: itemId },
+          data: {
+            raw_json: browseItem.raw,
+            title: browseItem.title,
+            gtin: browseItem.gtin ?? null,
+            brand: browseItem.brand ?? null,
+            mpn: browseItem.mpn ?? null,
+          }
+        }).catch(err => console.error(`Failed to cache raw_json for ${itemId}:`, err));
+      }
+    } catch (err) {
+      console.error(`On-demand Browse API fetch failed for ${itemId}:`, err);
+      return { description: null, metadata: null };
     }
-
-    const raw = browseItem.raw;
-    const desc = raw?.description || raw?.shortDescription;
-    return desc ? stripHtml(desc) : null;
-  } catch (err) {
-    console.error(`On-demand Browse API fetch failed for ${itemId}:`, err);
-    return null;
   }
+
+  const desc = rawJson?.description || rawJson?.shortDescription;
+  return {
+    description: desc ? stripHtml(desc) : null,
+    metadata: extractListingMetadata(rawJson),
+  };
 }
 
 export async function POST(req: Request) {
@@ -147,6 +171,7 @@ export async function POST(req: Request) {
     currentScanned: number;
     capacity: number;
     aiProductInfo: ProductInfo | null;
+    aiProductInfoByItem: Map<string, ProductInfo>;
     aiLotPrediction: { isLot: boolean; itemsPerUnit: number; confidence: string } | null;
     aiLotBreakdown: LotItem[] | null;
   };
@@ -173,20 +198,26 @@ export async function POST(req: Request) {
     let aiLotPrediction: { isLot: boolean; itemsPerUnit: number; confidence: string } | null = null;
     let aiLotBreakdown: LotItem[] | null = null;
     let aiProductInfo: ProductInfo | null = null;
+    const aiProductInfoByItem = new Map<string, ProductInfo>();
     if (!shipment.checked_in_at && !shipment.is_lot && orderItems[0]?.title) {
       try {
-        // Fetch listing description for enhanced lot detection
-        const description = await getListingDescription(
+        // Get existing product names directly from DB — these are the authoritative
+        // names the AI should match against (not AI-reparsed canonical names)
+        const existingProducts = await prisma.products.findMany({
+          select: { product_name: true }
+        });
+        const productNames = existingProducts.map(p => p.product_name);
+
+        // Fetch listing details and run AI for the first item (lot detection + product ID)
+        const { description, metadata: listingMetadata } = await getListingDetails(
           orderItems[0].item_id,
           shipment.order?.ebay_account_id ?? null
         );
 
-        // Get product names from cache so AI treats them as separate items in lots
-        const productCache = await getCachedProducts();
-        const productNames = Array.from(productCache.values()).map(info => info.canonicalName);
-
-        const aiResult = await extractProductAndLotInfo(orderItems[0].title, orderQty, description, productNames);
+        const aiResult = await extractProductAndLotInfo(orderItems[0].title, orderQty, description, productNames, listingMetadata);
         aiProductInfo = aiResult.product;
+        aiProductInfoByItem.set(orderItems[0].item_id, aiResult.product);
+
         if (aiResult.lot.isLot && aiResult.lot.confidence !== "low") {
           aiLotPrediction = {
             isLot: true,
@@ -206,6 +237,26 @@ export async function POST(req: Request) {
             }
           });
         }
+
+        // For multi-item orders, run AI product ID on remaining items in parallel
+        if (orderItems.length > 1 && !shipment.is_lot) {
+          const remainingItems = orderItems.slice(1);
+          const results = await Promise.allSettled(
+            remainingItems.map(async (item) => {
+              const { description: itemDesc, metadata: itemMeta } = await getListingDetails(
+                item.item_id,
+                shipment.order?.ebay_account_id ?? null
+              );
+              const itemResult = await extractProductAndLotInfo(item.title, item.qty, itemDesc, productNames, itemMeta);
+              return { itemId: item.item_id, product: itemResult.product };
+            })
+          );
+          for (const result of results) {
+            if (result.status === "fulfilled") {
+              aiProductInfoByItem.set(result.value.itemId, result.value.product);
+            }
+          }
+        }
       } catch (err) {
         console.error("AI lot prediction failed (non-blocking):", err);
       }
@@ -224,7 +275,7 @@ export async function POST(req: Request) {
 
     shipmentAnalyses.push({
       match, shipment, orderItems, orderQty,
-      currentScanned, capacity, aiProductInfo, aiLotPrediction, aiLotBreakdown
+      currentScanned, capacity, aiProductInfo, aiProductInfoByItem, aiLotPrediction, aiLotBreakdown
     });
   }
 
@@ -301,12 +352,15 @@ export async function POST(req: Request) {
           )
           ?? null;
 
-        // For non-lot multi-qty, build breakdown from order items
+        // For non-lot multi-qty, build breakdown from order items using AI names
         if (!breakdown || breakdown.length === 0) {
-          breakdown = orderItems.map(item => ({
-            product: item.title,
-            quantity: item.qty,
-          }));
+          breakdown = orderItems.map(item => {
+            const itemAi = analysis.aiProductInfoByItem.get(item.item_id);
+            return {
+              product: itemAi?.canonicalName ?? item.title,
+              quantity: item.qty,
+            };
+          });
         }
 
         // Scale lot breakdowns by orderQty
@@ -510,12 +564,39 @@ export async function POST(req: Request) {
       // === Multi-qty confirmation flow ===
       // Orders with qty > 1 (not lots) get the same confirmation modal
       // so the user can set conditions per unit instead of scanning one at a time.
-      const breakdown: LotItem[] = orderItems.map(item => ({
-        product: (orderItems.length === 1 && aiProductInfo?.canonicalName)
-          ? aiProductInfo.canonicalName
-          : item.title,
-        quantity: item.qty,
-      }));
+
+      // Run product matching for each order item using AI name + listing GTIN
+      const breakdownWithProducts: Array<LotItem & {
+        productId?: string | null;
+        confidence?: string;
+        requiresManualSelection?: boolean;
+        suggestedProductName?: string;
+      }> = [];
+
+      for (const item of orderItems) {
+        const itemAi = target.aiProductInfoByItem.get(item.item_id);
+        const productName = itemAi?.canonicalName ?? item.title;
+
+        // Get GTIN from listing for product matching
+        const listing = await prisma.listings.findUnique({
+          where: { item_id: item.item_id },
+          select: { gtin: true, raw_json: true }
+        });
+        const gtin = listing?.gtin
+          || (listing?.raw_json as Record<string, any>)?.gtin?.replace(/^"|"$/g, "")
+          || null;
+
+        const productResult = await findOrCreateProduct(gtin, productName, itemAi);
+
+        breakdownWithProducts.push({
+          product: productName,
+          quantity: item.qty,
+          productId: productResult.productId,
+          confidence: productResult.confidence,
+          requiresManualSelection: productResult.requiresManualSelection,
+          suggestedProductName: productResult.suggestedProductName,
+        });
+      }
 
       const orderItemsInfo = orderItems.map(i => ({
         itemId: i.item_id,
@@ -539,7 +620,7 @@ export async function POST(req: Request) {
           orderItemId: orderItems[0].id,
           title: orderItems[0].title,
           totalUnits: orderQty,
-          itemBreakdown: breakdown,
+          itemBreakdown: breakdownWithProducts,
           isMultiQty: true,
           orderItems: orderItemsInfo,
         },

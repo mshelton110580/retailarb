@@ -138,8 +138,34 @@ export async function findOrCreateProduct(
       };
     }
 
-    // GTIN provided but no match - parse title and create new product
+    // GTIN provided but no GTIN match — check for name match before creating.
+    // An existing product may just be missing its GTIN.
     const itemInfo = precomputedInfo ?? await extractProductInfo(title);
+    const normalizedName = itemInfo.canonicalName.toLowerCase().trim();
+
+    const allProducts = await prisma.products.findMany({
+      select: { id: true, product_name: true, gtin: true }
+    });
+
+    const nameMatch = allProducts.find(
+      p => p.product_name.toLowerCase().trim() === normalizedName
+    );
+
+    if (nameMatch) {
+      // Found existing product by name — backfill its GTIN if empty
+      if (!nameMatch.gtin) {
+        await prisma.products.update({
+          where: { id: nameMatch.id },
+          data: { gtin }
+        }).catch(() => {}); // Ignore if another product already has this GTIN
+      }
+      return {
+        productId: nameMatch.id,
+        confidence: "high",
+        requiresManualSelection: false,
+        reason: "Name match (GTIN backfilled)"
+      };
+    }
 
     const newProduct = await prisma.products.create({
       data: {
@@ -297,6 +323,11 @@ export function computeInventoryState(
   hasRefundWithoutReturn: boolean = false,
   hasReturnShipped: boolean = false
 ): string {
+  // Missing units were never physically received — not inventory
+  if (conditionStatus?.toLowerCase() === "missing") {
+    return "missing";
+  }
+
   if (hasReturnShipped) {
     const goodConditions = new Set(["good", "new", "like_new", "acceptable", "excellent"]);
     if (!goodConditions.has(conditionStatus?.toLowerCase() ?? "")) {

@@ -9,6 +9,7 @@ const unitSchema = z.object({
   product: z.string(),
   condition: z.string(),
   notes: z.string().optional(),
+  productId: z.string().optional(),
 });
 
 const orderItemSchema = z.object({
@@ -117,55 +118,62 @@ export async function POST(req: Request) {
     select: { item_id: true, title: true, gtin: true }
   });
 
-  // Find/create products for each distinct product name
-  // First try direct name matching against existing products (product names
-  // from the AI breakdown are already clean), then fall back to full pipeline.
+  // Find/create products for each distinct product name.
+  // Units may include a pre-matched productId from the scan route — use it directly.
+  // Otherwise fall back to name matching and AI pipeline.
   const productCache = new Map<string, string | null>();
-  const distinctProducts = [...new Set(units.map(u => u.product))];
 
-  const allProducts = await prisma.products.findMany({
-    select: { id: true, product_name: true }
-  });
-
-  for (const product of distinctProducts) {
-    const normProduct = product.toLowerCase().replace(/[^a-z0-9]/g, "");
-
-    // Try exact name match first (case-insensitive, ignoring punctuation)
-    const exactMatch = allProducts.find(
-      cat => cat.product_name.toLowerCase().replace(/[^a-z0-9]/g, "") === normProduct
-    );
-
-    if (exactMatch) {
-      productCache.set(product, exactMatch.id);
-      continue;
+  // First, populate cache from any pre-matched productIds
+  for (const unit of units) {
+    if (unit.productId && !productCache.has(unit.product)) {
+      productCache.set(unit.product, unit.productId);
     }
+  }
 
-    // Try best prefix match — pick the product whose normalized name shares
-    // the longest common prefix with the product name.
-    // e.g., "ti83plussilveredition" prefers "ti83plussilver" (13) over "ti83plus" (8)
-    let bestDirectMatch: { id: string; overlap: number } | null = null;
-    for (const cat of allProducts) {
-      const normCat = cat.product_name.toLowerCase().replace(/[^a-z0-9]/g, "");
-      if (normProduct.startsWith(normCat) || normCat.startsWith(normProduct)) {
-        // Overlap = length of the shorter string (the shared prefix)
-        const overlap = Math.min(normProduct.length, normCat.length);
-        if (!bestDirectMatch || overlap > bestDirectMatch.overlap) {
-          bestDirectMatch = { id: cat.id, overlap };
+  const unmatchedProducts = [...new Set(units.map(u => u.product))].filter(p => !productCache.has(p));
+
+  if (unmatchedProducts.length > 0) {
+    const allProducts = await prisma.products.findMany({
+      select: { id: true, product_name: true }
+    });
+
+    for (const product of unmatchedProducts) {
+      const normProduct = product.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+      // Try exact name match first (case-insensitive, ignoring punctuation)
+      const exactMatch = allProducts.find(
+        cat => cat.product_name.toLowerCase().replace(/[^a-z0-9]/g, "") === normProduct
+      );
+
+      if (exactMatch) {
+        productCache.set(product, exactMatch.id);
+        continue;
+      }
+
+      // Try best prefix match
+      let bestDirectMatch: { id: string; overlap: number } | null = null;
+      for (const cat of allProducts) {
+        const normCat = cat.product_name.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (normProduct.startsWith(normCat) || normCat.startsWith(normProduct)) {
+          const overlap = Math.min(normProduct.length, normCat.length);
+          if (!bestDirectMatch || overlap > bestDirectMatch.overlap) {
+            bestDirectMatch = { id: cat.id, overlap };
+          }
         }
       }
-    }
 
-    if (bestDirectMatch && bestDirectMatch.overlap >= 8) {
-      productCache.set(product, bestDirectMatch.id);
-      continue;
-    }
+      if (bestDirectMatch && bestDirectMatch.overlap >= 8) {
+        productCache.set(product, bestDirectMatch.id);
+        continue;
+      }
 
-    // Fall back to full AI-powered pipeline
-    const result = await findOrCreateProduct(null, product);
-    if (!result.requiresManualSelection && result.productId) {
-      productCache.set(product, result.productId);
-    } else {
-      productCache.set(product, null);
+      // Fall back to full AI-powered pipeline
+      const result = await findOrCreateProduct(null, product);
+      if (!result.requiresManualSelection && result.productId) {
+        productCache.set(product, result.productId);
+      } else {
+        productCache.set(product, null);
+      }
     }
   }
 
@@ -268,8 +276,11 @@ export async function POST(req: Request) {
     });
   }
 
-  // Update shipment
-  const totalScanned = existingCount + unitsToCreate;
+  // Update shipment — only count actually received units (not missing)
+  const receivedCount = units.filter(u => u.condition !== "missing").length;
+  const missingCount = unitsToCreate - receivedCount;
+  const totalScanned = existingCount + receivedCount;
+
   if (isMultiQty) {
     // Multi-qty order: mark complete, not a lot
     await prisma.shipments.update({
@@ -297,8 +308,10 @@ export async function POST(req: Request) {
   }
 
   return NextResponse.json({
-    message: `${unitsToCreate} units created`,
+    message: `${receivedCount} units received${missingCount > 0 ? `, ${missingCount} missing` : ""}`,
     unitsCreated: unitsToCreate,
+    unitsReceived: receivedCount,
+    unitsMissing: missingCount,
     totalScanned,
     units: createdUnits
   });

@@ -79,10 +79,23 @@ export async function extractProductInfo(title: string): Promise<ProductInfo> {
  * Combined product parsing + lot detection in a single API call.
  * Used on first scan to detect lots from title analysis.
  */
-export async function extractProductAndLotInfo(title: string, qty: number, description?: string | null, productNames?: string[]): Promise<ProductAndLotInfo> {
+export type ListingMetadata = {
+  gtin?: string | null;
+  mpn?: string | null;
+  color?: string | null;
+};
+
+export async function extractProductAndLotInfo(title: string, qty: number, description?: string | null, productNames?: string[], listingMetadata?: ListingMetadata | null): Promise<ProductAndLotInfo> {
   try {
     const client = getAnthropicClient();
     let userMessage = `Listing title: "${title}"\nPurchase quantity: ${qty}`;
+    if (listingMetadata && (listingMetadata.gtin || listingMetadata.mpn || listingMetadata.color)) {
+      const parts: string[] = [];
+      if (listingMetadata.gtin) parts.push(`UPC/GTIN: ${listingMetadata.gtin}`);
+      if (listingMetadata.mpn) parts.push(`MPN: ${listingMetadata.mpn}`);
+      if (listingMetadata.color) parts.push(`Color: ${listingMetadata.color}`);
+      userMessage += `\n\nListing item specifics:\n${parts.join("\n")}`;
+    }
     if (description) {
       userMessage += `\n\nListing description:\n${description}`;
     }

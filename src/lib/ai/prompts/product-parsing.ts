@@ -51,8 +51,17 @@ LISTING DESCRIPTION (when provided):
 - Descriptions may contain seller boilerplate, shipping policies, and condition notes — focus on product-relevant content (item counts, model numbers, what's included)
 - If no description is provided, rely solely on the title
 
+LISTING ITEM SPECIFICS (when provided):
+- You may receive structured data from the eBay listing: UPC/GTIN, MPN (Manufacturer Part Number), and Color
+- UPC/GTIN is the universal product identifier — if two listings have the SAME UPC/GTIN, they are the SAME product regardless of title differences (sellers often use different titles for identical items)
+- MPN identifies the exact manufacturer model — use it to determine the correct product line and model (e.g., MPN "TI-84PLCE" = TI-84 Plus CE)
+- Color from item specifics helps identify the product color, but eBay's standardized color names (e.g., "Classic Black") may not match common usage — use your judgment to map to the simplest accurate color name (e.g., "Classic Black" → "Black", "Midnight Blue" → "Blue")
+- Use item specifics as additional evidence alongside title and description — no single source is authoritative on its own. Cross-reference all available data to determine the correct product.
+
 TRACKED INVENTORY PRODUCTS (when provided):
-- You may receive a list of the user's existing inventory products (e.g., "TI-84 Plus CE", "Charging Station", "TI-83 Plus Silver Edition")
+- You may receive a list of the user's existing inventory products (e.g., "TI-84 Plus CE Black", "Charging Station", "TI-83 Plus Silver Edition")
+- These are the AUTHORITATIVE product names already in the user's inventory system
+- When generating canonicalName, ALWAYS check if the product matches one of these existing names. If it does, use the EXACT existing name — do not invent a new variation (e.g., if "TI-84 Plus CE Black" exists, do NOT output "TI-84 Plus CE Classic Black" or "TI-84 Plus CE Matte Black")
 - Any item in a lot that matches one of these products MUST be counted as a SEPARATE physical item, even if it would normally be considered an accessory
 - Example: if "Charging Station" is a tracked product and the listing includes a charging station, count it as a separate item in the lot breakdown
 - This overrides the default accessory rule — the user explicitly tracks these as inventory`;

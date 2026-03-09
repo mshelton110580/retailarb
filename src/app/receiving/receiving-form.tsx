@@ -5,7 +5,15 @@ import { useRouter } from "next/navigation";
 import ImageUploadPanel from "@/components/image-upload-panel";
 import { useBarcodeScanner } from "@/lib/use-barcode-scanner";
 
-type LotBreakdownItem = { product: string; quantity: number; group?: string };
+type LotBreakdownItem = {
+  product: string;
+  quantity: number;
+  group?: string;
+  productId?: string | null;
+  confidence?: string;
+  requiresManualSelection?: boolean;
+  suggestedProductName?: string;
+};
 
 type OrderItemInfo = {
   itemId: string;
@@ -113,9 +121,12 @@ export default function ReceivingForm() {
   const [conditions, setConditions] = useState<string[]>([]);
 
   // Lot confirmation modal state
-  type LotUnitState = { product: string; condition: string; notes: string };
+  type LotUnitState = { product: string; condition: string; notes: string; productId?: string | null };
   type LotBreakdownEdit = { product: string; quantity: number };
-  type LotReceivedEdit = { product: string; expected: number; received: number; shipmentIdx?: number; group?: string };
+  type LotReceivedEdit = {
+    product: string; expected: number; received: number; shipmentIdx?: number; group?: string;
+    productId?: string | null; confidence?: string; requiresManualSelection?: boolean;
+  };
   const [lotConfirmation, setLotConfirmation] = useState<LotConfirmation | null>(null);
   const [lotUnits, setLotUnits] = useState<LotUnitState[]>([]);
   const [lotBreakdownEdit, setLotBreakdownEdit] = useState<LotBreakdownEdit[]>([]);
@@ -221,6 +232,9 @@ export default function ReceivingForm() {
                 expected: i.quantity,
                 received: i.quantity,
                 group: i.group,
+                productId: i.productId,
+                confidence: i.confidence,
+                requiresManualSelection: i.requiresManualSelection,
               })));
             }
             setLotUnits([]);
@@ -457,12 +471,12 @@ export default function ReceivingForm() {
     for (const item of receivedEdit) {
       // Received units
       for (let i = 0; i < item.received; i++) {
-        units.push({ product: item.product, condition: "good", notes: "" });
+        units.push({ product: item.product, condition: "good", notes: "", productId: item.productId });
       }
       // Missing units
       const missing = item.expected - item.received;
       for (let i = 0; i < missing; i++) {
-        units.push({ product: item.product, condition: "missing", notes: "Not received" });
+        units.push({ product: item.product, condition: "missing", notes: "Not received", productId: item.productId });
       }
     }
     return units;
@@ -527,6 +541,7 @@ export default function ReceivingForm() {
                 product: u.product,
                 condition: u.condition,
                 notes: u.notes || undefined,
+                productId: u.productId || undefined,
               })),
               ...(!sh.isLot && sh.orderItems ? {
                 isMultiQty: true,
@@ -536,7 +551,7 @@ export default function ReceivingForm() {
           });
           const data = await res.json();
           if (res.ok) {
-            totalCreated += data.unitsCreated;
+            totalCreated += data.unitsReceived ?? data.unitsCreated;
           } else {
             errors.push(`Order ${sh.orderId}: ${data.error}`);
           }
@@ -570,6 +585,7 @@ export default function ReceivingForm() {
               product: u.product,
               condition: u.condition,
               notes: u.notes || undefined,
+              productId: u.productId || undefined,
             })),
             ...(lotConfirmation.isMultiQty ? {
               isMultiQty: true,
@@ -581,7 +597,10 @@ export default function ReceivingForm() {
         if (res.ok) {
           setLotConfirmation(null);
           setResult(null);
-          setStatus(`✓ ${data.unitsCreated} units checked in`);
+          const received = data.unitsReceived ?? data.unitsCreated;
+          const missing = data.unitsMissing ?? 0;
+          const missingText = missing > 0 ? ` (${missing} missing)` : "";
+          setStatus(`✓ ${received} units checked in${missingText}`);
           setStatusType("success");
           if (trackingRef.current) trackingRef.current.value = "";
           trackingRef.current?.focus();
@@ -615,6 +634,7 @@ export default function ReceivingForm() {
             product: u.product,
             condition: u.condition,
             notes: u.notes || undefined,
+            productId: u.productId || undefined,
           })),
           ...(lotConfirmation.isMultiQty ? {
             isMultiQty: true,
@@ -1003,9 +1023,42 @@ export default function ReceivingForm() {
                         )}
                         {group.items.map(({ item, globalIdx }) => {
                           const isMissing = item.received < item.expected;
+                          const needsSelection = item.requiresManualSelection && !item.productId;
                           return (
-                            <div key={globalIdx} className={`grid grid-cols-[1fr_auto_auto] gap-x-3 items-center rounded px-3 py-2 ${isMissing ? "bg-red-950/40 border border-red-900/50" : "bg-slate-800"}`}>
-                              <span className="text-sm text-slate-200">{item.product}</span>
+                            <div key={globalIdx} className={`grid grid-cols-[1fr_auto_auto] gap-x-3 items-center rounded px-3 py-2 ${needsSelection ? "bg-yellow-950/40 border border-yellow-800/50" : isMissing ? "bg-red-950/40 border border-red-900/50" : "bg-slate-800"}`}>
+                              <div className="min-w-0">
+                                {needsSelection ? (
+                                  <div>
+                                    <div className="flex items-center gap-1 mb-1">
+                                      <span className="text-xs text-yellow-400 font-medium">Select product:</span>
+                                    </div>
+                                    <select
+                                      className="w-full rounded border border-yellow-700 bg-slate-950 px-2 py-1 text-sm text-slate-200"
+                                      value={item.productId ?? ""}
+                                      onFocus={() => loadProducts()}
+                                      onChange={(e) => {
+                                        const updated = [...lotReceivedEdit];
+                                        const selectedId = e.target.value || null;
+                                        const selectedProduct = productOptions.find(p => p.id === selectedId);
+                                        updated[globalIdx] = {
+                                          ...item,
+                                          productId: selectedId,
+                                          requiresManualSelection: !selectedId,
+                                          product: selectedProduct?.product_name ?? item.product,
+                                        };
+                                        setLotReceivedEdit(updated);
+                                      }}
+                                    >
+                                      <option value="">— {item.product} (unmatched) —</option>
+                                      {productOptions.map(p => (
+                                        <option key={p.id} value={p.id}>{p.product_name}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                ) : (
+                                  <span className="text-sm text-slate-200">{item.product}</span>
+                                )}
+                              </div>
                               <span className="w-16 text-center text-sm text-slate-400">{item.expected}</span>
                               <input
                                 type="number"
@@ -1032,6 +1085,7 @@ export default function ReceivingForm() {
                   const totalExpected = lotReceivedEdit.reduce((s, i) => s + i.expected, 0);
                   const totalReceived = lotReceivedEdit.reduce((s, i) => s + i.received, 0);
                   const totalMissing = totalExpected - totalReceived;
+                  const hasUnresolvedProducts = lotReceivedEdit.some(i => i.requiresManualSelection && !i.productId);
                   return (
                     <>
                       <div className="mt-3 flex justify-between text-xs px-1">
@@ -1040,6 +1094,10 @@ export default function ReceivingForm() {
                           <span className="text-red-400 font-medium">{totalMissing} missing</span>
                         )}
                       </div>
+
+                      {hasUnresolvedProducts && (
+                        <p className="mt-2 text-xs text-yellow-400 px-1">Select a product for highlighted items before confirming</p>
+                      )}
 
                       <div className="mt-4">
                         <p className="text-sm font-medium text-slate-200">
@@ -1050,14 +1108,14 @@ export default function ReceivingForm() {
                         <div className="mt-3 flex gap-3">
                           <button
                             onClick={() => handleReceivedConfirmAllGood()}
-                            disabled={lotSubmitting || totalReceived === 0}
+                            disabled={lotSubmitting || totalReceived === 0 || hasUnresolvedProducts}
                             className="flex-1 rounded-lg bg-green-600 hover:bg-green-700 px-4 py-3 text-sm font-medium text-white transition-colors disabled:opacity-50"
                           >
                             {lotSubmitting ? "Saving..." : "Yes, All Good"}
                           </button>
                           <button
                             onClick={() => handleReceivedGoToConditions()}
-                            disabled={totalReceived === 0}
+                            disabled={totalReceived === 0 || hasUnresolvedProducts}
                             className="flex-1 rounded-lg border border-yellow-700 px-4 py-3 text-sm font-medium text-yellow-400 hover:bg-yellow-900/30 transition-colors disabled:opacity-50"
                           >
                             No, Some Have Issues
