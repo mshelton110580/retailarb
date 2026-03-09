@@ -4,11 +4,11 @@ import { prisma } from "@/lib/db";
 import { z } from "zod";
 
 const schema = z.object({
-  categoryId: z.string().nullable()
+  productId: z.string().nullable()
 });
 
 /**
- * PATCH /api/receiving/unit/[unitId]/category - Update unit category
+ * PATCH /api/receiving/unit/[unitId]/product - Update unit product
  */
 export async function PATCH(
   req: Request,
@@ -36,30 +36,30 @@ export async function PATCH(
       return NextResponse.json({ error: "Unit not found" }, { status: 404 });
     }
 
-    // Verify category exists if provided
-    if (body.data.categoryId) {
-      const category = await prisma.item_categories.findUnique({
-        where: { id: body.data.categoryId }
+    // Verify product exists if provided
+    if (body.data.productId) {
+      const product = await prisma.products.findUnique({
+        where: { id: body.data.productId }
       });
 
-      if (!category) {
-        return NextResponse.json({ error: "Category not found" }, { status: 404 });
+      if (!product) {
+        return NextResponse.json({ error: "Product not found" }, { status: 404 });
       }
     }
 
-    // Update the unit's category
+    // Update the unit's product
     const updatedUnit = await prisma.received_units.update({
       where: { id: unitId },
       data: {
-        category_id: body.data.categoryId
+        product_id: body.data.productId
       },
       select: {
         id: true,
-        category_id: true,
-        category: {
+        product_id: true,
+        product: {
           select: {
             id: true,
-            category_name: true
+            product_name: true
           }
         }
       }
@@ -71,9 +71,9 @@ export async function PATCH(
     });
 
   } catch (error: any) {
-    console.error("Failed to update unit category:", error);
+    console.error("Failed to update unit product:", error);
     return NextResponse.json(
-      { error: error.message ?? "Failed to update category" },
+      { error: error.message ?? "Failed to update product" },
       { status: 500 }
     );
   }

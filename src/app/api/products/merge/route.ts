@@ -4,13 +4,13 @@ import { prisma } from "@/lib/db";
 import { z } from "zod";
 
 const schema = z.object({
-  fromCategoryName: z.string(),
-  toCategoryId: z.string()
+  fromProductName: z.string(),
+  toProductId: z.string()
 });
 
 /**
- * POST /api/categories/merge - Create a category merge mapping
- * When a new category name should map to an existing category
+ * POST /api/products/merge - Create a product alias mapping
+ * When a new product name should map to an existing product
  */
 export async function POST(req: Request) {
   const auth = await requireRole(["ADMIN", "RECEIVER"]);
@@ -24,35 +24,35 @@ export async function POST(req: Request) {
   }
 
   try {
-    // Verify target category exists
-    const targetCategory = await prisma.item_categories.findUnique({
-      where: { id: body.data.toCategoryId }
+    // Verify target product exists
+    const targetProduct = await prisma.products.findUnique({
+      where: { id: body.data.toProductId }
     });
 
-    if (!targetCategory) {
-      return NextResponse.json({ error: "Target category not found" }, { status: 404 });
+    if (!targetProduct) {
+      return NextResponse.json({ error: "Target product not found" }, { status: 404 });
     }
 
     // Create or update merge mapping
     const merge = await prisma.$queryRawUnsafe(
-      `INSERT INTO category_merges (id, from_category_name, to_category_id, created_by)
+      `INSERT INTO product_aliases (id, from_product_name, to_product_id, created_by)
        VALUES (gen_random_uuid()::text, $1, $2, $3)
-       ON CONFLICT (from_category_name)
-       DO UPDATE SET to_category_id = $2, created_by = $3
+       ON CONFLICT (from_product_name)
+       DO UPDATE SET to_product_id = $2, created_by = $3
        RETURNING id`,
-      body.data.fromCategoryName,
-      body.data.toCategoryId,
+      body.data.fromProductName,
+      body.data.toProductId,
       auth.session.user.id
     );
 
     return NextResponse.json({
       ok: true,
       merge,
-      message: `"${body.data.fromCategoryName}" will now be merged into "${targetCategory.category_name}"`
+      message: `"${body.data.fromProductName}" will now be merged into "${targetProduct.product_name}"`
     });
 
   } catch (error: any) {
-    console.error("Failed to create category merge:", error);
+    console.error("Failed to create product merge:", error);
     return NextResponse.json(
       { error: error.message ?? "Failed to create merge" },
       { status: 500 }

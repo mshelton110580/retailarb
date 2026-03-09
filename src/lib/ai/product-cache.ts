@@ -2,7 +2,7 @@ import { prisma } from "@/lib/db";
 import { extractProductInfo } from "./product-parser";
 import type { ProductInfo } from "./types";
 
-// In-memory cache: categoryId → parsed ProductInfo
+// In-memory cache: productId → parsed ProductInfo
 const cache = new Map<string, ProductInfo>();
 let initialized = false;
 let initializing: Promise<void> | null = null;
@@ -24,7 +24,7 @@ async function processBatches<T, R>(
 }
 
 /**
- * Ensure the cache is populated. On first call, loads all categories
+ * Ensure the cache is populated. On first call, loads all products
  * from the DB and parses their names in batches. Subsequent calls are no-ops.
  */
 async function ensureInitialized(): Promise<void> {
@@ -33,13 +33,13 @@ async function ensureInitialized(): Promise<void> {
   if (initializing) return initializing;
 
   initializing = (async () => {
-    const categories = await prisma.item_categories.findMany({
-      select: { id: true, category_name: true }
+    const products = await prisma.products.findMany({
+      select: { id: true, product_name: true }
     });
 
-    const results = await processBatches(categories, async (cat) => {
-      const info = await extractProductInfo(cat.category_name);
-      return { id: cat.id, info };
+    const results = await processBatches(products, async (p) => {
+      const info = await extractProductInfo(p.product_name);
+      return { id: p.id, info };
     });
 
     for (const { id, info } of results) {
@@ -54,25 +54,25 @@ async function ensureInitialized(): Promise<void> {
 }
 
 /**
- * Get all cached categories with their parsed ProductInfo.
+ * Get all cached products with their parsed ProductInfo.
  */
-export async function getCachedCategories(): Promise<Map<string, ProductInfo>> {
+export async function getCachedProducts(): Promise<Map<string, ProductInfo>> {
   await ensureInitialized();
   return cache;
 }
 
 /**
- * Notify the cache that a category was created or renamed.
+ * Notify the cache that a product was created or renamed.
  * Parses the name and stores/updates the entry.
  */
-export async function onCategoryCreated(categoryId: string, categoryName: string): Promise<void> {
-  const info = await extractProductInfo(categoryName);
-  cache.set(categoryId, info);
+export async function onProductCreated(productId: string, productName: string): Promise<void> {
+  const info = await extractProductInfo(productName);
+  cache.set(productId, info);
 }
 
 /**
- * Notify the cache that a category was deleted.
+ * Notify the cache that a product was deleted.
  */
-export function onCategoryDeleted(categoryId: string): void {
-  cache.delete(categoryId);
+export function onProductDeleted(productId: string): void {
+  cache.delete(productId);
 }

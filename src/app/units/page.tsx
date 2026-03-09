@@ -7,9 +7,9 @@ export default async function UnitsPage() {
   const auth = await requireRole(["ADMIN", "RECEIVER"]);
   if (!auth.ok) redirect("/login");
 
-  const categories = await prisma.item_categories.findMany({
-    select: { id: true, category_name: true },
-    orderBy: { category_name: "asc" }
+  const products = await prisma.products.findMany({
+    select: { id: true, product_name: true },
+    orderBy: { product_name: "asc" }
   });
 
   return (
@@ -20,7 +20,7 @@ export default async function UnitsPage() {
           Search, filter, and bulk-edit received units
         </p>
       </div>
-      <UnitsTable categories={categories} />
+      <UnitsTable products={products.map(p => ({ id: p.id, product_name: p.product_name }))} />
     </div>
   );
 }

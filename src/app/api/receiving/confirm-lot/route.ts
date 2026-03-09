@@ -3,7 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
 import { TargetType, TargetStatus } from "@prisma/client";
 import { z } from "zod";
-import { findOrCreateCategory, computeInventoryState } from "@/lib/item-categorization";
+import { findOrCreateProduct, computeInventoryState } from "@/lib/product-matching";
 
 const unitSchema = z.object({
   product: z.string(),
@@ -111,41 +111,41 @@ export async function POST(req: Request) {
     }
   }
 
-  // For category lookups, use the first item's listing info
+  // For product lookups, use the first item's listing info
   const listing = await prisma.listings.findUnique({
     where: { item_id: itemId },
     select: { item_id: true, title: true, gtin: true }
   });
 
-  // Find/create categories for each distinct product
-  // First try direct name matching against existing categories (product names
+  // Find/create products for each distinct product name
+  // First try direct name matching against existing products (product names
   // from the AI breakdown are already clean), then fall back to full pipeline.
-  const categoryCache = new Map<string, string | null>();
+  const productCache = new Map<string, string | null>();
   const distinctProducts = [...new Set(units.map(u => u.product))];
 
-  const allCategories = await prisma.item_categories.findMany({
-    select: { id: true, category_name: true }
+  const allProducts = await prisma.products.findMany({
+    select: { id: true, product_name: true }
   });
 
   for (const product of distinctProducts) {
     const normProduct = product.toLowerCase().replace(/[^a-z0-9]/g, "");
 
     // Try exact name match first (case-insensitive, ignoring punctuation)
-    const exactMatch = allCategories.find(
-      cat => cat.category_name.toLowerCase().replace(/[^a-z0-9]/g, "") === normProduct
+    const exactMatch = allProducts.find(
+      cat => cat.product_name.toLowerCase().replace(/[^a-z0-9]/g, "") === normProduct
     );
 
     if (exactMatch) {
-      categoryCache.set(product, exactMatch.id);
+      productCache.set(product, exactMatch.id);
       continue;
     }
 
-    // Try best prefix match — pick the category whose normalized name shares
+    // Try best prefix match — pick the product whose normalized name shares
     // the longest common prefix with the product name.
     // e.g., "ti83plussilveredition" prefers "ti83plussilver" (13) over "ti83plus" (8)
     let bestDirectMatch: { id: string; overlap: number } | null = null;
-    for (const cat of allCategories) {
-      const normCat = cat.category_name.toLowerCase().replace(/[^a-z0-9]/g, "");
+    for (const cat of allProducts) {
+      const normCat = cat.product_name.toLowerCase().replace(/[^a-z0-9]/g, "");
       if (normProduct.startsWith(normCat) || normCat.startsWith(normProduct)) {
         // Overlap = length of the shorter string (the shared prefix)
         const overlap = Math.min(normProduct.length, normCat.length);
@@ -156,16 +156,16 @@ export async function POST(req: Request) {
     }
 
     if (bestDirectMatch && bestDirectMatch.overlap >= 8) {
-      categoryCache.set(product, bestDirectMatch.id);
+      productCache.set(product, bestDirectMatch.id);
       continue;
     }
 
     // Fall back to full AI-powered pipeline
-    const result = await findOrCreateCategory(null, product);
-    if (!result.requiresManualSelection && result.categoryId) {
-      categoryCache.set(product, result.categoryId);
+    const result = await findOrCreateProduct(null, product);
+    if (!result.requiresManualSelection && result.productId) {
+      productCache.set(product, result.productId);
     } else {
-      categoryCache.set(product, null);
+      productCache.set(product, null);
     }
   }
 
@@ -195,7 +195,7 @@ export async function POST(req: Request) {
   }
 
   // Create all units
-  const createdUnits: Array<{ id: string; unitIndex: number; condition: string; product: string; categoryId: string | null }> = [];
+  const createdUnits: Array<{ id: string; unitIndex: number; condition: string; product: string; productId: string | null }> = [];
 
   // For multi-qty multi-item orders, track how many units of each product
   // have been created so we can walk through order items linearly.
@@ -204,7 +204,7 @@ export async function POST(req: Request) {
   for (let i = 0; i < unitsToCreate; i++) {
     const unit = units[i];
     const unitIndex = startIndex + i;
-    const categoryId = categoryCache.get(unit.product) ?? null;
+    const productId = productCache.get(unit.product) ?? null;
 
     // Resolve the correct item_id and order_item_id for this unit
     let unitItemId = itemId;
@@ -253,7 +253,7 @@ export async function POST(req: Request) {
         unit_index: unitIndex,
         condition_status: unit.condition,
         inventory_state: inventoryState,
-        category_id: categoryId,
+        product_id: productId,
         scanned_by_user_id: auth.session.user.id,
         notes: unit.notes ?? null
       }
@@ -264,7 +264,7 @@ export async function POST(req: Request) {
       unitIndex,
       condition: unit.condition,
       product: unit.product,
-      categoryId
+      productId
     });
   }
 

@@ -59,8 +59,8 @@ export default async function ConditionsAdminPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Link href="/admin/categories" className="rounded border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800">
-            Categories
+          <Link href="/admin/products" className="rounded border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800">
+            Products
           </Link>
           <Link href="/admin/users" className="rounded border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800">
             Users

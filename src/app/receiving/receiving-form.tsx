@@ -51,12 +51,12 @@ type ScanResultItem = {
   lotSize: number | null;
   condition: string;
   lotConfirmation?: LotConfirmation;
-  categoryInfo: {
-    categoryId: string | null;
+  productInfo: {
+    productId: string | null;
     confidence: "high" | "medium" | "low";
     requiresManualSelection: boolean;
     reason?: string;
-    suggestedCategoryName?: string;
+    suggestedProductName?: string;
   };
   item: { title: string; itemId: string; qty: number; scannedForItem?: number; remainingForItem?: number | null };
   allItems: Array<{ title: string; qty: number; itemId: string }>;
@@ -86,9 +86,9 @@ type ScanResponse = {
   poolInfo?: PoolInfo | null;
 };
 
-type Category = {
+type Product = {
   id: string;
-  category_name: string;
+  product_name: string;
   gtin: string | null;
 };
 
@@ -101,8 +101,8 @@ export default function ReceivingForm() {
   const submittingRef = useRef(false); // Synchronous guard against double-submission
   const formRef = useRef<HTMLFormElement>(null);
   const trackingRef = useRef<HTMLInputElement>(null);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [loadingCategories, setLoadingCategories] = useState(false);
+  const [productOptions, setProductOptions] = useState<Product[]>([]);
+  const [loadingProducts, setLoadingProducts] = useState(false);
   // Image upload panel state — triggered when a non-good unit is scanned
   const [imageUploadUnit, setImageUploadUnit] = useState<{
     unitId: string;
@@ -131,14 +131,14 @@ export default function ReceivingForm() {
       .catch(() => {});
   }, []);
 
-  const [pendingCategorySelection, setPendingCategorySelection] = useState<{
+  const [pendingProductSelection, setPendingProductSelection] = useState<{
     unitId: string;
     unitIndex: number;
     title: string;
     reason: string;
-    suggestedCategoryName?: string;
+    suggestedProductName?: string;
   } | null>(null);
-  const [editedCategoryName, setEditedCategoryName] = useState<string>("");
+  const [editedProductName, setEditedProductName] = useState<string>("");
   const [createMergeMapping, setCreateMergeMapping] = useState<boolean>(true);
 
   // Detect barcode scanner input and route to tracking field
@@ -326,33 +326,33 @@ export default function ReceivingForm() {
     submitScan(trackingValue);
   }
 
-  async function loadCategories() {
-    if (categories.length > 0) return;
+  async function loadProducts() {
+    if (productOptions.length > 0) return;
 
-    setLoadingCategories(true);
+    setLoadingProducts(true);
     try {
-      const res = await fetch("/api/categories");
+      const res = await fetch("/api/products");
       const data = await res.json();
       if (res.ok) {
-        setCategories(data.categories);
+        setProductOptions(data.products);
       }
     } catch (err) {
-      console.error("Failed to load categories:", err);
+      console.error("Failed to load products:", err);
     } finally {
-      setLoadingCategories(false);
+      setLoadingProducts(false);
     }
   }
 
-  async function handleCategorySelection(unitId: string, categoryId: string | null, suggestedName?: string, shouldCreateMerge?: boolean) {
+  async function handleProductSelection(unitId: string, productId: string | null, suggestedName?: string, shouldCreateMerge?: boolean) {
     try {
       // Only create merge mapping if explicitly requested
-      if (categoryId && suggestedName && shouldCreateMerge) {
-        const mergeRes = await fetch("/api/categories/merge", {
+      if (productId && suggestedName && shouldCreateMerge) {
+        const mergeRes = await fetch("/api/products/merge", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            fromCategoryName: suggestedName,
-            toCategoryId: categoryId
+            fromProductName: suggestedName,
+            toProductId: productId
           })
         });
 
@@ -364,79 +364,79 @@ export default function ReceivingForm() {
         }
       }
 
-      // Assign category to the unit
-      const res = await fetch(`/api/receiving/unit/${unitId}/category`, {
+      // Assign product to the unit
+      const res = await fetch(`/api/receiving/unit/${unitId}/product`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ categoryId })
+        body: JSON.stringify({ productId })
       });
 
       if (res.ok) {
-        setPendingCategorySelection(null);
-        if (suggestedName && categoryId && shouldCreateMerge) {
-          setStatus(`✓ Category merged: "${suggestedName}" → existing category. Future scans will auto-merge.`);
-        } else if (suggestedName && categoryId && !shouldCreateMerge) {
-          setStatus(`✓ Category assigned (no alias created). "${suggestedName}" will prompt again on future scans.`);
+        setPendingProductSelection(null);
+        if (suggestedName && productId && shouldCreateMerge) {
+          setStatus(`✓ Product merged: "${suggestedName}" → existing product. Future scans will auto-merge.`);
+        } else if (suggestedName && productId && !shouldCreateMerge) {
+          setStatus(`✓ Product assigned (no alias created). "${suggestedName}" will prompt again on future scans.`);
         } else {
-          setStatus("✓ Category assigned successfully");
+          setStatus("✓ Product assigned successfully");
         }
         setStatusType("success");
         router.refresh();
       } else {
         const data = await res.json();
-        setStatus(`Error assigning category: ${data.error}`);
+        setStatus(`Error assigning product: ${data.error}`);
         setStatusType("error");
       }
     } catch {
-      setStatus("Network error while assigning category");
+      setStatus("Network error while assigning product");
       setStatusType("error");
     }
   }
 
-  async function handleCreateNewCategory(unitId: string, categoryName: string) {
+  async function handleCreateNewProduct(unitId: string, productName: string) {
     try {
-      // Create the new category
-      const createRes = await fetch("/api/categories", {
+      // Create the new product
+      const createRes = await fetch("/api/products", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: categoryName })
+        body: JSON.stringify({ name: productName })
       });
 
       if (!createRes.ok) {
         const createData = await createRes.json();
-        setStatus(`Error creating category: ${createData.error}`);
+        setStatus(`Error creating product: ${createData.error}`);
         setStatusType("error");
         return;
       }
 
       const createData = await createRes.json();
-      const newCategoryId = createData.category?.id;
+      const newProductId = createData.product?.id;
 
-      if (!newCategoryId) {
-        setStatus("Error: Failed to get new category ID");
+      if (!newProductId) {
+        setStatus("Error: Failed to get new product ID");
         setStatusType("error");
         return;
       }
 
-      // Assign the new category to the unit
-      const assignRes = await fetch(`/api/receiving/unit/${unitId}/category`, {
+      // Assign the new product to the unit
+      const assignRes = await fetch(`/api/receiving/unit/${unitId}/product`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ categoryId: newCategoryId })
+        body: JSON.stringify({ productId: newProductId })
       });
 
       if (assignRes.ok) {
-        setPendingCategorySelection(null);
-        setStatus(`✓ New category "${categoryName}" created and assigned`);
+        setPendingProductSelection(null);
+        setStatus(`✓ New product "${productName}" created and assigned`);
         setStatusType("success");
         router.refresh();
       } else {
         const assignData = await assignRes.json();
-        setStatus(`Error assigning new category: ${assignData.error}`);
+        setStatus(`Error assigning new product: ${assignData.error}`);
         setStatusType("error");
       }
     } catch {
-      setStatus("Network error while creating category");
+      setStatus("Network error while creating product");
       setStatusType("error");
     }
   }
@@ -643,21 +643,21 @@ export default function ReceivingForm() {
     }
   }
 
-  // Check if scan result requires manual category selection
+  // Check if scan result requires manual product selection
   useEffect(() => {
-    if (result?.results?.[0]?.categoryInfo?.requiresManualSelection) {
+    if (result?.results?.[0]?.productInfo?.requiresManualSelection) {
       const r = result.results[0];
-      const suggestedName = r.categoryInfo.suggestedCategoryName || "";
-      setPendingCategorySelection({
+      const suggestedName = r.productInfo.suggestedProductName || "";
+      setPendingProductSelection({
         unitId: r.unitId,
         unitIndex: r.unitIndex,
         title: r.item.title,
-        reason: r.categoryInfo.reason || "Manual selection required",
-        suggestedCategoryName: suggestedName
+        reason: r.productInfo.reason || "Manual selection required",
+        suggestedProductName: suggestedName
       });
-      setEditedCategoryName(suggestedName);
+      setEditedProductName(suggestedName);
       setCreateMergeMapping(true); // Default to creating merge mapping
-      loadCategories();
+      loadProducts();
     }
   }, [result]);
 
@@ -1201,82 +1201,82 @@ export default function ReceivingForm() {
         </div>
       )}
 
-      {/* Category selection modal (blocking overlay) */}
-      {pendingCategorySelection && (
+      {/* Product selection modal (blocking overlay) */}
+      {pendingProductSelection && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
           <div className="w-full max-w-lg rounded-lg border border-indigo-800 bg-slate-900 p-6 shadow-2xl mx-4">
-            <h3 className="text-lg font-semibold text-indigo-400">⚠️ Category Selection Required</h3>
+            <h3 className="text-lg font-semibold text-indigo-400">⚠️ Product Selection Required</h3>
             <p className="mt-2 text-sm text-slate-300">
-              <strong>Unit #{pendingCategorySelection.unitIndex}:</strong> {pendingCategorySelection.title}
+              <strong>Unit #{pendingProductSelection.unitIndex}:</strong> {pendingProductSelection.title}
             </p>
 
-            {pendingCategorySelection.suggestedCategoryName && (
+            {pendingProductSelection.suggestedProductName && (
               <div className="mt-3 space-y-2">
                 <div className="rounded-lg bg-blue-900/30 border border-blue-800 p-3">
                   <p className="text-sm font-medium text-blue-300">
-                    System detected: <span className="font-bold text-blue-200">{pendingCategorySelection.suggestedCategoryName}</span>
+                    System detected: <span className="font-bold text-blue-200">{pendingProductSelection.suggestedProductName}</span>
                   </p>
                   <p className="mt-1 text-xs text-blue-400">
-                    Edit the name below, create as new, or merge with existing category
+                    Edit the name below, create as new, or merge with existing product
                   </p>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-400 mb-1">
-                    Category Name:
+                    Product Name:
                   </label>
                   <input
                     type="text"
-                    value={editedCategoryName}
-                    onChange={(e) => setEditedCategoryName(e.target.value)}
+                    value={editedProductName}
+                    onChange={(e) => setEditedProductName(e.target.value)}
                     className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
-                    placeholder="Enter category name"
+                    placeholder="Enter product name"
                   />
                 </div>
               </div>
             )}
 
             <div className="mt-4 space-y-4">
-              {loadingCategories ? (
-                <p className="text-sm text-slate-500">Loading categories...</p>
+              {loadingProducts ? (
+                <p className="text-sm text-slate-500">Loading products...</p>
               ) : (
                 <>
-                  {/* Create new category button */}
-                  {pendingCategorySelection.suggestedCategoryName && (
+                  {/* Create new product button */}
+                  {pendingProductSelection.suggestedProductName && (
                     <button
-                      onClick={() => handleCreateNewCategory(
-                        pendingCategorySelection.unitId,
-                        editedCategoryName.trim()
+                      onClick={() => handleCreateNewProduct(
+                        pendingProductSelection.unitId,
+                        editedProductName.trim()
                       )}
-                      disabled={!editedCategoryName.trim()}
+                      disabled={!editedProductName.trim()}
                       className="w-full rounded-lg bg-green-600 hover:bg-green-700 px-4 py-3 text-sm font-medium text-white transition-colors shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      ✓ Create New Category{editedCategoryName.trim() ? `: "${editedCategoryName.trim()}"` : ""}
+                      ✓ Create New Product{editedProductName.trim() ? `: "${editedProductName.trim()}"` : ""}
                     </button>
                   )}
 
-                  {/* Assign to existing category */}
+                  {/* Assign to existing product */}
                   <div>
                     <label className="block text-sm font-medium text-slate-400 mb-2">
-                      Or assign to existing category:
+                      Or assign to existing product:
                     </label>
                     <select
                       className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-300 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
                       onChange={(e) => {
                         if (e.target.value) {
-                          handleCategorySelection(
-                            pendingCategorySelection.unitId,
+                          handleProductSelection(
+                            pendingProductSelection.unitId,
                             e.target.value,
-                            editedCategoryName.trim() || pendingCategorySelection.suggestedCategoryName,
+                            editedProductName.trim() || pendingProductSelection.suggestedProductName,
                             createMergeMapping
                           );
                         }
                       }}
                       defaultValue=""
                     >
-                      <option value="">-- Select Existing Category --</option>
-                      {categories.map((cat) => (
+                      <option value="">-- Select Existing Product --</option>
+                      {productOptions.map((cat) => (
                         <option key={cat.id} value={cat.id}>
-                          {cat.category_name}
+                          {cat.product_name}
                         </option>
                       ))}
                     </select>
@@ -1295,7 +1295,7 @@ export default function ReceivingForm() {
                         <br />
                         {createMergeMapping ? (
                           <span className="text-green-400">
-                            ✓ "{editedCategoryName.trim() || pendingCategorySelection.suggestedCategoryName}" will automatically map to selected category in future scans
+                            ✓ "{editedProductName.trim() || pendingProductSelection.suggestedProductName}" will automatically map to selected product in future scans
                           </span>
                         ) : (
                           <span className="text-yellow-400">
@@ -1309,8 +1309,8 @@ export default function ReceivingForm() {
                   <div className="flex gap-3 pt-2 border-t border-slate-800">
                     <button
                       onClick={() => {
-                        setPendingCategorySelection(null);
-                        setStatus("⚠ Category selection skipped - you can assign it later from the scans list");
+                        setPendingProductSelection(null);
+                        setStatus("⚠ Product selection skipped - you can assign it later from the scans list");
                         setStatusType("warning");
                       }}
                       className="flex-1 rounded border border-slate-700 px-4 py-2 text-sm text-slate-400 hover:bg-slate-800 transition-colors mt-2"
@@ -1326,7 +1326,7 @@ export default function ReceivingForm() {
                   </div>
 
                   <p className="text-xs text-slate-500 text-center">
-                    You can edit the category later using the "Edit Cat" button on the scans list.
+                    You can edit the product later using the "Edit Product" button on the scans list.
                   </p>
                 </>
               )}

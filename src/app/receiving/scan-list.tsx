@@ -10,7 +10,7 @@ type ReceivedUnit = {
   condition: string;
   receivedAt: string;
   notes: string | null;
-  category: { id: string; name: string } | null;
+  product: { id: string; name: string } | null;
 };
 
 type MatchedOrder = {
@@ -57,9 +57,9 @@ const conditionColors: Record<string, string> = {
   defective: "bg-rose-900 text-rose-300",
 };
 
-type Category = {
+type Product = {
   id: string;
-  category_name: string;
+  product_name: string;
   gtin: string | null;
 };
 
@@ -69,11 +69,11 @@ export default function ScanList({ entries }: { entries: ScanEntry[] }) {
   const [deletingUnit, setDeletingUnit] = useState<string | null>(null);
   const [deletingOrder, setDeletingOrder] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [editingCategory, setEditingCategory] = useState<string | null>(null);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [loadingCategories, setLoadingCategories] = useState(false);
-  const [creatingCategory, setCreatingCategory] = useState<string | null>(null);
-  const [newCategoryName, setNewCategoryName] = useState<string>("");
+  const [editingProduct, setEditingProduct] = useState<string | null>(null);
+  const [productOptions, setProductOptions] = useState<Product[]>([]);
+  const [loadingProducts, setLoadingProducts] = useState(false);
+  const [creatingProduct, setCreatingProduct] = useState<string | null>(null);
+  const [newProductName, setNewProductName] = useState<string>("");
 
   async function handleDeleteLot(trackingLast8: string, scanIds: string[]) {
     if (!confirm(`Delete entire lot (...${trackingLast8})? This will delete ${scanIds.length} scan${scanIds.length > 1 ? "s" : ""} and reverse all check-ins.`)) return;
@@ -130,76 +130,76 @@ export default function ScanList({ entries }: { entries: ScanEntry[] }) {
     }
   }
 
-  async function loadCategories() {
-    if (categories.length > 0) return;
-    setLoadingCategories(true);
+  async function loadProducts() {
+    if (productOptions.length > 0) return;
+    setLoadingProducts(true);
     try {
-      const res = await fetch("/api/categories");
+      const res = await fetch("/api/products");
       const data = await res.json();
-      if (res.ok) setCategories(data.categories);
+      if (res.ok) setProductOptions(data.products);
     } catch (err) {
-      console.error("Failed to load categories:", err);
+      console.error("Failed to load products:", err);
     } finally {
-      setLoadingCategories(false);
+      setLoadingProducts(false);
     }
   }
 
-  async function handleCategoryChange(unitId: string, categoryId: string | null) {
-    if (categoryId === "__CREATE_NEW__") {
-      setCreatingCategory(unitId);
-      setNewCategoryName("");
+  async function handleProductChange(unitId: string, productId: string | null) {
+    if (productId === "__CREATE_NEW__") {
+      setCreatingProduct(unitId);
+      setNewProductName("");
       return;
     }
     setMessage(null);
     try {
-      const res = await fetch(`/api/receiving/unit/${unitId}/category`, {
+      const res = await fetch(`/api/receiving/unit/${unitId}/product`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ categoryId })
+        body: JSON.stringify({ productId })
       });
       const data = await res.json();
-      if (res.ok) { setMessage("Category updated"); setEditingCategory(null); router.refresh(); }
+      if (res.ok) { setMessage("Product updated"); setEditingProduct(null); router.refresh(); }
       else setMessage(`Error: ${data.error}`);
     } catch {
       setMessage("Network error. Please try again.");
     }
   }
 
-  async function handleCreateNewCategory(unitId: string) {
-    if (!newCategoryName.trim()) { setMessage("Category name cannot be empty"); return; }
+  async function handleCreateNewProduct(unitId: string) {
+    if (!newProductName.trim()) { setMessage("Product name cannot be empty"); return; }
     setMessage(null);
     try {
-      const createRes = await fetch("/api/categories", {
+      const createRes = await fetch("/api/products", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newCategoryName.trim() })
+        body: JSON.stringify({ name: newProductName.trim() })
       });
       const createData = await createRes.json();
-      if (!createRes.ok) { setMessage(`Error creating category: ${createData.error}`); return; }
-      const newCategoryId = createData.category?.id;
-      if (!newCategoryId) { setMessage("Error: Failed to get new category ID"); return; }
-      const assignRes = await fetch(`/api/receiving/unit/${unitId}/category`, {
+      if (!createRes.ok) { setMessage(`Error creating product: ${createData.error}`); return; }
+      const newProductId = createData.product?.id;
+      if (!newProductId) { setMessage("Error: Failed to get new product ID"); return; }
+      const assignRes = await fetch(`/api/receiving/unit/${unitId}/product`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ categoryId: newCategoryId })
+        body: JSON.stringify({ productId: newProductId })
       });
       if (assignRes.ok) {
-        setMessage(`✓ Category "${newCategoryName.trim()}" created and assigned`);
-        setCreatingCategory(null); setEditingCategory(null); setNewCategoryName("");
-        setCategories([]); router.refresh();
+        setMessage(`✓ Product "${newProductName.trim()}" created and assigned`);
+        setCreatingProduct(null); setEditingProduct(null); setNewProductName("");
+        setProductOptions([]); router.refresh();
       } else {
         const assignData = await assignRes.json();
-        setMessage(`Error assigning category: ${assignData.error}`);
+        setMessage(`Error assigning product: ${assignData.error}`);
       }
     } catch {
       setMessage("Network error. Please try again.");
     }
   }
 
-  function handleEditCategory(unitId: string) {
-    setEditingCategory(unitId);
-    setCreatingCategory(null);
-    loadCategories();
+  function handleEditProduct(unitId: string) {
+    setEditingProduct(unitId);
+    setCreatingProduct(null);
+    loadProducts();
   }
 
   function renderUnit(unit: ReceivedUnit) {
@@ -211,17 +211,17 @@ export default function ScanList({ entries }: { entries: ScanEntry[] }) {
           <span className={`rounded px-1.5 py-0.5 text-[10px] ${conditionColors[unit.condition] ?? "bg-slate-700 text-slate-300"}`}>
             {unit.condition.replace(/_/g, " ")}
           </span>
-          {unit.category && (
-            <span className="rounded bg-indigo-900 px-1.5 py-0.5 text-[10px] text-indigo-300">{unit.category.name}</span>
+          {unit.product && (
+            <span className="rounded bg-indigo-900 px-1.5 py-0.5 text-[10px] text-indigo-300">{unit.product.name}</span>
           )}
           <span className="text-slate-600">{new Date(unit.receivedAt).toLocaleString()}</span>
           {unit.notes && <span className="text-slate-500 italic">({unit.notes})</span>}
           <button
-            onClick={() => handleEditCategory(unit.id)}
+            onClick={() => handleEditProduct(unit.id)}
             className="rounded border border-indigo-800 px-1.5 py-0.5 text-[10px] text-indigo-400 hover:bg-indigo-900"
-            title="Edit category"
+            title="Edit product"
           >
-            Edit Cat
+            Edit Product
           </button>
           <button
             onClick={() => handleDeleteUnit(unit.id, unit.unitIndex)}
@@ -233,26 +233,26 @@ export default function ScanList({ entries }: { entries: ScanEntry[] }) {
           </button>
         </div>
 
-        {editingCategory === unit.id && !creatingCategory && (
+        {editingProduct === unit.id && !creatingProduct && (
           <div className="flex items-center gap-2 border-l-2 border-indigo-700 pl-2">
-            <span className="text-[10px] text-slate-400">Category:</span>
-            {loadingCategories ? (
+            <span className="text-[10px] text-slate-400">Product:</span>
+            {loadingProducts ? (
               <span className="text-[10px] text-slate-500">Loading...</span>
             ) : (
               <>
                 <select
                   className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-[11px] text-slate-300"
-                  defaultValue={unit.category?.id || ""}
-                  onChange={(e) => handleCategoryChange(unit.id, e.target.value || null)}
+                  defaultValue={unit.product?.id || ""}
+                  onChange={(e) => handleProductChange(unit.id, e.target.value || null)}
                 >
-                  <option value="">-- No Category --</option>
-                  <option value="__CREATE_NEW__" className="bg-green-900 text-green-300">+ Create New Category</option>
-                  {categories.map((cat) => (
-                    <option key={cat.id} value={cat.id}>{cat.category_name}</option>
+                  <option value="">-- Unassigned --</option>
+                  <option value="__CREATE_NEW__" className="bg-green-900 text-green-300">+ Create New Product</option>
+                  {productOptions.map((cat) => (
+                    <option key={cat.id} value={cat.id}>{cat.product_name}</option>
                   ))}
                 </select>
                 <button
-                  onClick={() => setEditingCategory(null)}
+                  onClick={() => setEditingProduct(null)}
                   className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-slate-700"
                 >
                   Cancel
@@ -262,30 +262,30 @@ export default function ScanList({ entries }: { entries: ScanEntry[] }) {
           </div>
         )}
 
-        {creatingCategory === unit.id && (
+        {creatingProduct === unit.id && (
           <div className="flex items-center gap-2 border-l-2 border-green-700 pl-2">
-            <span className="text-[10px] text-green-400">New Category:</span>
+            <span className="text-[10px] text-green-400">New Product:</span>
             <input
               type="text"
-              value={newCategoryName}
-              onChange={(e) => setNewCategoryName(e.target.value)}
+              value={newProductName}
+              onChange={(e) => setNewProductName(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") handleCreateNewCategory(unit.id);
-                else if (e.key === "Escape") { setCreatingCategory(null); setNewCategoryName(""); }
+                if (e.key === "Enter") handleCreateNewProduct(unit.id);
+                else if (e.key === "Escape") { setCreatingProduct(null); setNewProductName(""); }
               }}
-              placeholder="Enter category name"
+              placeholder="Enter product name"
               className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-[11px] text-slate-300 w-48"
               autoFocus
             />
             <button
-              onClick={() => handleCreateNewCategory(unit.id)}
-              disabled={!newCategoryName.trim()}
+              onClick={() => handleCreateNewProduct(unit.id)}
+              disabled={!newProductName.trim()}
               className="rounded bg-green-600 hover:bg-green-700 px-2 py-1 text-[10px] text-white disabled:opacity-50"
             >
               Create
             </button>
             <button
-              onClick={() => { setCreatingCategory(null); setNewCategoryName(""); }}
+              onClick={() => { setCreatingProduct(null); setNewProductName(""); }}
               className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-slate-700"
             >
               Cancel

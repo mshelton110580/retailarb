@@ -214,7 +214,7 @@ model received_units {
   unit_index         Int
   condition_status   String
   inventory_state    String @default("on_hand")  // on_hand, to_be_returned, parts_repair, returned, missing
-  category_id        String?
+  product_id         String?
   received_at        DateTime @default(now())
   scanned_by_user_id String
   notes              String?
@@ -222,7 +222,7 @@ model received_units {
   order              orders @relation(fields: [order_id], references: [order_id])
   order_item         order_items? @relation(fields: [order_item_id], references: [id])
   scanner            users @relation(fields: [scanned_by_user_id], references: [id])
-  category           item_categories? @relation(fields: [category_id], references: [id])
+  product            products? @relation(fields: [product_id], references: [id])
   images             unit_images[]
   upload_sessions    upload_sessions[]
   lot_units          lot_units[]
@@ -361,11 +361,11 @@ model condition_templates {
   created_at              DateTime @default(now())
 }
 
-model item_categories {
+model products {
   id                 String @id @default(cuid())
   gtin               String?  @unique
-  category_name      String   // Auto-generated from first matched item title
-  category_keywords  String[] // Keywords extracted from title for matching
+  product_name       String   // Auto-generated from first matched item title
+  product_keywords   String[] // Keywords extracted from title for matching
   created_at         DateTime @default(now())
   updated_at         DateTime @updatedAt
   received_units     received_units[]

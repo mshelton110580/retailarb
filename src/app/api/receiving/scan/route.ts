@@ -3,8 +3,8 @@ import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
 import { TargetType, TargetStatus } from "@prisma/client";
 import { z } from "zod";
-import { findOrCreateCategory, computeInventoryState } from "@/lib/item-categorization";
-import { extractProductAndLotInfo, getCachedCategories } from "@/lib/ai";
+import { findOrCreateProduct, computeInventoryState } from "@/lib/product-matching";
+import { extractProductAndLotInfo, getCachedProducts } from "@/lib/ai";
 import type { ProductInfo, LotItem } from "@/lib/ai";
 import { getValidAccessToken } from "@/lib/ebay/token";
 import { getItemByLegacyId } from "@/lib/ebay/browse";
@@ -181,11 +181,11 @@ export async function POST(req: Request) {
           shipment.order?.ebay_account_id ?? null
         );
 
-        // Get category names from cache so AI treats them as separate items in lots
-        const categoryCache = await getCachedCategories();
-        const categoryNames = Array.from(categoryCache.values()).map(info => info.canonicalName);
+        // Get product names from cache so AI treats them as separate items in lots
+        const productCache = await getCachedProducts();
+        const productNames = Array.from(productCache.values()).map(info => info.canonicalName);
 
-        const aiResult = await extractProductAndLotInfo(orderItems[0].title, orderQty, description, categoryNames);
+        const aiResult = await extractProductAndLotInfo(orderItems[0].title, orderQty, description, productNames);
         aiProductInfo = aiResult.product;
         if (aiResult.lot.isLot && aiResult.lot.confidence !== "low") {
           aiLotPrediction = {
@@ -590,10 +590,10 @@ export async function POST(req: Request) {
         });
       }
 
-      // Find or create category based on GTIN and title
+      // Find or create product based on GTIN and title
       // Reuse AI product info from lot detection if available (avoids duplicate API call)
-      const categoryResult = await findOrCreateCategory(listing.gtin, listing.title, aiProductInfo);
-      const categoryId = categoryResult.categoryId;
+      const productResult = await findOrCreateProduct(listing.gtin, listing.title, aiProductInfo);
+      const productId = productResult.productId;
 
       // Check if there's an existing return for this order/item
       const existingReturn = await prisma.returns.findFirst({
@@ -653,7 +653,7 @@ export async function POST(req: Request) {
           unit_index: newUnitIndex,
           condition_status: body.data.condition_status,
           inventory_state: inventoryState,
-          category_id: categoryId,
+          product_id: productId,
           scanned_by_user_id: auth.session.user.id,
           notes: body.data.notes ?? null
         }
@@ -694,12 +694,12 @@ export async function POST(req: Request) {
         isLot,
         aiLotPrediction,
         condition: body.data.condition_status,
-        categoryInfo: {
-          categoryId: categoryResult.categoryId,
-          confidence: categoryResult.confidence,
-          requiresManualSelection: categoryResult.requiresManualSelection,
-          reason: categoryResult.reason,
-          suggestedCategoryName: categoryResult.suggestedCategoryName
+        productInfo: {
+          productId: productResult.productId,
+          confidence: productResult.confidence,
+          requiresManualSelection: productResult.requiresManualSelection,
+          reason: productResult.reason,
+          suggestedProductName: productResult.suggestedProductName
         },
         item: {
           title: targetItem.title,

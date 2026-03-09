@@ -2,15 +2,15 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
 import { z } from "zod";
-import { onCategoryCreated } from "@/lib/ai";
+import { onProductCreated } from "@/lib/ai";
 
 const schema = z.object({
-  categoryName: z.string().min(1).max(60),
+  productName: z.string().min(1).max(60),
   gtin: z.string().nullable().optional()
 });
 
 /**
- * POST /api/categories/create - Create a new category manually
+ * POST /api/products/create - Create a new product manually
  */
 export async function POST(req: Request) {
   const auth = await requireRole(["ADMIN", "RECEIVER"]);
@@ -24,11 +24,11 @@ export async function POST(req: Request) {
   }
 
   try {
-    // Check if category with this name already exists
-    const existing = await prisma.item_categories.findFirst({
+    // Check if product with this name already exists
+    const existing = await prisma.products.findFirst({
       where: {
-        category_name: {
-          equals: body.data.categoryName,
+        product_name: {
+          equals: body.data.productName,
           mode: 'insensitive'
         }
       }
@@ -36,31 +36,31 @@ export async function POST(req: Request) {
 
     if (existing) {
       return NextResponse.json({
-        error: "Category with this name already exists",
-        existingCategory: existing
+        error: "Product with this name already exists",
+        existingProduct: existing
       }, { status: 409 });
     }
 
-    // Create the category
-    const category = await prisma.item_categories.create({
+    // Create the product
+    const product = await prisma.products.create({
       data: {
-        category_name: body.data.categoryName.trim(),
+        product_name: body.data.productName.trim(),
         gtin: body.data.gtin || null,
-        category_keywords: []
+        product_keywords: []
       }
     });
 
-    await onCategoryCreated(category.id, category.category_name);
+    await onProductCreated(product.id, product.product_name);
 
     return NextResponse.json({
       ok: true,
-      category
+      product
     });
 
   } catch (error: any) {
-    console.error("Failed to create category:", error);
+    console.error("Failed to create product:", error);
     return NextResponse.json(
-      { error: error.message ?? "Failed to create category" },
+      { error: error.message ?? "Failed to create product" },
       { status: 500 }
     );
   }

@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
-import { computeInventoryState } from "@/lib/item-categorization";
+import { computeInventoryState } from "@/lib/product-matching";
 
 /**
  * PATCH /api/units/:unitId
- * Update condition_status, notes, and/or category_id on a single unit.
- * Body: { condition?: string; notes?: string; categoryId?: string | null }
+ * Update condition_status, notes, and/or product_id on a single unit.
+ * Body: { condition?: string; notes?: string; productId?: string | null }
  */
 export async function PATCH(
   req: Request,
@@ -28,15 +28,27 @@ export async function PATCH(
   if (typeof body.notes === "string") {
     data.notes = body.notes.trim() || null;
   }
-  if ("categoryId" in body) {
-    if (body.categoryId === null) {
-      data.category_id = null;
-    } else if (typeof body.categoryId === "string" && body.categoryId.trim()) {
-      const cat = await prisma.item_categories.findUnique({ where: { id: body.categoryId } });
-      if (!cat) {
-        return NextResponse.json({ error: "Category not found" }, { status: 404 });
+  if ("productId" in body) {
+    if (body.productId === null) {
+      data.product_id = null;
+    } else if (typeof body.productId === "string" && body.productId.trim()) {
+      const prod = await prisma.products.findUnique({ where: { id: body.productId } });
+      if (!prod) {
+        return NextResponse.json({ error: "Product not found" }, { status: 404 });
       }
-      data.category_id = body.categoryId;
+      data.product_id = body.productId;
+    }
+  }
+  // Backward compatibility: also accept categoryId
+  if ("categoryId" in body && !("productId" in body)) {
+    if (body.categoryId === null) {
+      data.product_id = null;
+    } else if (typeof body.categoryId === "string" && body.categoryId.trim()) {
+      const prod = await prisma.products.findUnique({ where: { id: body.categoryId } });
+      if (!prod) {
+        return NextResponse.json({ error: "Product not found" }, { status: 404 });
+      }
+      data.product_id = body.categoryId;
     }
   }
 
@@ -97,7 +109,7 @@ export async function PATCH(
   const updated = await prisma.received_units.update({
     where: { id: unitId },
     data,
-    select: { id: true, condition_status: true, notes: true, category_id: true, inventory_state: true }
+    select: { id: true, condition_status: true, notes: true, product_id: true, inventory_state: true }
   });
 
   return NextResponse.json({ ok: true, unit: updated });

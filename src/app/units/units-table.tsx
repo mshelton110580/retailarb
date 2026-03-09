@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useBarcodeScanner } from "@/lib/use-barcode-scanner";
 
-type Category = { id: string; category_name: string };
+type Product = { id: string; product_name: string };
 
 type Unit = {
   id: string;
@@ -15,7 +15,7 @@ type Unit = {
   state: string;
   receivedAt: string;
   notes: string | null;
-  category: { id: string; name: string } | null;
+  product: { id: string; name: string } | null;
   title: string;
   trackingNumbers: string[];
   images: Array<{ id: string; url: string }>;
@@ -35,7 +35,7 @@ const ALL_COLUMNS = [
   { key: "title",    label: "Title",     sortable: true,  defaultWidth: 260 },
   { key: "order",    label: "Order",     sortable: false, defaultWidth: 140 },
   { key: "tracking", label: "Tracking",  sortable: false, defaultWidth: 220 },
-  { key: "category", label: "Category",  sortable: true,  defaultWidth: 140 },
+  { key: "product",  label: "Product",  sortable: true,  defaultWidth: 140 },
   { key: "condition",label: "Condition", sortable: true,  defaultWidth: 150 },
   { key: "state",    label: "State",     sortable: true,  defaultWidth: 110 },
   { key: "received", label: "Received",  sortable: true,  defaultWidth: 100 },
@@ -200,21 +200,21 @@ function ConditionCell({
   );
 }
 
-// ─── Inline Category Cell ────────────────────────────────────────────────────
+// ─── Inline Product Cell ─────────────────────────────────────────────────────
 
-function CategoryCell({
+function ProductCell({
   unit,
-  categories,
+  products,
   onUpdated,
-  onCategoryCreated,
+  onProductCreated,
 }: {
   unit: Unit;
-  categories: Category[];
-  onUpdated: (unitId: string, category: { id: string; name: string } | null) => void;
-  onCategoryCreated: (cat: Category) => void;
+  products: Product[];
+  onUpdated: (unitId: string, product: { id: string; name: string } | null) => void;
+  onProductCreated: (cat: Product) => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(unit.category);
+  const [value, setValue] = useState(unit.product);
   const [saving, setSaving] = useState(false);
   const [newInput, setNewInput] = useState("");
   const [creating, setCreating] = useState(false);
@@ -248,16 +248,16 @@ function CategoryCell({
     setEditing(true);
   }
 
-  async function save(categoryId: string | null) {
-    const newCat = categoryId ? categories.find(c => c.id === categoryId) ?? null : null;
-    const newValue = newCat ? { id: newCat.id, name: newCat.category_name } : null;
-    if (categoryId === (value?.id ?? null)) { setEditing(false); return; }
+  async function save(productId: string | null) {
+    const newCat = productId ? products.find(c => c.id === productId) ?? null : null;
+    const newValue = newCat ? { id: newCat.id, name: newCat.product_name } : null;
+    if (productId === (value?.id ?? null)) { setEditing(false); return; }
     setSaving(true);
     try {
       const res = await fetch(`/api/units/${unit.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ categoryId })
+        body: JSON.stringify({ productId })
       });
       if (res.ok) { setValue(newValue); onUpdated(unit.id, newValue); }
     } finally { setSaving(false); setEditing(false); }
@@ -268,25 +268,25 @@ function CategoryCell({
     if (!trimmed) return;
     setCreating(true);
     try {
-      const res = await fetch("/api/categories", {
+      const res = await fetch("/api/products", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: trimmed })
       });
       const data = await res.json();
       if (res.ok || res.status === 409) {
-        const cat: Category = data.category;
-        onCategoryCreated(cat);
+        const cat: Product = data.product;
+        onProductCreated(cat);
         await save(cat.id);
         setNewInput("");
       }
     } finally { setCreating(false); }
   }
 
-  const filteredCategories = newInput.trim()
-    ? categories.filter(c => c.category_name.toLowerCase().includes(newInput.trim().toLowerCase()))
-    : categories;
-  const isExactCatMatch = categories.some(c => c.category_name.toLowerCase() === newInput.trim().toLowerCase());
+  const filteredProducts = newInput.trim()
+    ? products.filter(c => c.product_name.toLowerCase().includes(newInput.trim().toLowerCase()))
+    : products;
+  const isExactCatMatch = products.some(c => c.product_name.toLowerCase() === newInput.trim().toLowerCase());
 
   const dropdown = editing && dropPos ? createPortal(
     <div
@@ -301,13 +301,13 @@ function CategoryCell({
         onChange={e => setNewInput(e.target.value)}
         onKeyDown={e => {
           if (e.key === "Enter") {
-            if (filteredCategories.length === 1 && !newInput.trim()) save(filteredCategories[0].id);
+            if (filteredProducts.length === 1 && !newInput.trim()) save(filteredProducts[0].id);
             else if (newInput.trim() && !isExactCatMatch) createNew();
-            else if (filteredCategories.length === 1) save(filteredCategories[0].id);
+            else if (filteredProducts.length === 1) save(filteredProducts[0].id);
           }
           if (e.key === "Escape") { setEditing(false); setNewInput(""); }
         }}
-        placeholder="Search or add category…"
+        placeholder="Search or add product…"
         className="w-full rounded border border-slate-600 bg-slate-800 px-2 py-1.5 text-xs text-slate-200 placeholder-slate-500"
         autoFocus
       />
@@ -317,15 +317,15 @@ function CategoryCell({
             className={`w-full text-left text-xs px-2 py-1 rounded italic transition-colors ${
               !value ? "bg-blue-700 text-white" : "text-slate-500 hover:bg-slate-700"
             }`}>
-            Uncategorized
+            Unassigned
           </button>
         )}
-        {filteredCategories.map(c => (
+        {filteredProducts.map(c => (
           <button key={c.id} disabled={saving || creating} onClick={() => save(c.id)}
             className={`w-full text-left text-xs px-2 py-1 rounded transition-colors ${
               c.id === value?.id ? "bg-blue-700 text-white" : "text-slate-300 hover:bg-slate-700"
             }`}>
-            {c.category_name}
+            {c.product_name}
           </button>
         ))}
         {newInput.trim() && !isExactCatMatch && (
@@ -347,9 +347,9 @@ function CategoryCell({
           value ? "text-slate-300 hover:text-slate-100" : "text-slate-600 italic hover:text-slate-400"
         }`}
         onClick={openDropdown}
-        title="Click to change category"
+        title="Click to change product"
       >
-        {value ? value.name : "Uncategorized"}
+        {value ? value.name : "Unassigned"}
         {saving && <span className="ml-1 text-slate-500">…</span>}
       </span>
       {dropdown}
@@ -417,14 +417,14 @@ function NotesCell({
   );
 }
 
-// ─── New Category Modal ───────────────────────────────────────────────────────
+// ─── New Product Modal ────────────────────────────────────────────────────────
 
-function NewCategoryModal({
+function NewProductModal({
   onClose,
   onCreated,
 }: {
   onClose: () => void;
-  onCreated: (cat: Category) => void;
+  onCreated: (cat: Product) => void;
 }) {
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
@@ -436,20 +436,20 @@ function NewCategoryModal({
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch("/api/categories", {
+      const res = await fetch("/api/products", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: trimmed })
       });
       const data = await res.json();
       if (res.ok) {
-        onCreated({ id: data.category.id, category_name: data.category.category_name });
+        onCreated({ id: data.product.id, product_name: data.product.product_name });
         onClose();
       } else if (res.status === 409) {
-        onCreated({ id: data.category.id, category_name: data.category.category_name });
+        onCreated({ id: data.product.id, product_name: data.product.product_name });
         onClose();
       } else {
-        setError(data.error ?? "Failed to create category");
+        setError(data.error ?? "Failed to create product");
       }
     } catch {
       setError("Network error");
@@ -461,10 +461,10 @@ function NewCategoryModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
       <div className="w-80 rounded-lg border border-slate-700 bg-slate-900 p-5 shadow-2xl" onClick={e => e.stopPropagation()}>
-        <h3 className="text-sm font-semibold text-slate-200 mb-3">New Category</h3>
+        <h3 className="text-sm font-semibold text-slate-200 mb-3">New Product</h3>
         <input type="text" value={name} onChange={e => setName(e.target.value)}
           onKeyDown={e => { if (e.key === "Enter") submit(); if (e.key === "Escape") onClose(); }}
-          placeholder="Category name…" autoFocus
+          placeholder="Product name…" autoFocus
           className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 placeholder-slate-600 mb-3" />
         {error && <p className="text-xs text-red-400 mb-2">{error}</p>}
         <div className="flex justify-end gap-2">
@@ -484,11 +484,11 @@ function NewCategoryModal({
 
 // ─── Main Table Component ─────────────────────────────────────────────────────
 
-export default function UnitsTable({ categories: initialCategories }: { categories: Category[] }) {
+export default function UnitsTable({ products: initialProducts }: { products: Product[] }) {
   const [search, setSearch] = useState("");
   const [filterStates, setFilterStates] = useState<string[]>([]);
   const [filterConditions, setFilterConditions] = useState<string[]>([]);
-  const [filterCategoryId, setFilterCategoryId] = useState("");
+  const [filterProductId, setFilterProductId] = useState("");
   const [sortBy, setSortBy] = useState("receivedAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
@@ -498,8 +498,8 @@ export default function UnitsTable({ categories: initialCategories }: { categori
   const [offset, setOffset] = useState(0);
   const LIMIT = 100;
 
-  const [categories, setCategories] = useState<Category[]>(initialCategories);
-  const [showNewCategoryModal, setShowNewCategoryModal] = useState(false);
+  const [productList, setProductList] = useState<Product[]>(initialProducts);
+  const [showNewProductModal, setShowNewProductModal] = useState(false);
   const [conditions, setConditions] = useState<string[]>(BUILTIN_CONDITIONS);
 
   // Fetch conditions from database on mount
@@ -513,14 +513,14 @@ export default function UnitsTable({ categories: initialCategories }: { categori
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkPanel, setBulkPanel] = useState(false);
   const [bulkCondition, setBulkCondition] = useState("");
-  const [bulkCategoryId, setBulkCategoryId] = useState("__unchanged__");
+  const [bulkProductId, setBulkProductId] = useState("__unchanged__");
   const [bulkLoading, setBulkLoading] = useState(false);
   const [bulkMessage, setBulkMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [newBulkConditionInput, setNewBulkConditionInput] = useState("");
-  const [newBulkCategoryInput, setNewBulkCategoryInput] = useState("");
-  const [creatingBulkCategory, setCreatingBulkCategory] = useState(false);
+  const [newBulkProductInput, setNewBulkProductInput] = useState("");
+  const [creatingBulkProduct, setCreatingBulkProduct] = useState(false);
   const [bulkConditionSearch, setBulkConditionSearch] = useState("");
-  const [bulkCategorySearch, setBulkCategorySearch] = useState("");
+  const [bulkProductSearch, setBulkProductSearch] = useState("");
 
   const [colWidths, setColWidths] = useState<Record<ColKey, number>>(
     () => Object.fromEntries(ALL_COLUMNS.map(c => [c.key, c.defaultWidth])) as Record<ColKey, number>
@@ -593,7 +593,7 @@ export default function UnitsTable({ categories: initialCategories }: { categori
     if (search) params.set("search", search);
     if (filterStates.length) params.set("state", filterStates.join(","));
     if (filterConditions.length) params.set("condition", filterConditions.join(","));
-    if (filterCategoryId) params.set("categoryId", filterCategoryId);
+    if (filterProductId) params.set("productId", filterProductId);
     params.set("sortBy", sortBy);
     params.set("sortDir", sortDir);
     params.set("limit", String(LIMIT));
@@ -604,10 +604,10 @@ export default function UnitsTable({ categories: initialCategories }: { categori
       setUnits(data.units ?? []);
       setTotal(data.total ?? 0);
     } finally { setLoading(false); }
-  }, [search, filterStates, filterConditions, filterCategoryId, sortBy, sortDir, offset]);
+  }, [search, filterStates, filterConditions, filterProductId, sortBy, sortDir, offset]);
 
   useEffect(() => { fetchUnits(true); }, // eslint-disable-next-line react-hooks/exhaustive-deps
-  [search, filterStates, filterConditions, filterCategoryId, sortBy, sortDir]);
+  [search, filterStates, filterConditions, filterProductId, sortBy, sortDir]);
 
   useEffect(() => { if (offset > 0) fetchUnits(false); }, // eslint-disable-next-line react-hooks/exhaustive-deps
   [offset]);
@@ -645,14 +645,14 @@ export default function UnitsTable({ categories: initialCategories }: { categori
     setUnits(prev => prev.map(u => u.id === unitId ? { ...u, notes } : u));
   }
 
-  function handleCategoryUpdated(unitId: string, category: { id: string; name: string } | null) {
-    setUnits(prev => prev.map(u => u.id === unitId ? { ...u, category } : u));
+  function handleProductUpdated(unitId: string, product: { id: string; name: string } | null) {
+    setUnits(prev => prev.map(u => u.id === unitId ? { ...u, product } : u));
   }
 
-  function handleNewCategoryCreated(cat: Category) {
-    setCategories(prev => {
+  function handleNewProductCreated(cat: Product) {
+    setProductList(prev => {
       if (prev.some(c => c.id === cat.id)) return prev;
-      return [...prev, cat].sort((a, b) => a.category_name.localeCompare(b.category_name));
+      return [...prev, cat].sort((a, b) => a.product_name.localeCompare(b.product_name));
     });
   }
 
@@ -667,31 +667,31 @@ export default function UnitsTable({ categories: initialCategories }: { categori
     setNewBulkConditionInput("");
   }
 
-  async function addNewBulkCategory() {
-    const trimmed = newBulkCategoryInput.trim();
+  async function addNewBulkProduct() {
+    const trimmed = newBulkProductInput.trim();
     if (!trimmed) return;
-    setCreatingBulkCategory(true);
+    setCreatingBulkProduct(true);
     try {
-      const res = await fetch("/api/categories", {
+      const res = await fetch("/api/products", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: trimmed })
       });
       const data = await res.json();
       if (res.ok || res.status === 409) {
-        const cat: Category = data.category;
-        handleNewCategoryCreated(cat);
-        setBulkCategoryId(cat.id);
-        setNewBulkCategoryInput("");
+        const cat: Product = data.product;
+        handleNewProductCreated(cat);
+        setBulkProductId(cat.id);
+        setNewBulkProductInput("");
       }
-    } finally { setCreatingBulkCategory(false); }
+    } finally { setCreatingBulkProduct(false); }
   }
 
   async function applyBulkEdit() {
     if (selected.size === 0) return;
     const updates: Record<string, any> = {};
     if (bulkCondition) updates.condition = bulkCondition;
-    if (bulkCategoryId !== "__unchanged__") updates.categoryId = bulkCategoryId === "__none__" ? null : bulkCategoryId;
+    if (bulkProductId !== "__unchanged__") updates.productId = bulkProductId === "__none__" ? null : bulkProductId;
     if (Object.keys(updates).length === 0) { setBulkMessage({ type: "error", text: "No changes selected." }); return; }
     setBulkLoading(true); setBulkMessage(null);
     try {
@@ -703,7 +703,7 @@ export default function UnitsTable({ categories: initialCategories }: { categori
       const data = await res.json();
       if (res.ok) {
         setBulkMessage({ type: "success", text: `Updated ${data.updated} unit(s).` });
-        setSelected(new Set()); setBulkCondition(""); setBulkCategoryId("__unchanged__"); setNewBulkConditionInput(""); setNewBulkCategoryInput(""); setBulkConditionSearch(""); setBulkCategorySearch("");
+        setSelected(new Set()); setBulkCondition(""); setBulkProductId("__unchanged__"); setNewBulkConditionInput(""); setNewBulkProductInput(""); setBulkConditionSearch(""); setBulkProductSearch("");
         fetchUnits(true);
       } else {
         setBulkMessage({ type: "error", text: data.error ?? "Update failed." });
@@ -718,7 +718,7 @@ export default function UnitsTable({ categories: initialCategories }: { categori
   };
 
   const colSortKey: Partial<Record<ColKey, string>> = {
-    title: "title", category: "category", condition: "condition", state: "state", received: "receivedAt",
+    title: "title", product: "product", condition: "condition", state: "state", received: "receivedAt",
   };
 
   function renderCell(col: ColKey, unit: Unit) {
@@ -748,13 +748,13 @@ export default function UnitsTable({ categories: initialCategories }: { categori
             )}
           </div>
         ) : <span className="text-xs text-slate-600">—</span>;
-      case "category":
+      case "product":
         return (
-          <CategoryCell
+          <ProductCell
             unit={unit}
-            categories={categories}
-            onUpdated={handleCategoryUpdated}
-            onCategoryCreated={handleNewCategoryCreated}
+            products={productList}
+            onUpdated={handleProductUpdated}
+            onProductCreated={handleNewProductCreated}
           />
         );
       case "condition":
@@ -787,8 +787,8 @@ export default function UnitsTable({ categories: initialCategories }: { categori
 
   return (
     <div className="space-y-4">
-      {showNewCategoryModal && (
-        <NewCategoryModal onClose={() => setShowNewCategoryModal(false)} onCreated={handleNewCategoryCreated} />
+      {showNewProductModal && (
+        <NewProductModal onClose={() => setShowNewProductModal(false)} onCreated={handleNewProductCreated} />
       )}
 
       {/* Filters */}
@@ -802,15 +802,15 @@ export default function UnitsTable({ categories: initialCategories }: { categori
           </div>
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="text-xs text-slate-400">Category</label>
-              <button onClick={() => setShowNewCategoryModal(true)}
+              <label className="text-xs text-slate-400">Product</label>
+              <button onClick={() => setShowNewProductModal(true)}
                 className="text-xs text-blue-400 hover:text-blue-300">+ New</button>
             </div>
-            <select value={filterCategoryId} onChange={e => setFilterCategoryId(e.target.value)}
+            <select value={filterProductId} onChange={e => setFilterProductId(e.target.value)}
               className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300">
-              <option value="">All categories</option>
-              <option value="none">Uncategorized</option>
-              {categories.map(c => <option key={c.id} value={c.id}>{c.category_name}</option>)}
+              <option value="">All products</option>
+              <option value="none">Unassigned</option>
+              {productList.map(c => <option key={c.id} value={c.id}>{c.product_name}</option>)}
             </select>
           </div>
         </div>
@@ -936,43 +936,43 @@ export default function UnitsTable({ categories: initialCategories }: { categori
                   </div>
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-400 mb-1">Set Category</label>
-                  <input type="text" value={bulkCategorySearch}
-                    onChange={e => setBulkCategorySearch(e.target.value)}
-                    placeholder="Search categories…"
+                  <label className="block text-xs text-slate-400 mb-1">Set Product</label>
+                  <input type="text" value={bulkProductSearch}
+                    onChange={e => setBulkProductSearch(e.target.value)}
+                    placeholder="Search products…"
                     className="w-full rounded border border-slate-600 bg-slate-800 px-2 py-1.5 text-xs text-slate-200 placeholder-slate-500 mb-1" />
                   <div className="max-h-32 overflow-y-auto rounded border border-slate-700 bg-slate-950 mb-2 space-y-0.5 p-1">
-                    {!bulkCategorySearch.trim() && (
+                    {!bulkProductSearch.trim() && (
                       <>
-                        <button onClick={() => { setBulkCategoryId("__unchanged__"); setBulkCategorySearch(""); }}
-                          className={`w-full text-left text-xs px-2 py-1 rounded transition-colors ${bulkCategoryId === "__unchanged__" ? "bg-blue-700 text-white" : "text-slate-500 hover:bg-slate-800 italic"}`}>
+                        <button onClick={() => { setBulkProductId("__unchanged__"); setBulkProductSearch(""); }}
+                          className={`w-full text-left text-xs px-2 py-1 rounded transition-colors ${bulkProductId === "__unchanged__" ? "bg-blue-700 text-white" : "text-slate-500 hover:bg-slate-800 italic"}`}>
                           — no change —
                         </button>
-                        <button onClick={() => { setBulkCategoryId("__none__"); setBulkCategorySearch(""); }}
-                          className={`w-full text-left text-xs px-2 py-1 rounded transition-colors ${bulkCategoryId === "__none__" ? "bg-blue-700 text-white" : "text-slate-500 hover:bg-slate-800 italic"}`}>
-                          Remove category
+                        <button onClick={() => { setBulkProductId("__none__"); setBulkProductSearch(""); }}
+                          className={`w-full text-left text-xs px-2 py-1 rounded transition-colors ${bulkProductId === "__none__" ? "bg-blue-700 text-white" : "text-slate-500 hover:bg-slate-800 italic"}`}>
+                          Remove product
                         </button>
                       </>
                     )}
-                    {categories
-                      .filter(c => !bulkCategorySearch.trim() || c.category_name.toLowerCase().includes(bulkCategorySearch.toLowerCase()))
+                    {productList
+                      .filter(c => !bulkProductSearch.trim() || c.product_name.toLowerCase().includes(bulkProductSearch.toLowerCase()))
                       .map(c => (
-                        <button key={c.id} onClick={() => { setBulkCategoryId(c.id); setBulkCategorySearch(""); }}
-                          className={`w-full text-left text-xs px-2 py-1 rounded transition-colors ${bulkCategoryId === c.id ? "bg-blue-700 text-white" : "text-slate-300 hover:bg-slate-800"}`}>
-                          {c.category_name}
+                        <button key={c.id} onClick={() => { setBulkProductId(c.id); setBulkProductSearch(""); }}
+                          className={`w-full text-left text-xs px-2 py-1 rounded transition-colors ${bulkProductId === c.id ? "bg-blue-700 text-white" : "text-slate-300 hover:bg-slate-800"}`}>
+                          {c.product_name}
                         </button>
                       ))
                     }
                   </div>
                   <div className="flex gap-1.5">
-                    <input type="text" value={newBulkCategoryInput}
-                      onChange={e => setNewBulkCategoryInput(e.target.value)}
-                      onKeyDown={e => { if (e.key === "Enter") addNewBulkCategory(); }}
-                      placeholder="New category…"
+                    <input type="text" value={newBulkProductInput}
+                      onChange={e => setNewBulkProductInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter") addNewBulkProduct(); }}
+                      placeholder="New product…"
                       className="flex-1 rounded border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-slate-200 placeholder-slate-600" />
-                    <button onClick={addNewBulkCategory} disabled={creatingBulkCategory || !newBulkCategoryInput.trim()}
+                    <button onClick={addNewBulkProduct} disabled={creatingBulkProduct || !newBulkProductInput.trim()}
                       className="rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700 disabled:opacity-40">
-                      {creatingBulkCategory ? "…" : "Add"}
+                      {creatingBulkProduct ? "…" : "Add"}
                     </button>
                   </div>
                 </div>

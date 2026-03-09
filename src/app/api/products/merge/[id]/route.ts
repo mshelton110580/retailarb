@@ -3,7 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
 
 /**
- * DELETE /api/categories/merge/[id] - Delete a category merge mapping
+ * DELETE /api/products/merge/[id] - Delete a product alias mapping
  */
 export async function DELETE(
   req: Request,
@@ -16,7 +16,7 @@ export async function DELETE(
 
   try {
     await prisma.$executeRawUnsafe(
-      `DELETE FROM category_merges WHERE id = $1`,
+      `DELETE FROM product_aliases WHERE id = $1`,
       params.id
     );
 

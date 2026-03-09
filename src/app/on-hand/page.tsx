@@ -4,7 +4,7 @@ import Link from "next/link";
 import ProductRow from "./product-row";
 
 type ProductStats = {
-  categoryId: string;
+  productId: string;
   productName: string;
   gtin: string | null;
   onHand: number;
@@ -35,7 +35,7 @@ export default async function OnHandPage() {
   // Fetch all received units with their categories and order item prices
   const units = await prisma.received_units.findMany({
     where: {
-      category_id: { not: null }
+      product_id: { not: null }
     },
     select: {
       id: true,
@@ -47,7 +47,7 @@ export default async function OnHandPage() {
       inventory_state: true,
       received_at: true,
       notes: true,
-      category: true,
+      product: true,
       order_item: {
         select: {
           id: true,
@@ -219,15 +219,15 @@ export default async function OnHandPage() {
     }
   }
 
-  // Group by product name (not category_id) to combine duplicate products
+  // Group by product name (not product_id) to combine duplicate products
   const productMap = new Map<string, ProductStats>();
   const productUnits = new Map<string, UnitDetail[]>();
 
   for (const unit of units) {
-    if (!unit.category) continue;
+    if (!unit.product) continue;
 
     // Group by name (case-insensitive) to combine "TI-83 Plus" with "TI-83 PLUS"
-    const productKey = unit.category.category_name.toLowerCase();
+    const productKey = unit.product.product_name.toLowerCase();
 
     // Calculate per-unit cost with smart refund distribution
     let itemCost = 0;
@@ -342,9 +342,9 @@ export default async function OnHandPage() {
 
     if (!productMap.has(productKey)) {
       productMap.set(productKey, {
-        categoryId: unit.category.id, // Keep first category ID for reference
-        productName: unit.category.category_name,
-        gtin: unit.category.gtin, // Keep first GTIN found (may be null)
+        productId: unit.product.id, // Keep first product ID for reference
+        productName: unit.product.product_name,
+        gtin: unit.product.gtin, // Keep first GTIN found (may be null)
         onHand: 0,
         toBeReturned: 0,
         partsRepair: 0,

@@ -729,7 +729,7 @@ export default async function InventoryPage({
           ) : (
           <div className="space-y-2 text-sm text-slate-300">
             {filteredItems.length === 0 ? (
-              <p>No items in this category.</p>
+              <p>No items in this filter.</p>
             ) : (
               filteredItems.map((shipment) => {
                 const orderUnits = unitsByOrderId.get(shipment.order_id) ?? [];

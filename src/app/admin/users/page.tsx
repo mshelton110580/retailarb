@@ -17,8 +17,8 @@ export default async function AdminUsersPage() {
   return (
     <div className="space-y-6">
       <PageHeader title="User Management">
-        <Link href="/admin/categories" className="rounded border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800">
-          Categories
+        <Link href="/admin/products" className="rounded border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800">
+          Products
         </Link>
       </PageHeader>
       <UserManagement initialUsers={serialized} />

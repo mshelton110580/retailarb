@@ -3,8 +3,8 @@ import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
 
 /**
- * GET /api/categories/units?categoryId=xxx
- * Returns units for a given category with title and order info
+ * GET /api/products/units?productId=xxx
+ * Returns units for a given product with title and order info
  */
 export async function GET(req: Request) {
   const auth = await requireRole(["ADMIN"]);
@@ -13,14 +13,14 @@ export async function GET(req: Request) {
   }
 
   const { searchParams } = new URL(req.url);
-  const categoryId = searchParams.get("categoryId");
+  const productId = searchParams.get("productId");
 
-  if (!categoryId) {
-    return NextResponse.json({ error: "categoryId required" }, { status: 400 });
+  if (!productId) {
+    return NextResponse.json({ error: "productId required" }, { status: 400 });
   }
 
   const units = await prisma.received_units.findMany({
-    where: { category_id: categoryId },
+    where: { product_id: productId },
     select: {
       id: true,
       unit_index: true,

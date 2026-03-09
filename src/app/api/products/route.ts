@@ -1,0 +1,95 @@
+import { NextResponse } from "next/server";
+import { requireRole } from "@/lib/rbac";
+import { prisma } from "@/lib/db";
+import { z } from "zod";
+import { onProductCreated } from "@/lib/ai";
+
+/**
+ * GET /api/products - List all products (deduplicated)
+ */
+export async function GET() {
+  const auth = await requireRole(["ADMIN", "RECEIVER"]);
+  if (!auth.ok) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+  }
+
+  const allProducts = await prisma.products.findMany({
+    select: {
+      id: true,
+      product_name: true,
+      gtin: true,
+      product_keywords: true
+    },
+    orderBy: {
+      product_name: 'asc'
+    }
+  });
+
+  // Deduplicate by product_name (case-insensitive)
+  // Keep the first occurrence of each unique name
+  const seen = new Map<string, typeof allProducts[0]>();
+  for (const cat of allProducts) {
+    const normalized = cat.product_name.toLowerCase().trim();
+    if (!seen.has(normalized)) {
+      seen.set(normalized, cat);
+    }
+  }
+
+  const products = Array.from(seen.values()).sort((a, b) =>
+    a.product_name.localeCompare(b.product_name)
+  );
+
+  return NextResponse.json({ products });
+}
+
+const createSchema = z.object({
+  name: z.string().min(1, "Product name is required")
+});
+
+/**
+ * POST /api/products - Create a new product
+ */
+export async function POST(req: Request) {
+  const auth = await requireRole(["ADMIN", "RECEIVER"]);
+  if (!auth.ok || !auth.session?.user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+  }
+
+  const body = createSchema.safeParse(await req.json());
+  if (!body.success) {
+    return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+  }
+
+  try {
+    // Check if product already exists (case-insensitive)
+    const existing = await prisma.$queryRawUnsafe<Array<{ id: string; product_name: string }>>(
+      `SELECT id, product_name FROM products WHERE LOWER(TRIM(product_name)) = $1 LIMIT 1`,
+      body.data.name.toLowerCase().trim()
+    );
+
+    if (existing && existing.length > 0) {
+      return NextResponse.json(
+        { error: `Product "${existing[0].product_name}" already exists`, product: existing[0] },
+        { status: 409 }
+      );
+    }
+
+    // Create new product
+    const product = await prisma.products.create({
+      data: {
+        product_name: body.data.name,
+        gtin: null
+      }
+    });
+
+    await onProductCreated(product.id, product.product_name);
+
+    return NextResponse.json({ product, message: `Product "${product.product_name}" created successfully` });
+  } catch (error: any) {
+    console.error("Failed to create product:", error);
+    return NextResponse.json(
+      { error: error.message ?? "Failed to create product" },
+      { status: 500 }
+    );
+  }
+}

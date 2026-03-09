@@ -22,28 +22,28 @@ const CONDITIONS = [
 
 const GOOD_CONDITIONS = new Set(["good", "new", "like_new", "acceptable", "excellent"]);
 
-type Category = { id: string; category_name: string };
+type Product = { id: string; product_name: string };
 
 type ScanResult = {
   unitIndex: number;
   unitId: string;
   scanStatus: string;
   isLot: boolean;
-  categoryInfo: {
-    categoryId: string | null;
+  productInfo: {
+    productId: string | null;
     confidence: "high" | "medium" | "low";
     requiresManualSelection: boolean;
     reason?: string;
-    suggestedCategoryName?: string;
+    suggestedProductName?: string;
   };
   item: { title: string; itemId: string; qty: number };
 };
 
-// Show the category step when manual selection is required OR when the category
+// Show the product step when manual selection is required OR when the product
 // was auto-assigned but confidence is not high (let user confirm or correct it).
-function needsCategoryStep(categoryInfo: ScanResult["categoryInfo"]): boolean {
-  if (categoryInfo.requiresManualSelection) return true;
-  if (categoryInfo.categoryId && categoryInfo.confidence !== "high") return true;
+function needsProductStep(productInfo: ScanResult["productInfo"]): boolean {
+  if (productInfo.requiresManualSelection) return true;
+  if (productInfo.productId && productInfo.confidence !== "high") return true;
   return false;
 }
 
@@ -59,7 +59,7 @@ type Props = {
   onSuccess: () => void;
 };
 
-type Step = "form" | "scanning" | "unit_form" | "photos" | "category" | "done";
+type Step = "form" | "scanning" | "unit_form" | "photos" | "product" | "done";
 
 export default function CheckInModal({
   orderId, trackingNumber, itemTitle, totalQty, alreadyScanned, onClose, onSuccess,
@@ -72,7 +72,7 @@ export default function CheckInModal({
   const [perUnit, setPerUnit] = useState(false); // step through each unit individually
   const [isLotMode, setIsLotMode] = useState(false);
   const [lotCount, setLotCount] = useState(totalQty > 1 ? totalQty : 2);
-  const [lotPerUnitCategory, setLotPerUnitCategory] = useState(false);
+  const [lotPerUnitProduct, setLotPerUnitProduct] = useState(false);
 
   // Progress state (used in scanning / per-unit modes)
   const [currentUnit, setCurrentUnit] = useState(alreadyScanned + 1); // 1-based index of unit being scanned
@@ -89,42 +89,42 @@ export default function CheckInModal({
   const [photoQueue, setPhotoQueue] = useState<Array<{ unitId: string; unitIndex: number; title: string }>>([]);
   const [photoQueueIndex, setPhotoQueueIndex] = useState(0);
 
-  // Category step
-  const [pendingCategory, setPendingCategory] = useState<{
+  // Product step
+  const [pendingProduct, setPendingProduct] = useState<{
     unitId: string; unitIndex: number; title: string;
-    reason: string; suggestedCategoryName?: string;
-    assignedCategoryId: string | null; // already-auto-assigned id (for confirm/change flow)
-    afterCategory: () => void; // what to do after category is resolved
+    reason: string; suggestedProductName?: string;
+    assignedProductId: string | null; // already-auto-assigned id (for confirm/change flow)
+    afterProduct: () => void; // what to do after product is resolved
   } | null>(null);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [editedCategoryName, setEditedCategoryName] = useState("");
+  const [productOptions, setProductOptions] = useState<Product[]>([]);
+  const [editedProductName, setEditedProductName] = useState("");
   const [createMerge, setCreateMerge] = useState(true);
-  const [selectedCategoryId, setSelectedCategoryId] = useState("");
-  const [categoryLoading, setCategoryLoading] = useState(false);
+  const [selectedProductId, setSelectedProductId] = useState("");
+  const [productLoading, setProductLoading] = useState(false);
 
-  const loadCategories = useCallback(async () => {
-    setCategoryLoading(true);
+  const loadProducts = useCallback(async () => {
+    setProductLoading(true);
     try {
-      const res = await fetch("/api/categories");
-      if (res.ok) setCategories((await res.json()).categories ?? []);
-    } finally { setCategoryLoading(false); }
+      const res = await fetch("/api/products");
+      if (res.ok) setProductOptions((await res.json()).products ?? []);
+    } finally { setProductLoading(false); }
   }, []);
 
-  // Helper: open the category step and return a promise that resolves when user acts.
-  function pauseForCategory(result: ScanResult): Promise<void> {
+  // Helper: open the product step and return a promise that resolves when user acts.
+  function pauseForProduct(result: ScanResult): Promise<void> {
     return new Promise<void>(resolve => {
-      setPendingCategory({
+      setPendingProduct({
         unitId: result.unitId, unitIndex: result.unitIndex, title: result.item.title,
-        reason: result.categoryInfo.reason ?? "Manual selection required",
-        suggestedCategoryName: result.categoryInfo.suggestedCategoryName,
-        assignedCategoryId: result.categoryInfo.categoryId,
-        afterCategory: resolve,
+        reason: result.productInfo.reason ?? "Manual selection required",
+        suggestedProductName: result.productInfo.suggestedProductName,
+        assignedProductId: result.productInfo.productId,
+        afterProduct: resolve,
       });
-      setEditedCategoryName(result.categoryInfo.suggestedCategoryName ?? "");
+      setEditedProductName(result.productInfo.suggestedProductName ?? "");
       setCreateMerge(true);
-      setSelectedCategoryId(result.categoryInfo.categoryId ?? "");
-      loadCategories();
-      setStep("category");
+      setSelectedProductId(result.productInfo.productId ?? "");
+      loadProducts();
+      setStep("product");
     });
   }
 
@@ -164,14 +164,14 @@ export default function CheckInModal({
       setScannedSoFar(i + 1);
       if (result.isLot) lotDetected = true;
 
-      // Show category step when: manual selection required, low/medium confidence auto-assign,
-      // or lot with per-unit category mode enabled.
-      const showCategory =
-        needsCategoryStep(result.categoryInfo) ||
-        (result.isLot && lotPerUnitCategory);
+      // Show product step when: manual selection required, low/medium confidence auto-assign,
+      // or lot with per-unit product mode enabled.
+      const showProduct =
+        needsProductStep(result.productInfo) ||
+        (result.isLot && lotPerUnitProduct);
 
-      if (showCategory) {
-        await pauseForCategory(result);
+      if (showProduct) {
+        await pauseForProduct(result);
         setStep("scanning");
       }
 
@@ -234,8 +234,8 @@ export default function CheckInModal({
       }
     };
 
-    if (needsCategoryStep(result.categoryInfo)) {
-      // After category is resolved, go to photos or next unit
+    if (needsProductStep(result.productInfo)) {
+      // After product is resolved, go to photos or next unit
       const afterCat = isBad
         ? () => {
             setPhotoQueue([{ unitId: result.unitId, unitIndex: result.unitIndex, title: result.item.title }]);
@@ -243,18 +243,18 @@ export default function CheckInModal({
             setStep("photos");
           }
         : afterThis;
-      setPendingCategory({
+      setPendingProduct({
         unitId: result.unitId, unitIndex: result.unitIndex, title: result.item.title,
-        reason: result.categoryInfo.reason ?? "Manual selection required",
-        suggestedCategoryName: result.categoryInfo.suggestedCategoryName,
-        assignedCategoryId: result.categoryInfo.categoryId,
-        afterCategory: afterCat,
+        reason: result.productInfo.reason ?? "Manual selection required",
+        suggestedProductName: result.productInfo.suggestedProductName,
+        assignedProductId: result.productInfo.productId,
+        afterProduct: afterCat,
       });
-      setEditedCategoryName(result.categoryInfo.suggestedCategoryName ?? "");
+      setEditedProductName(result.productInfo.suggestedProductName ?? "");
       setCreateMerge(true);
-      setSelectedCategoryId(result.categoryInfo.categoryId ?? "");
-      loadCategories();
-      setStep("category");
+      setSelectedProductId(result.productInfo.productId ?? "");
+      loadProducts();
+      setStep("product");
     } else if (isBad) {
       setPhotoQueue([{ unitId: result.unitId, unitIndex: result.unitIndex, title: result.item.title }]);
       setPhotoQueueIndex(0);
@@ -265,50 +265,50 @@ export default function CheckInModal({
     }
   }
 
-  // ── Category handlers ─────────────────────────────────────────────────────
+  // ── Product handlers ─────────────────────────────────────────────────────
 
-  async function handleCategoryAssign(categoryId: string | null, suggestedName?: string, shouldMerge?: boolean) {
-    if (!pendingCategory) return;
-    setCategoryLoading(true);
+  async function handleProductAssign(productId: string | null, suggestedName?: string, shouldMerge?: boolean) {
+    if (!pendingProduct) return;
+    setProductLoading(true);
     try {
-      if (categoryId && suggestedName && shouldMerge) {
-        await fetch("/api/categories/merge", {
+      if (productId && suggestedName && shouldMerge) {
+        await fetch("/api/products/merge", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fromCategoryName: suggestedName, toCategoryId: categoryId }),
+          body: JSON.stringify({ fromProductName: suggestedName, toProductId: productId }),
         });
       }
-      await fetch(`/api/receiving/unit/${pendingCategory.unitId}/category`, {
+      await fetch(`/api/receiving/unit/${pendingProduct.unitId}/product`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ categoryId }),
+        body: JSON.stringify({ productId }),
       });
-      const cb = pendingCategory.afterCategory;
-      setPendingCategory(null);
+      const cb = pendingProduct.afterProduct;
+      setPendingProduct(null);
       cb();
-    } finally { setCategoryLoading(false); }
+    } finally { setProductLoading(false); }
   }
 
-  async function handleCreateNewCategory(name: string) {
-    if (!pendingCategory) return;
-    setCategoryLoading(true);
+  async function handleCreateNewProduct(name: string) {
+    if (!pendingProduct) return;
+    setProductLoading(true);
     try {
-      const res = await fetch("/api/categories", {
+      const res = await fetch("/api/products", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
       });
       if (res.ok) {
         const data = await res.json();
-        await handleCategoryAssign(data.category?.id, undefined, false);
+        await handleProductAssign(data.product?.id, undefined, false);
       }
-    } finally { setCategoryLoading(false); }
+    } finally { setProductLoading(false); }
   }
 
-  function skipCategory() {
-    if (!pendingCategory) return;
-    const cb = pendingCategory.afterCategory;
-    setPendingCategory(null);
+  function skipProduct() {
+    if (!pendingProduct) return;
+    const cb = pendingProduct.afterProduct;
+    setPendingProduct(null);
     cb();
   }
 
@@ -351,7 +351,7 @@ export default function CheckInModal({
   const effectiveRemaining = isLotMode ? Math.max(lotCount - alreadyScanned, 1) : remaining;
 
   const headerTitle =
-    step === "category" ? "Select Category" :
+    step === "product" ? "Select Product" :
     step === "scanning" ? "Checking In…" :
     step === "unit_form" ? `Unit ${currentUnit} of ${effectiveTotal}` :
     "Check In";
@@ -419,9 +419,9 @@ export default function CheckInModal({
                   </p>
                 </div>
                 <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
-                  <input type="checkbox" checked={lotPerUnitCategory} onChange={e => setLotPerUnitCategory(e.target.checked)}
+                  <input type="checkbox" checked={lotPerUnitProduct} onChange={e => setLotPerUnitProduct(e.target.checked)}
                     className="accent-fuchsia-500" />
-                  Mixed lot — assign category per unit
+                  Mixed lot — assign product per unit
                 </label>
               </div>
             )}
@@ -518,65 +518,65 @@ export default function CheckInModal({
           </div>
         )}
 
-        {/* ── Category selection ── */}
-        {step === "category" && pendingCategory && (
+        {/* ── Product selection ── */}
+        {step === "product" && pendingProduct && (
           <div className="p-5 space-y-4">
             <div className="rounded-lg bg-slate-800 border border-slate-700 p-3 text-xs text-slate-400">
-              <span className="text-slate-500">Reason: </span>{pendingCategory.reason}
+              <span className="text-slate-500">Reason: </span>{pendingProduct.reason}
             </div>
 
-            {/* Auto-assigned category — show a Keep button prominently */}
-            {pendingCategory.assignedCategoryId && !pendingCategory.suggestedCategoryName && (
+            {/* Auto-assigned product — show a Keep button prominently */}
+            {pendingProduct.assignedProductId && !pendingProduct.suggestedProductName && (
               <div className="rounded-lg bg-green-900/20 border border-green-800 p-3 text-xs">
-                <p className="text-slate-400 mb-1">Auto-assigned category:</p>
+                <p className="text-slate-400 mb-1">Auto-assigned product:</p>
                 <p className="font-semibold text-green-300">
-                  {categories.find(c => c.id === pendingCategory.assignedCategoryId)?.category_name ?? "…"}
+                  {productOptions.find(c => c.id === pendingProduct.assignedProductId)?.product_name ?? "…"}
                 </p>
               </div>
             )}
 
-            {pendingCategory.suggestedCategoryName && (
+            {pendingProduct.suggestedProductName && (
               <div className="text-xs text-slate-400">
-                Detected: <span className="font-semibold text-blue-300">{pendingCategory.suggestedCategoryName}</span>
+                Detected: <span className="font-semibold text-blue-300">{pendingProduct.suggestedProductName}</span>
               </div>
             )}
 
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-slate-400">Category name</label>
-              <input type="text" value={editedCategoryName} onChange={e => setEditedCategoryName(e.target.value)}
+              <label className="mb-1.5 block text-xs font-medium text-slate-400">Product name</label>
+              <input type="text" value={editedProductName} onChange={e => setEditedProductName(e.target.value)}
                 className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-blue-600" />
             </div>
 
             <button
-              onClick={() => handleCreateNewCategory(editedCategoryName.trim() || pendingCategory.suggestedCategoryName || "")}
-              disabled={categoryLoading || !editedCategoryName.trim()}
+              onClick={() => handleCreateNewProduct(editedProductName.trim() || pendingProduct.suggestedProductName || "")}
+              disabled={productLoading || !editedProductName.trim()}
               className="w-full rounded-lg bg-blue-700 hover:bg-blue-600 disabled:opacity-50 py-2 text-xs font-semibold text-white transition-colors">
-              Create New Category
+              Create New Product
             </button>
 
             <div className="border-t border-slate-800 pt-4 space-y-2">
               <label className="block text-xs font-medium text-slate-400">Or assign to existing</label>
-              {categoryLoading ? (
+              {productLoading ? (
                 <p className="text-xs text-slate-600 animate-pulse">Loading…</p>
               ) : (
                 <>
-                  <select value={selectedCategoryId} onChange={e => setSelectedCategoryId(e.target.value)}
+                  <select value={selectedProductId} onChange={e => setSelectedProductId(e.target.value)}
                     className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-blue-600">
-                    <option value="">— pick a category —</option>
-                    {categories.map(c => <option key={c.id} value={c.id}>{c.category_name}</option>)}
+                    <option value="">— pick a product —</option>
+                    {productOptions.map(c => <option key={c.id} value={c.id}>{c.product_name}</option>)}
                   </select>
 
-                  {selectedCategoryId && pendingCategory.suggestedCategoryName && (
+                  {selectedProductId && pendingProduct.suggestedProductName && (
                     <label className="flex items-start gap-2 text-xs text-slate-400 cursor-pointer">
                       <input type="checkbox" checked={createMerge} onChange={e => setCreateMerge(e.target.checked)}
                         className="mt-0.5 accent-blue-500" />
-                      <span>Auto-map &ldquo;{pendingCategory.suggestedCategoryName}&rdquo; to this in future scans</span>
+                      <span>Auto-map &ldquo;{pendingProduct.suggestedProductName}&rdquo; to this in future scans</span>
                     </label>
                   )}
 
                   <button
-                    onClick={() => handleCategoryAssign(selectedCategoryId || null, pendingCategory.suggestedCategoryName, createMerge)}
-                    disabled={categoryLoading || !selectedCategoryId}
+                    onClick={() => handleProductAssign(selectedProductId || null, pendingProduct.suggestedProductName, createMerge)}
+                    disabled={productLoading || !selectedProductId}
                     className="w-full rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-50 py-2 text-xs font-semibold text-slate-200 transition-colors">
                     Assign to Selected
                   </button>
@@ -584,17 +584,17 @@ export default function CheckInModal({
               )}
             </div>
 
-            {/* Keep button — only shown when a category was already auto-assigned */}
-            {pendingCategory.assignedCategoryId && (
+            {/* Keep button — only shown when a product was already auto-assigned */}
+            {pendingProduct.assignedProductId && (
               <button
-                onClick={() => { const cb = pendingCategory.afterCategory; setPendingCategory(null); cb(); }}
-                disabled={categoryLoading}
+                onClick={() => { const cb = pendingProduct.afterProduct; setPendingProduct(null); cb(); }}
+                disabled={productLoading}
                 className="w-full rounded-lg border border-green-700 text-green-400 hover:bg-green-900/20 disabled:opacity-50 py-2 text-xs font-semibold transition-colors">
-                Keep Auto-Assigned Category
+                Keep Auto-Assigned Product
               </button>
             )}
 
-            <button onClick={skipCategory} className="w-full text-xs text-slate-600 hover:text-slate-400 py-1">
+            <button onClick={skipProduct} className="w-full text-xs text-slate-600 hover:text-slate-400 py-1">
               Skip for now
             </button>
           </div>

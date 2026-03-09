@@ -1,4 +1,4 @@
 export { getAnthropicClient } from "./client";
 export type { ProductInfo, ProductAndLotInfo, LotInfo, LotItem, CompletionOptions } from "./types";
-export { extractProductInfo, extractProductAndLotInfo, generateCategoryName } from "./product-parser";
-export { getCachedCategories, onCategoryCreated, onCategoryDeleted } from "./category-cache";
+export { extractProductInfo, extractProductAndLotInfo, generateProductName } from "./product-parser";
+export { getCachedProducts, onProductCreated, onProductDeleted } from "./product-cache";

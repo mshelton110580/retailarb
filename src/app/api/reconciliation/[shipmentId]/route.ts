@@ -32,7 +32,7 @@ export async function GET(
     include: {
       listing: { select: { title: true } },
       order_item: { select: { title: true, qty: true } },
-      category: { select: { id: true, category_name: true } },
+      product: { select: { id: true, product_name: true } },
       images: {
         orderBy: { created_at: "asc" },
         select: { id: true, created_at: true },
@@ -51,11 +51,11 @@ export async function GET(
   const expectedTotal = lotSize && orderQty ? lotSize * orderQty : null;
   const missingUnits = expectedTotal ? expectedTotal - shipment.scanned_units : 0;
 
-  // Mixed lot detection: multiple distinct non-null categories among scanned units
+  // Mixed lot detection: multiple distinct non-null products among scanned units
   // OR lot_manifest (from title parsing) indicates multiple item types
-  const nonNullCategoryIds = new Set(units.map((u) => u.category_id).filter(Boolean));
+  const nonNullProductIds = new Set(units.map((u) => u.product_id).filter(Boolean));
   const manifestMixed = Array.isArray(shipment.lot_manifest) && (shipment.lot_manifest as any[]).length > 1;
-  const isMixedLot = nonNullCategoryIds.size > 1 || manifestMixed;
+  const isMixedLot = nonNullProductIds.size > 1 || manifestMixed;
 
   return NextResponse.json({
     shipment: {
@@ -87,7 +87,7 @@ export async function GET(
       condition: u.condition_status,
       inventoryState: u.inventory_state,
       notes: u.notes,
-      category: u.category ? { id: u.category.id, name: u.category.category_name } : null,
+      product: u.product ? { id: u.product.id, name: u.product.product_name } : null,
       isNonGood: !goodConditions.has(u.condition_status?.toLowerCase() ?? ""),
       images: u.images.map((img) => ({
         id: img.id,
@@ -108,7 +108,7 @@ const patchSchema = z.object({
         unitId: z.string(),
         condition: z.string().optional(),
         inventoryState: z.string().optional(),
-        categoryId: z.string().nullable().optional(),
+        productId: z.string().nullable().optional(),
         notes: z.string().optional(),
       })
     )
@@ -135,7 +135,7 @@ export async function PATCH(
       const data: any = {};
       if (update.condition !== undefined) data.condition_status = update.condition;
       if (update.inventoryState !== undefined) data.inventory_state = update.inventoryState;
-      if (update.categoryId !== undefined) data.category_id = update.categoryId;
+      if (update.productId !== undefined) data.product_id = update.productId;
       if (update.notes !== undefined) data.notes = update.notes;
       if (Object.keys(data).length > 0) {
         await prisma.received_units.update({ where: { id: update.unitId }, data });

@@ -51,10 +51,10 @@ LISTING DESCRIPTION (when provided):
 - Descriptions may contain seller boilerplate, shipping policies, and condition notes — focus on product-relevant content (item counts, model numbers, what's included)
 - If no description is provided, rely solely on the title
 
-TRACKED INVENTORY CATEGORIES (when provided):
-- You may receive a list of the user's existing inventory categories (e.g., "TI-84 Plus CE", "Charging Station", "TI-83 Plus Silver Edition")
-- Any item in a lot that matches one of these categories MUST be counted as a SEPARATE physical item, even if it would normally be considered an accessory
-- Example: if "Charging Station" is a tracked category and the listing includes a charging station, count it as a separate item in the lot breakdown
+TRACKED INVENTORY PRODUCTS (when provided):
+- You may receive a list of the user's existing inventory products (e.g., "TI-84 Plus CE", "Charging Station", "TI-83 Plus Silver Edition")
+- Any item in a lot that matches one of these products MUST be counted as a SEPARATE physical item, even if it would normally be considered an accessory
+- Example: if "Charging Station" is a tracked product and the listing includes a charging station, count it as a separate item in the lot breakdown
 - This overrides the default accessory rule — the user explicitly tracks these as inventory`;
 
 export const PRODUCT_INFO_TOOL = {

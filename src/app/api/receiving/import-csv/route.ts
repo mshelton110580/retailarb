@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
 import { TargetType, TargetStatus } from "@prisma/client";
-import { findOrCreateCategory, computeInventoryState, generateCategoryName } from "@/lib/item-categorization";
-import { onCategoryCreated } from "@/lib/ai";
+import { findOrCreateProduct, computeInventoryState, generateProductName } from "@/lib/product-matching";
+import { onProductCreated } from "@/lib/ai";
 
 // Parse a Google Sheets timestamp in various formats:
 //   "2023/07/01 12:05.45"  "7/1/2023 12:05:45"  "2/18/2026 14:05:45"  "2026-02-18T14:05:45"
@@ -244,28 +244,28 @@ export async function POST(req: Request) {
             });
           }
 
-          // Find or create category.
+          // Find or create product.
           // For imports we never have an interactive prompt, so if the detection logic
-          // wants manual selection but has a suggested name, we auto-create that category.
+          // wants manual selection but has a suggested name, we auto-create that product.
           // If there's a best-match (any confidence), we use it rather than leaving null.
-          let categoryResult = await findOrCreateCategory(listing.gtin, listing.title);
-          if (categoryResult.categoryId === null && categoryResult.requiresManualSelection) {
+          let productResult = await findOrCreateProduct(listing.gtin, listing.title);
+          if (productResult.productId === null && productResult.requiresManualSelection) {
             // Auto-create from the suggested name (or derive one fresh)
-            const suggestedName = categoryResult.suggestedCategoryName ?? await generateCategoryName(listing.title ?? "");
+            const suggestedName = productResult.suggestedProductName ?? await generateProductName(listing.title ?? "");
             if (suggestedName) {
-              // Check if a category with this name already exists (race-safe)
-              const existing = await prisma.item_categories.findFirst({
-                where: { category_name: { equals: suggestedName, mode: "insensitive" } },
+              // Check if a product with this name already exists (race-safe)
+              const existing = await prisma.products.findFirst({
+                where: { product_name: { equals: suggestedName, mode: "insensitive" } },
                 select: { id: true }
               });
               if (existing) {
-                categoryResult = { categoryId: existing.id, confidence: "medium", requiresManualSelection: false, reason: "Matched existing category by name" };
+                productResult = { productId: existing.id, confidence: "medium", requiresManualSelection: false, reason: "Matched existing product by name" };
               } else {
-                const created = await prisma.item_categories.create({
-                  data: { category_name: suggestedName, category_keywords: [] }
+                const created = await prisma.products.create({
+                  data: { product_name: suggestedName, product_keywords: [] }
                 });
-                await onCategoryCreated(created.id, suggestedName);
-                categoryResult = { categoryId: created.id, confidence: "low", requiresManualSelection: false, reason: "Auto-created from suggested name during import" };
+                await onProductCreated(created.id, suggestedName);
+                productResult = { productId: created.id, confidence: "low", requiresManualSelection: false, reason: "Auto-created from suggested name during import" };
               }
             }
           }
@@ -311,7 +311,7 @@ export async function POST(req: Request) {
               unit_index: unitIndex,
               condition_status: conditionStatus,
               inventory_state: inventoryState,
-              category_id: categoryResult.categoryId,
+              product_id: productResult.productId,
               scanned_by_user_id: auth.session!.user!.id,
               received_at: scannedAt,
               notes: unitNotes

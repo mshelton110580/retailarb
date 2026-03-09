@@ -9,10 +9,10 @@ import { findTrackingOrderIds } from "@/lib/tracking-search";
  *
  * Query params:
  *   search        - text search against title, order_id, condition_status, notes, tracking numbers (including barcodes)
- *   categoryId    - filter by category ID ("none" for uncategorized)
+ *   productId     - filter by product ID ("none" for uncategorized)
  *   state         - filter by inventory_state (comma-separated for multiple)
  *   condition     - filter by condition_status (comma-separated)
- *   sortBy        - field to sort by: receivedAt|title|condition|state|category (default: receivedAt)
+ *   sortBy        - field to sort by: receivedAt|title|condition|state|product (default: receivedAt)
  *   sortDir       - asc|desc (default: desc)
  *   limit         - max records (default: 500)
  *   offset        - pagination offset (default: 0)
@@ -25,7 +25,7 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const search = searchParams.get("search") ?? "";
-  const categoryId = searchParams.get("categoryId") ?? "";
+  const productId = searchParams.get("productId") ?? searchParams.get("categoryId") ?? "";
   const stateParam = searchParams.get("state") ?? "";
   const conditionParam = searchParams.get("condition") ?? "";
   const sortBy = searchParams.get("sortBy") ?? "receivedAt";
@@ -45,10 +45,10 @@ export async function GET(req: Request) {
   if (conditions.length > 0) {
     where.condition_status = { in: conditions };
   }
-  if (categoryId === "none") {
-    where.category_id = null;
-  } else if (categoryId) {
-    where.category_id = categoryId;
+  if (productId === "none") {
+    where.product_id = null;
+  } else if (productId) {
+    where.product_id = productId;
   }
 
   // Text search across title (listing + order_item), order_id, condition, notes
@@ -94,7 +94,8 @@ export async function GET(req: Request) {
     receivedAt: { received_at: sortDir },
     condition: { condition_status: sortDir },
     state: { inventory_state: sortDir },
-    category: { category: { category_name: sortDir } },
+    product: { product: { product_name: sortDir } },
+    category: { product: { product_name: sortDir } }, // backward compat sort key
     title: { listing: { title: sortDir } },
   };
   const orderBy = orderByMap[sortBy] ?? { received_at: sortDir };
@@ -114,7 +115,7 @@ export async function GET(req: Request) {
         inventory_state: true,
         received_at: true,
         notes: true,
-        category: { select: { id: true, category_name: true } },
+        product: { select: { id: true, product_name: true } },
         listing: { select: { title: true } },
         order_item: { select: { title: true } },
         images: { select: { id: true } },
@@ -143,7 +144,7 @@ export async function GET(req: Request) {
       state: u.inventory_state,
       receivedAt: u.received_at.toISOString(),
       notes: u.notes,
-      category: u.category ? { id: u.category.id, name: u.category.category_name } : null,
+      product: u.product ? { id: u.product.id, name: u.product.product_name } : null,
       title: u.listing?.title ?? u.order_item?.title ?? "Unknown",
       trackingNumbers: u.order?.shipments?.flatMap(s =>
         s.tracking_numbers.map(t => t.tracking_number)

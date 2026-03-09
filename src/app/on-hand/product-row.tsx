@@ -18,7 +18,7 @@ type UnitDetail = {
 
 type ProductRowProps = {
   product: {
-    categoryId: string;
+    productId: string;
     productName: string;
     gtin: string | null;
     onHand: number;

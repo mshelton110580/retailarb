@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
-import { computeInventoryState } from "@/lib/item-categorization";
+import { computeInventoryState } from "@/lib/product-matching";
 
 /**
  * PATCH /api/units/bulk
- * Bulk update category or condition_status on multiple units.
+ * Bulk update product or condition_status on multiple units.
  *
  * When condition changes, inventory_state is recomputed using the same logic
  * as the original scan path: condition + existing return status for that unit.
@@ -13,7 +13,7 @@ import { computeInventoryState } from "@/lib/item-categorization";
  * Body: {
  *   unitIds: string[]
  *   updates: {
- *     categoryId?: string | null
+ *     productId?: string | null
  *     condition?: string
  *   }
  * }
@@ -28,6 +28,7 @@ export async function PATCH(req: Request) {
   const { unitIds, updates } = body as {
     unitIds: string[];
     updates: {
+      productId?: string | null;
       categoryId?: string | null;
       condition?: string;
     };
@@ -39,14 +40,16 @@ export async function PATCH(req: Request) {
 
   const baseData: Record<string, any> = {};
 
-  if ("categoryId" in updates) {
-    if (updates.categoryId !== null && updates.categoryId !== undefined) {
-      const cat = await prisma.item_categories.findUnique({ where: { id: updates.categoryId } });
-      if (!cat) {
-        return NextResponse.json({ error: "Category not found" }, { status: 404 });
+  // Accept both productId and categoryId for backward compatibility
+  const effectiveProductId = "productId" in updates ? updates.productId : ("categoryId" in updates ? updates.categoryId : undefined);
+  if (effectiveProductId !== undefined) {
+    if (effectiveProductId !== null) {
+      const prod = await prisma.products.findUnique({ where: { id: effectiveProductId } });
+      if (!prod) {
+        return NextResponse.json({ error: "Product not found" }, { status: 404 });
       }
     }
-    baseData.category_id = updates.categoryId ?? null;
+    baseData.product_id = effectiveProductId ?? null;
   }
 
   if (updates.condition) {
@@ -116,7 +119,7 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ ok: true, updated });
   }
 
-  // Category-only update — no state recomputation needed
+  // Product-only update — no state recomputation needed
   const result = await prisma.received_units.updateMany({
     where: { id: { in: unitIds } },
     data: baseData

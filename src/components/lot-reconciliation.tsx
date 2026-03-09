@@ -10,7 +10,7 @@ type LotUnit = {
   condition: string;
   inventoryState: string;
   notes: string | null;
-  category: { id: string; name: string } | null;
+  product: { id: string; name: string } | null;
   isNonGood: boolean;
   images: { id: string; url: string; createdAt: string }[];
   imageCount: number;
@@ -73,7 +73,7 @@ export default function LotReconciliation({ shipmentId, onDone }: { shipmentId: 
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [unitEdits, setUnitEdits] = useState<Record<string, Partial<LotUnit & { condition: string; inventoryState: string; categoryId: string | null; notes: string }>>>({});
+  const [unitEdits, setUnitEdits] = useState<Record<string, Partial<LotUnit & { condition: string; inventoryState: string; productId: string | null; notes: string }>>>({});
   const [imageUploadUnit, setImageUploadUnit] = useState<{ unitId: string; unitIndex: number; title: string } | null>(null);
   const [showAddMissing, setShowAddMissing] = useState(false);
   const [addMissingCount, setAddMissingCount] = useState(1);
@@ -116,7 +116,7 @@ export default function LotReconciliation({ shipmentId, onDone }: { shipmentId: 
         unitId,
         condition: (edits as any).condition,
         inventoryState: (edits as any).inventoryState,
-        categoryId: (edits as any).categoryId,
+        productId: (edits as any).productId,
         notes: (edits as any).notes,
       })).filter((u) => Object.keys(u).length > 1);
 
@@ -243,7 +243,7 @@ export default function LotReconciliation({ shipmentId, onDone }: { shipmentId: 
               <th className="px-3 py-2">Title</th>
               <th className="px-3 py-2 w-32">Condition</th>
               <th className="px-3 py-2 w-28">State</th>
-              <th className="px-3 py-2 w-36">Category</th>
+              <th className="px-3 py-2 w-36">Product</th>
               <th className="px-3 py-2 w-24">Photos</th>
             </tr>
           </thead>
@@ -296,9 +296,9 @@ export default function LotReconciliation({ shipmentId, onDone }: { shipmentId: 
                     </select>
                   </td>
                   <td className="px-3 py-2">
-                    {unit.category ? (
-                      <span className="text-indigo-300 truncate block max-w-[120px]" title={unit.category.name}>
-                        {unit.category.name}
+                    {unit.product ? (
+                      <span className="text-indigo-300 truncate block max-w-[120px]" title={unit.product.name}>
+                        {unit.product.name}
                       </span>
                     ) : (
                       <span className="text-slate-600 italic">—</span>

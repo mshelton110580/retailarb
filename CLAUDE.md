@@ -63,7 +63,7 @@ src/
 |   -- inr/                      # Item Not Received cases
 |   -- targets/                  # Auction sniping targets
 |   -- ebay-accounts/            # OAuth connection management
-|   -- admin/                    # Users, categories, conditions
+|   -- admin/                    # Users, products, conditions
 |   -- settings/                 # Feature flags
 |   -- api/                      # 44 API endpoints (see below)
 -- components/                   # 11 reusable components
@@ -79,7 +79,7 @@ src/
 |   -- storage.ts                # File storage (local, S3-ready)
 |   -- date-range.ts             # Server-side date filtering
 |   -- inventory-transitions.ts  # Inventory state machine
-|   -- item-categorization.ts    # Smart product categorization
+|   -- product-matching.ts       # Smart product matching & creation
 |   -- tracking-search.ts        # Unified tracking number search (handles USPS barcodes, UPS, partials)
 |   -- use-barcode-scanner.ts    # React hook: detects rapid keystrokes from barcode scanners
 |   -- ebay/                     # eBay API wrappers
@@ -103,7 +103,7 @@ src/
 | Orders | `/api/orders/sync` | POST | Sync orders from eBay Trading API |
 | Receiving | `/api/receiving/scan` | POST | Process warehouse barcode scan |
 | Units | `/api/units` | GET | List/search units with virtual scrolling |
-| Units | `/api/units/bulk` | PATCH | Bulk update units (state, category, condition) |
+| Units | `/api/units/bulk` | PATCH | Bulk update units (state, product, condition) |
 | Units | `/api/units/conditions` | GET | List all condition values from database |
 | Returns | `/api/returns` | GET | List returns with filters |
 | Returns | `/api/returns/refresh` | POST | Sync returns from eBay Post-Order API |
@@ -123,7 +123,7 @@ src/
 4. **orders** -- Purchased eBay orders with immutable cost basis (`original_total`)
 5. **order_items** -- Line items (qty, transaction_price, shipping_cost per item)
 6. **shipments** + **tracking_numbers** -- Inbound delivery tracking
-7. **received_units** -- Physical inventory (condition, inventory_state, category)
+7. **received_units** -- Physical inventory (condition, inventory_state, product)
 8. **returns** -- Return requests with actual_refund, ebay_item_id, tracking, label PDFs
 9. **inr_cases** -- Item Not Received inquiries with claim_amount, ebay_item_id
 

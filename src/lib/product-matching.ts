@@ -1,9 +1,9 @@
 import { prisma } from "@/lib/db";
-import { extractProductInfo, generateCategoryName, getCachedCategories, onCategoryCreated } from "@/lib/ai";
+import { extractProductInfo, generateProductName, getCachedProducts, onProductCreated } from "@/lib/ai";
 import type { ProductInfo } from "@/lib/ai";
 
 // Re-export for consumers that import from this module
-export { generateCategoryName };
+export { generateProductName };
 
 /**
  * Detect if a title contains multiple distinct products (e.g., "TI-84 & TI-83")
@@ -33,7 +33,7 @@ export function detectMultipleProducts(title: string): boolean {
 
 /**
  * Calculate similarity score between two product infos.
- * Color must match for items to be considered the same category.
+ * Color must match for items to be considered the same product.
  * Uses normalized comparison (strips formatting) for model matching.
  */
 function calculateSimilarity(
@@ -96,26 +96,26 @@ function calculateSimilarity(
 }
 
 /**
- * Find or create an item category based on GTIN or title analysis.
+ * Find or create a product based on GTIN or title analysis.
  * Uses AI-powered product parsing for title analysis with regex fallback.
- * Returns category info and confidence level.
+ * Returns product info and confidence level.
  */
-export async function findOrCreateCategory(
+export async function findOrCreateProduct(
   gtin: string | null,
   title: string,
   precomputedInfo?: ProductInfo | null
 ): Promise<{
-  categoryId: string | null;
+  productId: string | null;
   confidence: "high" | "medium" | "low";
   requiresManualSelection: boolean;
   reason?: string;
-  suggestedCategoryName?: string;
+  suggestedProductName?: string;
 }> {
   // Check for multiple products in title
   const hasMultipleProducts = detectMultipleProducts(title);
   if (hasMultipleProducts) {
     return {
-      categoryId: null,
+      productId: null,
       confidence: "low",
       requiresManualSelection: true,
       reason: "Multiple products detected in title"
@@ -124,38 +124,38 @@ export async function findOrCreateCategory(
 
   // If GTIN is available, try exact GTIN match first
   if (gtin) {
-    const existing = await prisma.item_categories.findUnique({
+    const existing = await prisma.products.findUnique({
       where: { gtin },
       select: { id: true }
     });
 
     if (existing) {
       return {
-        categoryId: existing.id,
+        productId: existing.id,
         confidence: "high",
         requiresManualSelection: false,
         reason: "Exact GTIN match"
       };
     }
 
-    // GTIN provided but no match - parse title and create new category
+    // GTIN provided but no match - parse title and create new product
     const itemInfo = precomputedInfo ?? await extractProductInfo(title);
 
-    const newCategory = await prisma.item_categories.create({
+    const newProduct = await prisma.products.create({
       data: {
         gtin,
-        category_name: itemInfo.canonicalName,
-        category_keywords: itemInfo.coreTerms
+        product_name: itemInfo.canonicalName,
+        product_keywords: itemInfo.coreTerms
       }
     });
 
-    await onCategoryCreated(newCategory.id, itemInfo.canonicalName);
+    await onProductCreated(newProduct.id, itemInfo.canonicalName);
 
     return {
-      categoryId: newCategory.id,
+      productId: newProduct.id,
       confidence: "high",
       requiresManualSelection: false,
-      reason: "New category created with GTIN"
+      reason: "New product created with GTIN"
     };
   }
 
@@ -164,68 +164,68 @@ export async function findOrCreateCategory(
 
   if (itemInfo.coreTerms.length === 0) {
     return {
-      categoryId: null,
+      productId: null,
       confidence: "low",
       requiresManualSelection: true,
       reason: "No meaningful terms found in title"
     };
   }
 
-  const categoryName = itemInfo.canonicalName;
-  const normalizedName = categoryName.toLowerCase().trim();
+  const productName = itemInfo.canonicalName;
+  const normalizedName = productName.toLowerCase().trim();
 
-  // Check for existing category merge mapping first
-  const existingMerge = await prisma.$queryRawUnsafe<Array<{ to_category_id: string }>>(
-    `SELECT to_category_id FROM category_merges WHERE LOWER(TRIM(from_category_name)) = $1`,
+  // Check for existing product alias mapping first
+  const existingMerge = await prisma.$queryRawUnsafe<Array<{ to_product_id: string }>>(
+    `SELECT to_product_id FROM product_aliases WHERE LOWER(TRIM(from_product_name)) = $1`,
     normalizedName
   );
 
   if (existingMerge && existingMerge.length > 0) {
     return {
-      categoryId: existingMerge[0].to_category_id,
+      productId: existingMerge[0].to_product_id,
       confidence: "high",
       requiresManualSelection: false,
       reason: "Auto-merged based on previous selection"
     };
   }
 
-  // Use cached parsed ProductInfo for all categories (no API calls)
-  const cachedCategories = await getCachedCategories();
+  // Use cached parsed ProductInfo for all products (no API calls)
+  const cachedProducts = await getCachedProducts();
 
   // Check for exact name match (case-insensitive) via DB
-  const allCategories = await prisma.item_categories.findMany({
-    select: { id: true, category_name: true }
+  const allProducts = await prisma.products.findMany({
+    select: { id: true, product_name: true }
   });
 
-  const exactMatch = allCategories.find(
-    cat => cat.category_name.toLowerCase().trim() === normalizedName
+  const exactMatch = allProducts.find(
+    p => p.product_name.toLowerCase().trim() === normalizedName
   );
 
   if (exactMatch) {
     return {
-      categoryId: exactMatch.id,
+      productId: exactMatch.id,
       confidence: "high",
       requiresManualSelection: false,
-      reason: "Exact category name match"
+      reason: "Exact product name match"
     };
   }
 
   let bestMatch: { id: string; score: number } | null = null;
 
-  // First pass: check if canonicalName is contained in a category name (or vice versa)
+  // First pass: check if canonicalName is contained in a product name (or vice versa)
   // This catches cases where AI field parsing is inconsistent but names clearly match
   const normCanonical = normalizedName.replace(/[^a-z0-9]/g, "");
-  for (const cat of allCategories) {
-    const normCatName = cat.category_name.toLowerCase().replace(/[^a-z0-9]/g, "");
-    if (normCanonical && normCatName) {
-      if (normCatName.startsWith(normCanonical) || normCanonical.startsWith(normCatName)) {
-        const longer = Math.max(normCanonical.length, normCatName.length);
-        const shorter = Math.min(normCanonical.length, normCatName.length);
+  for (const p of allProducts) {
+    const normProdName = p.product_name.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (normCanonical && normProdName) {
+      if (normProdName.startsWith(normCanonical) || normCanonical.startsWith(normProdName)) {
+        const longer = Math.max(normCanonical.length, normProdName.length);
+        const shorter = Math.min(normCanonical.length, normProdName.length);
         const coverage = shorter / longer;
         if (coverage >= 0.7) {
           const nameScore = 0.75 + 0.2 * coverage;
           if (!bestMatch || nameScore > bestMatch.score) {
-            bestMatch = { id: cat.id, score: nameScore };
+            bestMatch = { id: p.id, score: nameScore };
           }
         }
       }
@@ -233,18 +233,18 @@ export async function findOrCreateCategory(
   }
 
   // Second pass: AI-parsed field similarity scoring
-  for (const [categoryId, categoryInfo] of cachedCategories) {
-    const simScore = calculateSimilarity(itemInfo, categoryInfo);
+  for (const [productId, productInfo] of cachedProducts) {
+    const simScore = calculateSimilarity(itemInfo, productInfo);
 
     if (simScore > 0 && (!bestMatch || simScore > bestMatch.score)) {
-      bestMatch = { id: categoryId, score: simScore };
+      bestMatch = { id: productId, score: simScore };
     }
   }
 
   // High confidence: 90%+ match
   if (bestMatch && bestMatch.score >= 0.9) {
     return {
-      categoryId: bestMatch.id,
+      productId: bestMatch.id,
       confidence: "high",
       requiresManualSelection: false,
       reason: `High similarity match (${Math.round(bestMatch.score * 100)}%)`
@@ -254,7 +254,7 @@ export async function findOrCreateCategory(
   // Medium confidence: 70-89% match
   if (bestMatch && bestMatch.score >= 0.7) {
     return {
-      categoryId: bestMatch.id,
+      productId: bestMatch.id,
       confidence: "medium",
       requiresManualSelection: false,
       reason: `Medium similarity match (${Math.round(bestMatch.score * 100)}%)`
@@ -264,20 +264,20 @@ export async function findOrCreateCategory(
   // Low confidence or no match - require manual selection
   if (bestMatch && bestMatch.score >= 0.5) {
     return {
-      categoryId: bestMatch.id,
+      productId: bestMatch.id,
       confidence: "low",
       requiresManualSelection: true,
       reason: `Low similarity match (${Math.round(bestMatch.score * 100)}%) - manual confirmation needed`
     };
   }
 
-  // No good match - ALWAYS require manual selection for new categories
+  // No good match - ALWAYS require manual selection for new products
   return {
-    categoryId: null,
+    productId: null,
     confidence: "low",
     requiresManualSelection: true,
-    reason: `New category "${categoryName}" - select existing to merge or confirm new`,
-    suggestedCategoryName: categoryName
+    reason: `New product "${productName}" - select existing to merge or confirm new`,
+    suggestedProductName: productName
   };
 }
 

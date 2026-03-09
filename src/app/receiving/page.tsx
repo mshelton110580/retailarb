@@ -53,7 +53,7 @@ export default async function ReceivingPage({
             orderBy: { unit_index: "asc" },
             include: {
               listing: { select: { title: true } },
-              category: { select: { id: true, category_name: true } }
+              product: { select: { id: true, product_name: true } }
             }
           });
           const orderItems = m.shipment!.order!.order_items;
@@ -83,7 +83,7 @@ export default async function ReceivingPage({
               condition: u.condition_status,
               receivedAt: u.received_at.toISOString(),
               notes: u.notes,
-              category: u.category ? { id: u.category.id, name: u.category.category_name } : null
+              product: u.product ? { id: u.product.id, name: u.product.product_name } : null
             }))
           };
         })
@@ -149,7 +149,7 @@ export default async function ReceivingPage({
     orderBy: { received_at: "desc" },
     include: {
       listing: { select: { title: true } },
-      category: { select: { id: true, category_name: true } },
+      product: { select: { id: true, product_name: true } },
       order: {
         include: {
           order_items: true,
@@ -215,7 +215,7 @@ export default async function ReceivingPage({
       condition: unit.condition_status,
       receivedAt: unit.received_at.toISOString(),
       notes: unit.notes,
-      category: unit.category ? { id: unit.category.id, name: unit.category.category_name } : null
+      product: unit.product ? { id: unit.product.id, name: unit.product.product_name } : null
     });
   }
 

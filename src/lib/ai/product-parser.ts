@@ -79,15 +79,15 @@ export async function extractProductInfo(title: string): Promise<ProductInfo> {
  * Combined product parsing + lot detection in a single API call.
  * Used on first scan to detect lots from title analysis.
  */
-export async function extractProductAndLotInfo(title: string, qty: number, description?: string | null, categoryNames?: string[]): Promise<ProductAndLotInfo> {
+export async function extractProductAndLotInfo(title: string, qty: number, description?: string | null, productNames?: string[]): Promise<ProductAndLotInfo> {
   try {
     const client = getAnthropicClient();
     let userMessage = `Listing title: "${title}"\nPurchase quantity: ${qty}`;
     if (description) {
       userMessage += `\n\nListing description:\n${description}`;
     }
-    if (categoryNames && categoryNames.length > 0) {
-      userMessage += `\n\nTracked inventory categories:\n${categoryNames.join(", ")}`;
+    if (productNames && productNames.length > 0) {
+      userMessage += `\n\nTracked inventory products:\n${productNames.join(", ")}`;
     }
     userMessage += `\n\nExtract product info and detect if this is a lot.`;
 
@@ -151,7 +151,7 @@ export async function extractProductAndLotInfo(title: string, qty: number, descr
   }
 }
 
-export async function generateCategoryName(title: string): Promise<string> {
+export async function generateProductName(title: string): Promise<string> {
   const info = await extractProductInfo(title);
   return info.canonicalName;
 }
