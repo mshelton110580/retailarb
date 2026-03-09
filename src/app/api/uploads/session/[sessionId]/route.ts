@@ -22,7 +22,7 @@ export async function GET(
       },
       images: {
         orderBy: { created_at: "asc" },
-        select: { id: true, image_path: true, created_at: true },
+        select: { id: true, created_at: true },
       },
     },
   });
@@ -44,7 +44,7 @@ export async function GET(
     },
     images: session.images.map((img) => ({
       id: img.id,
-      url: `/api/uploads/${img.image_path}`,
+      url: `/api/images/${img.id}`,
       createdAt: img.created_at,
     })),
   });

@@ -1185,12 +1185,17 @@ export default function ReceivingForm() {
             <button
               onClick={() => {
                 setLotConfirmation(null);
-                setStatus("Lot confirmation skipped — scan items individually");
+                setLotUnits([]);
+                setLotBreakdownEdit([]);
+                setLotReceivedEdit([]);
+                setLotStep("confirm");
+                setResult(null);
+                setStatus("Scan cancelled");
                 setStatusType("warning");
               }}
               className="mt-4 w-full text-center text-xs text-slate-500 hover:text-slate-400"
             >
-              Skip — scan items one at a time instead
+              Cancel
             </button>
           </div>
         </div>

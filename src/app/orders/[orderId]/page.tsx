@@ -14,7 +14,7 @@ export default async function OrderDetailPage({ params }: { params: { orderId: s
       received_units: {
         include: {
           listing: { select: { title: true } },
-          images: { select: { id: true, image_path: true } }
+          images: { select: { id: true } }
         },
         orderBy: { unit_index: "asc" }
       }
@@ -258,10 +258,10 @@ export default async function OrderDetailPage({ params }: { params: { orderId: s
                 {unit.images.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-2">
                     {unit.images.map((img) => (
-                      <a key={img.id} href={`/api/uploads/${img.image_path}`} target="_blank" rel="noreferrer">
+                      <a key={img.id} href={`/api/images/${img.id}`} target="_blank" rel="noreferrer">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
-                          src={`/api/uploads/${img.image_path}`}
+                          src={`/api/images/${img.id}`}
                           alt="Unit photo"
                           className="h-16 w-16 rounded border border-slate-700 object-cover hover:opacity-80 transition-opacity"
                         />

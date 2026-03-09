@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import path from "path";
-import fs from "fs/promises";
 import sharp from "sharp";
 
-const UPLOAD_DIR = path.join(process.cwd(), "public", "uploads");
+// NOTE: Images stored in PostgreSQL (unit_images.image_data) for environment isolation.
+// If volume grows beyond ~1GB, migrate to Cloudflare R2 object storage.
+// See prisma/schema.prisma comment on unit_images for migration path.
+
 const MAX_WIDTH = 1920;
 const JPEG_QUALITY = 80;
 
@@ -25,9 +26,6 @@ export async function POST(
     return NextResponse.json({ error: "Session expired" }, { status: 410 });
   }
 
-  // Ensure upload directory exists
-  await fs.mkdir(UPLOAD_DIR, { recursive: true });
-
   const formData = await req.formData();
   const files = formData.getAll("photo") as File[];
 
@@ -47,35 +45,33 @@ export async function POST(
       .jpeg({ quality: JPEG_QUALITY, progressive: true })
       .toBuffer();
 
-    // Filename: sessionId-timestamp-random.jpg
     const filename = `${params.sessionId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`;
-    const filePath = path.join(UPLOAD_DIR, filename);
-
-    await fs.writeFile(filePath, compressed);
 
     const image = await prisma.unit_images.create({
       data: {
         received_unit_id: session.received_unit_id,
         upload_session_id: session.id,
-        image_path: filename,
+        image_data: compressed,
+        content_type: "image/jpeg",
+        filename,
       },
     });
 
-    saved.push({ id: image.id, url: `/api/uploads/${filename}` });
+    saved.push({ id: image.id, url: `/api/images/${image.id}` });
   }
 
   // Return updated image list for the session
   const allImages = await prisma.unit_images.findMany({
     where: { upload_session_id: session.id },
     orderBy: { created_at: "asc" },
-    select: { id: true, image_path: true, created_at: true },
+    select: { id: true, created_at: true },
   });
 
   return NextResponse.json({
     uploaded: saved,
     images: allImages.map((img) => ({
       id: img.id,
-      url: `/api/uploads/${img.image_path}`,
+      url: `/api/images/${img.id}`,
       createdAt: img.created_at,
     })),
   });

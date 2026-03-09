@@ -228,11 +228,23 @@ model received_units {
   lot_units          lot_units[]
 }
 
+// NOTE: Images are stored as binary data in PostgreSQL for environment isolation
+// (staging DB copies bring images along automatically). If image volume exceeds
+// ~1GB or dump/restore times become problematic, migrate to object storage
+// (Cloudflare R2 recommended — already on Cloudflare). Migration path:
+//   1. Add R2 bucket + presigned URL generation
+//   2. Replace image_data with image_url (String)
+//   3. Update upload route to write to R2 instead of DB
+//   4. Update serving route to redirect to R2 URL
+//   5. Backfill existing images to R2
+// See GitHub issue #2 for full details.
 model unit_images {
   id                String @id @default(cuid())
   received_unit_id  String
   upload_session_id String?
-  image_path        String
+  image_data        Bytes
+  content_type      String   @default("image/jpeg")
+  filename          String
   created_at        DateTime @default(now())
   unit              received_units  @relation(fields: [received_unit_id], references: [id])
   upload_session    upload_sessions? @relation(fields: [upload_session_id], references: [id])

@@ -102,7 +102,7 @@ export default async function InventoryPage({
 
   // Fetch received units with condition and notes
   const receivedUnits = await prisma.received_units.findMany({
-    select: { order_id: true, item_id: true, condition_status: true, inventory_state: true, notes: true, received_at: true, images: { select: { id: true, image_path: true } } }
+    select: { order_id: true, item_id: true, condition_status: true, inventory_state: true, notes: true, received_at: true, images: { select: { id: true } } }
   });
 
   // Get all order IDs from shipments for return/INR lookups
@@ -847,11 +847,11 @@ export default async function InventoryPage({
                               </div>
                               {(unit as any).images?.length > 0 && (
                                 <div className="flex flex-wrap gap-1 pl-14">
-                                  {(unit as any).images.map((img: { id: string; image_path: string }) => (
-                                    <a key={img.id} href={`/api/uploads/${img.image_path}`} target="_blank" rel="noreferrer">
+                                  {(unit as any).images.map((img: { id: string }) => (
+                                    <a key={img.id} href={`/api/images/${img.id}`} target="_blank" rel="noreferrer">
                                       {/* eslint-disable-next-line @next/next/no-img-element */}
                                       <img
-                                        src={`/api/uploads/${img.image_path}`}
+                                        src={`/api/images/${img.id}`}
                                         alt="Unit photo"
                                         className="h-12 w-12 rounded border border-slate-700 object-cover hover:opacity-80 transition-opacity"
                                       />
