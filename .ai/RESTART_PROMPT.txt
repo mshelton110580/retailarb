@@ -1,1 +1,0 @@
-Open /.ai/REHYDRATE.md and /.ai/RUNBOOK.md. Run `bash .ai/verify-branch.sh` to confirm you are on arbdesk-dev. Run `npm run build` as a smoke test. Then read /.ai/STATUS.md to find current objective and next actions.

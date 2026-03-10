@@ -280,25 +280,47 @@ export default async function OrderDetailPage({ params }: { params: { orderId: s
         <section className="rounded-lg border border-slate-800 bg-slate-900 p-4">
           <h2 className="text-lg font-semibold">Returns</h2>
           <div className="mt-3 space-y-2">
-            {order.returns.map((ret) => (
-              <div key={ret.id} className="rounded border border-slate-800 p-3 text-sm">
-                <div className="flex items-center gap-2">
-                  <span className="rounded bg-red-900 px-2 py-0.5 text-xs text-red-300">
-                    {ret.scrape_state}
-                  </span>
-                  {ret.ebay_return_id && (
-                    <span className="text-xs text-slate-400">eBay Return #{ret.ebay_return_id}</span>
+            {order.returns.map((ret) => {
+              const state = ret.ebay_state || ret.ebay_status || ret.status_scraped || "UNKNOWN";
+              const isClosed = state === "CLOSED" || state === "REFUND_ISSUED" || state === "RETURN_CLOSED";
+              const badgeColor = isClosed
+                ? "bg-green-900 text-green-300"
+                : state === "RETURN_REQUESTED" || state === "RETURN_STARTED"
+                  ? "bg-yellow-900 text-yellow-300"
+                  : "bg-red-900 text-red-300";
+              return (
+                <div key={ret.id} className="rounded border border-slate-800 p-3 text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className={`rounded px-2 py-0.5 text-xs ${badgeColor}`}>
+                      {state.replace(/_/g, " ")}
+                    </span>
+                    {ret.ebay_return_id && (
+                      <span className="text-xs text-slate-400">eBay Return #{ret.ebay_return_id}</span>
+                    )}
+                    {ret.return_reason && (
+                      <span className="text-xs text-slate-400">{ret.return_reason.replace(/_/g, " ")}</span>
+                    )}
+                  </div>
+                  {ret.notes && <p className="mt-1 text-xs text-slate-500">{ret.notes}</p>}
+                  {ret.actual_refund != null && (
+                    <p className="mt-1 text-xs text-green-400">Refund: ${Number(ret.actual_refund).toFixed(2)}</p>
                   )}
-                  {ret.status_scraped && (
-                    <span className="text-xs text-slate-400">Status: {ret.status_scraped}</span>
+                  {!ret.actual_refund && ret.refund_issued_date && (
+                    <p className="mt-1 text-xs text-green-400">Refund issued: {ret.refund_issued_date.toISOString().slice(0, 10)}</p>
+                  )}
+                  {!ret.actual_refund && !ret.refund_issued_date && ret.estimated_refund != null && (
+                    <p className="mt-1 text-xs text-slate-400">Requested: ${Number(ret.estimated_refund).toFixed(2)}</p>
+                  )}
+                  {ret.return_tracking_number && (
+                    <p className="mt-1 text-xs text-slate-400">
+                      Return tracking: <span className="font-mono">{ret.return_tracking_number}</span>
+                      {ret.return_shipped_date && ` — shipped ${ret.return_shipped_date.toISOString().slice(0, 10)}`}
+                      {ret.return_delivered_date && ` — delivered ${ret.return_delivered_date.toISOString().slice(0, 10)}`}
+                    </p>
                   )}
                 </div>
-                {ret.notes && <p className="mt-1 text-xs text-slate-500">{ret.notes}</p>}
-                {ret.refund_amount && (
-                  <p className="mt-1 text-xs text-yellow-400">Refund: ${Number(ret.refund_amount).toFixed(2)}</p>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       )}
