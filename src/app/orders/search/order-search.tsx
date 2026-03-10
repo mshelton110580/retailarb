@@ -1521,7 +1521,8 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
       </div>
 
       {/* ── Results table ── */}
-      <div className="rounded-lg border border-slate-800 bg-slate-900 overflow-hidden">
+      <div className="rounded-lg border border-slate-800 bg-slate-900 overflow-x-auto">
+       <div className="min-w-fit">
         {loadingFirst ? (
           <p className="p-6 text-sm text-slate-500 text-center">Loading orders…</p>
         ) : rowCount === 0 ? (
@@ -1576,6 +1577,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
             </div>
           </>
         )}
+       </div>
       </div>
 
       {!isLoading && loadedCount > 0 && loadedCount < total && (
