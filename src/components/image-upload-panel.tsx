@@ -10,16 +10,23 @@ type Props = {
   unitTitle: string;
   unitIndex: number;
   onClose: () => void;
+  /** Number of additional items still queued for photos */
+  queueRemaining?: number;
+  /** Group mode: photos taken for this unit get copied to these other unit IDs on close */
+  groupUnitIds?: string[];
 };
 
-export default function ImageUploadPanel({ receivedUnitId, unitTitle, unitIndex, onClose }: Props) {
+export default function ImageUploadPanel({ receivedUnitId, unitTitle, unitIndex, onClose, queueRemaining, groupUnitIds }: Props) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [images, setImages] = useState<UploadedImage[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [copying, setCopying] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastCountRef = useRef(0);
+
+  const unitCount = groupUnitIds?.length ?? 1;
 
   const createSession = useCallback(async () => {
     setLoading(true);
@@ -36,7 +43,6 @@ export default function ImageUploadPanel({ receivedUnitId, unitTitle, unitIndex,
       const sid = data.sessionId;
       setSessionId(sid);
 
-      // Generate QR code pointing to the mobile upload page
       const uploadUrl = `${window.location.origin}/upload/${sid}`;
       const qr = await QRCode.toDataURL(uploadUrl, {
         width: 240,
@@ -51,7 +57,6 @@ export default function ImageUploadPanel({ receivedUnitId, unitTitle, unitIndex,
     }
   }, [receivedUnitId]);
 
-  // Poll for new images every 2.5 seconds
   const startPolling = useCallback((sid: string) => {
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(async () => {
@@ -78,21 +83,50 @@ export default function ImageUploadPanel({ receivedUnitId, unitTitle, unitIndex,
     if (sessionId) startPolling(sessionId);
   }, [sessionId, startPolling]);
 
+  // On close: copy photos to sibling units if grouped, then call parent onClose
+  async function handleClose() {
+    if (groupUnitIds && groupUnitIds.length > 1 && images.length > 0) {
+      const otherUnitIds = groupUnitIds.filter(id => id !== receivedUnitId);
+      if (otherUnitIds.length > 0) {
+        setCopying(true);
+        try {
+          await fetch("/api/uploads/copy-images", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sourceUnitId: receivedUnitId, targetUnitIds: otherUnitIds }),
+          });
+        } catch {} // best effort
+        setCopying(false);
+      }
+    }
+    onClose();
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
       <div className="w-full max-w-md rounded-xl border border-slate-700 bg-slate-900 shadow-2xl overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
           <div>
-            <h3 className="text-sm font-semibold text-slate-200">Add Photos — Unit #{unitIndex}</h3>
+            <h3 className="text-sm font-semibold text-slate-200">
+              Add Photos{unitCount > 1 ? ` — ${unitCount} Units` : ` — Unit #${unitIndex}`}
+            </h3>
             <p className="text-xs text-slate-500 truncate max-w-[280px]" title={unitTitle}>{unitTitle}</p>
           </div>
-          <button
-            onClick={onClose}
-            className="rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-400 hover:bg-slate-800"
-          >
-            Close
-          </button>
+          <div className="flex items-center gap-2">
+            {queueRemaining != null && queueRemaining > 0 && (
+              <span className="text-[10px] text-amber-400 font-medium">
+                +{queueRemaining} more
+              </span>
+            )}
+            <button
+              onClick={handleClose}
+              disabled={copying}
+              className="rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-400 hover:bg-slate-800 disabled:opacity-50"
+            >
+              {queueRemaining ? "Skip" : "Close"}
+            </button>
+          </div>
         </div>
 
         <div className="p-5 space-y-5">
@@ -113,7 +147,12 @@ export default function ImageUploadPanel({ receivedUnitId, unitTitle, unitIndex,
             <div className="flex flex-col items-center gap-4">
               <div className="text-center">
                 <p className="text-sm text-slate-300 font-medium mb-1">Scan with your phone</p>
-                <p className="text-xs text-slate-500">Opens the photo upload page</p>
+                <p className="text-xs text-slate-500">
+                  {unitCount > 1
+                    ? `Photos will be saved to all ${unitCount} units`
+                    : "Opens the photo upload page"
+                  }
+                </p>
               </div>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
@@ -129,7 +168,7 @@ export default function ImageUploadPanel({ receivedUnitId, unitTitle, unitIndex,
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <span className="text-xs text-green-400 font-medium">
-                  ✓ {images.length} photo{images.length !== 1 ? "s" : ""} received
+                  {images.length} photo{images.length !== 1 ? "s" : ""} received
                 </span>
                 <span className="text-xs text-slate-600">— updating in real time</span>
               </div>
@@ -159,12 +198,20 @@ export default function ImageUploadPanel({ receivedUnitId, unitTitle, unitIndex,
             )
           )}
 
-          {images.length > 0 && (
+          {copying && (
+            <div className="text-center text-xs text-blue-400 animate-pulse">
+              Copying photos to {unitCount - 1} other unit{unitCount > 2 ? "s" : ""}...
+            </div>
+          )}
+
+          {images.length > 0 && !copying && (
             <button
-              onClick={onClose}
+              onClick={handleClose}
               className="w-full rounded-lg bg-green-600 hover:bg-green-700 py-2.5 text-sm font-semibold text-white transition-colors"
             >
-              Done — {images.length} photo{images.length !== 1 ? "s" : ""} saved
+              {queueRemaining
+                ? `Next item (${queueRemaining} remaining)`
+                : `Done — ${images.length} photo${images.length !== 1 ? "s" : ""} saved${unitCount > 1 ? ` to ${unitCount} units` : ""}`}
             </button>
           )}
         </div>

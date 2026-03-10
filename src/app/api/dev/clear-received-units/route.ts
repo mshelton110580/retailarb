@@ -20,6 +20,8 @@ export async function POST() {
   if (!auth.ok) return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
 
   // Delete in FK-safe order
+  await prisma.upload_sessions.deleteMany();
+  await prisma.lot_units.deleteMany();
   const [unit_images, received_units, receiving_scans] = await Promise.all([
     prisma.unit_images.deleteMany(),
     prisma.received_units.deleteMany(),

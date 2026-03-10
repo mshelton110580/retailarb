@@ -27,9 +27,16 @@ export async function DELETE(
     return NextResponse.json({ error: "No units found for this order" }, { status: 404 });
   }
 
-  // Delete images first (FK constraint), then units
+  // Delete related records (FK constraints), then units
+  const unitIds = units.map(u => u.id);
   await prisma.unit_images.deleteMany({
-    where: { received_unit_id: { in: units.map(u => u.id) } }
+    where: { received_unit_id: { in: unitIds } }
+  });
+  await prisma.upload_sessions.deleteMany({
+    where: { received_unit_id: { in: unitIds } }
+  });
+  await prisma.lot_units.deleteMany({
+    where: { received_unit_id: { in: unitIds } }
   });
   await prisma.received_units.deleteMany({
     where: { order_id: orderId }

@@ -31,8 +31,14 @@ export async function DELETE(
     return NextResponse.json({ error: "Unit not found" }, { status: 404 });
   }
 
-  // Delete unit_images first (FK constraint), then the unit
+  // Delete related records (FK constraints), then the unit
   await prisma.unit_images.deleteMany({
+    where: { received_unit_id: unitId }
+  });
+  await prisma.upload_sessions.deleteMany({
+    where: { received_unit_id: unitId }
+  });
+  await prisma.lot_units.deleteMany({
     where: { received_unit_id: unitId }
   });
   await prisma.received_units.delete({

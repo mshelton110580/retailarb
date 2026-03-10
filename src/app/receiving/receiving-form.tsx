@@ -116,7 +116,15 @@ export default function ReceivingForm() {
     unitId: string;
     unitIndex: number;
     title: string;
+    groupUnitIds?: string[];
   } | null>(null);
+  // Photo queue for lot/multi-unit — grouped by eBay item (one QR per item)
+  const [lotPhotoQueue, setLotPhotoQueue] = useState<Array<{
+    unitId: string;
+    unitIndex: number;
+    title: string;
+    groupUnitIds?: string[];
+  }>>([]);
 
   const [conditions, setConditions] = useState<string[]>([]);
 
@@ -455,6 +463,52 @@ export default function ReceivingForm() {
     }
   }
 
+  /** Group non-good units by product name into grouped photo sessions (one QR per eBay item) */
+  function buildPhotoGroups(units: Array<{ id: string; unitIndex: number; condition: string; product: string }>) {
+    const goodConditions = new Set(["good", "new", "like_new", "acceptable", "excellent"]);
+    const needPhotos = units.filter(u => !goodConditions.has(u.condition?.toLowerCase() ?? ""));
+    if (needPhotos.length === 0) return [];
+
+    // If only one unit needs photos, no grouping needed
+    if (needPhotos.length === 1) {
+      return [{ unitId: needPhotos[0].id, unitIndex: needPhotos[0].unitIndex, title: needPhotos[0].product }];
+    }
+
+    // Group by product name — one QR code per distinct product
+    const byProduct = new Map<string, typeof needPhotos>();
+    for (const u of needPhotos) {
+      const key = u.product || "Unknown";
+      if (!byProduct.has(key)) byProduct.set(key, []);
+      byProduct.get(key)!.push(u);
+    }
+
+    const groups: Array<{ unitId: string; unitIndex: number; title: string; groupUnitIds?: string[] }> = [];
+    for (const [product, productUnits] of byProduct) {
+      if (productUnits.length === 1) {
+        groups.push({ unitId: productUnits[0].id, unitIndex: productUnits[0].unitIndex, title: product });
+      } else {
+        // Grouped: primary unit is the first, all unit IDs passed for single QR
+        groups.push({
+          unitId: productUnits[0].id,
+          unitIndex: productUnits[0].unitIndex,
+          title: product,
+          groupUnitIds: productUnits.map(u => u.id),
+        });
+      }
+    }
+    return groups;
+  }
+
+  /** Start photo upload flow from a list of photo groups */
+  function startPhotoFlow(groups: Array<{ unitId: string; unitIndex: number; title: string; groupUnitIds?: string[] }>) {
+    if (groups.length === 0) {
+      trackingRef.current?.focus();
+      return;
+    }
+    setLotPhotoQueue(groups.slice(1));
+    setImageUploadUnit(groups[0]);
+  }
+
   function applyBreakdownToUnits(breakdown: LotBreakdownEdit[]) {
     // Move to the received confirmation step with expected = breakdown quantities
     setLotReceivedEdit(breakdown.map(i => ({
@@ -526,6 +580,7 @@ export default function ReceivingForm() {
 
         let totalCreated = 0;
         const errors: string[] = [];
+        const allCreatedUnits: Array<{ id: string; unitIndex: number; condition: string; product: string }> = [];
 
         const requests = Array.from(shipmentUnits.entries()).map(async ([shIdx, units]) => {
           const sh = lotConfirmation.shipments![shIdx];
@@ -552,6 +607,7 @@ export default function ReceivingForm() {
           const data = await res.json();
           if (res.ok) {
             totalCreated += data.unitsReceived ?? data.unitsCreated;
+            if (data.units) allCreatedUnits.push(...data.units);
           } else {
             errors.push(`Order ${sh.orderId}: ${data.error}`);
           }
@@ -559,18 +615,21 @@ export default function ReceivingForm() {
 
         await Promise.all(requests);
 
+        const photoGroups = buildPhotoGroups(allCreatedUnits);
+
         if (errors.length > 0) {
           setStatus(`Partially saved — ${totalCreated} units. Errors: ${errors.join("; ")}`);
           setStatusType("warning");
         } else {
           setLotConfirmation(null);
           setResult(null);
-          setStatus(`✓ ${totalCreated} units checked in across ${lotConfirmation.shipments.length} orders`);
-          setStatusType("success");
+          setStatus(`✓ ${totalCreated} units checked in across ${lotConfirmation.shipments.length} orders${photoGroups.length > 0 ? ` — ${photoGroups.reduce((s, g) => s + (g.groupUnitIds?.length ?? 1), 0)} need photos` : ""}`);
+          setStatusType(photoGroups.length > 0 ? "warning" : "success");
         }
         if (trackingRef.current) trackingRef.current.value = "";
-        trackingRef.current?.focus();
         router.refresh();
+
+        startPhotoFlow(photoGroups);
       } else {
         // Single shipment
         const res = await fetch("/api/receiving/confirm-lot", {
@@ -595,16 +654,21 @@ export default function ReceivingForm() {
         });
         const data = await res.json();
         if (res.ok) {
+          const createdUnits: Array<{ id: string; unitIndex: number; condition: string; product: string }> = data.units ?? [];
+          const photoGroups = buildPhotoGroups(createdUnits);
+
           setLotConfirmation(null);
           setResult(null);
           const received = data.unitsReceived ?? data.unitsCreated;
           const missing = data.unitsMissing ?? 0;
           const missingText = missing > 0 ? ` (${missing} missing)` : "";
-          setStatus(`✓ ${received} units checked in${missingText}`);
-          setStatusType("success");
+          const photoCount = photoGroups.reduce((s, g) => s + (g.groupUnitIds?.length ?? 1), 0);
+          setStatus(`✓ ${received} units checked in${missingText}${photoCount > 0 ? ` — ${photoCount} need photos` : ""}`);
+          setStatusType(photoCount > 0 ? "warning" : "success");
           if (trackingRef.current) trackingRef.current.value = "";
-          trackingRef.current?.focus();
           router.refresh();
+
+          startPhotoFlow(photoGroups);
         } else {
           setStatus(`Error: ${data.error}`);
           setStatusType("error");
@@ -644,13 +708,18 @@ export default function ReceivingForm() {
       });
       const data = await res.json();
       if (res.ok) {
+        const createdUnits: Array<{ id: string; unitIndex: number; condition: string; product: string }> = data.units ?? [];
+        const photoGroups = buildPhotoGroups(createdUnits);
+        const photoCount = photoGroups.reduce((s, g) => s + (g.groupUnitIds?.length ?? 1), 0);
+
         setLotConfirmation(null);
         setResult(null);
-        setStatus(`✓ ${data.unitsCreated} units checked in`);
-        setStatusType("success");
+        setStatus(`✓ ${data.unitsCreated} units checked in${photoCount > 0 ? ` — ${photoCount} need photos` : ""}`);
+        setStatusType(photoCount > 0 ? "warning" : "success");
         if (trackingRef.current) trackingRef.current.value = "";
-        trackingRef.current?.focus();
         router.refresh();
+
+        startPhotoFlow(photoGroups);
       } else {
         setStatus(`Error: ${data.error}`);
         setStatusType("error");
@@ -891,7 +960,18 @@ export default function ReceivingForm() {
           receivedUnitId={imageUploadUnit.unitId}
           unitTitle={imageUploadUnit.title}
           unitIndex={imageUploadUnit.unitIndex}
-          onClose={() => setImageUploadUnit(null)}
+          queueRemaining={imageUploadUnit.groupUnitIds ? 0 : lotPhotoQueue.length}
+          groupUnitIds={imageUploadUnit.groupUnitIds}
+          onClose={() => {
+            if (lotPhotoQueue.length > 0) {
+              // Advance to next group in the photo queue
+              setImageUploadUnit(lotPhotoQueue[0]);
+              setLotPhotoQueue(prev => prev.slice(1));
+            } else {
+              setImageUploadUnit(null);
+              trackingRef.current?.focus();
+            }
+          }}
         />
       )}
 

@@ -86,7 +86,7 @@ export default function CheckInModal({
   const [step, setStep] = useState<Step>("form");
 
   // Photo step
-  const [photoQueue, setPhotoQueue] = useState<Array<{ unitId: string; unitIndex: number; title: string }>>([]);
+  const [photoQueue, setPhotoQueue] = useState<Array<{ unitId: string; unitIndex: number; title: string; groupUnitIds?: string[] }>>([]);
   const [photoQueueIndex, setPhotoQueueIndex] = useState(0);
 
   // Product step
@@ -184,7 +184,31 @@ export default function CheckInModal({
     setIsLot(lotDetected);
 
     if (photosNeeded.length > 0) {
-      setPhotoQueue(photosNeeded);
+      // Group photos by title (eBay item) — one QR code per item
+      if (photosNeeded.length > 1) {
+        const grouped: Array<{ unitId: string; unitIndex: number; title: string; groupUnitIds?: string[] }> = [];
+        const byTitle = new Map<string, typeof photosNeeded>();
+        for (const u of photosNeeded) {
+          const key = u.title;
+          if (!byTitle.has(key)) byTitle.set(key, []);
+          byTitle.get(key)!.push(u);
+        }
+        for (const [title, units] of byTitle) {
+          if (units.length === 1) {
+            grouped.push(units[0]);
+          } else {
+            grouped.push({
+              unitId: units[0].unitId,
+              unitIndex: units[0].unitIndex,
+              title,
+              groupUnitIds: units.map(u => u.unitId),
+            });
+          }
+        }
+        setPhotoQueue(grouped);
+      } else {
+        setPhotoQueue(photosNeeded);
+      }
       setPhotoQueueIndex(0);
       setStep("photos");
     } else {
@@ -337,11 +361,14 @@ export default function CheckInModal({
 
   const currentPhoto = photoQueue[photoQueueIndex];
   if (step === "photos" && currentPhoto) {
+    const remainingInQueue = photoQueue.length - photoQueueIndex - 1;
     return (
       <ImageUploadPanel
         receivedUnitId={currentPhoto.unitId}
         unitTitle={currentPhoto.title}
         unitIndex={currentPhoto.unitIndex}
+        queueRemaining={currentPhoto.groupUnitIds ? 0 : remainingInQueue}
+        groupUnitIds={currentPhoto.groupUnitIds}
         onClose={onPhotoClosed}
       />
     );

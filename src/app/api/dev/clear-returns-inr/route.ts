@@ -18,6 +18,10 @@ export async function POST() {
   const auth = await requireRole(["ADMIN"]);
   if (!auth.ok) return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
 
+  // Tier 0: FK-dependent on received_units
+  await prisma.upload_sessions.deleteMany({});
+  await prisma.lot_units.deleteMany({});
+
   // Tier 1: leaf tables
   const [unitImages, trackingNums] = await Promise.all([
     prisma.unit_images.deleteMany({}),

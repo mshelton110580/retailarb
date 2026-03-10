@@ -36,13 +36,20 @@ export async function DELETE(
     const shipment = match.shipment;
     affectedOrderIds.push(shipment.order_id);
 
-    // Delete unit_images first (FK constraint), then received_units
+    // Delete related records (FK constraints), then received_units
     const unitIds = await prisma.received_units.findMany({
       where: { order_id: shipment.order_id },
       select: { id: true }
     });
+    const ids = unitIds.map(u => u.id);
     await prisma.unit_images.deleteMany({
-      where: { received_unit_id: { in: unitIds.map(u => u.id) } }
+      where: { received_unit_id: { in: ids } }
+    });
+    await prisma.upload_sessions.deleteMany({
+      where: { received_unit_id: { in: ids } }
+    });
+    await prisma.lot_units.deleteMany({
+      where: { received_unit_id: { in: ids } }
     });
     await prisma.received_units.deleteMany({
       where: { order_id: shipment.order_id }
