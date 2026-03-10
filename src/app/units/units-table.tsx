@@ -3,6 +3,17 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useBarcodeScanner } from "@/lib/use-barcode-scanner";
+import ChipSearchInput, { type SearchChip, type SearchField } from "@/components/chip-search-input";
+
+const UNIT_SEARCH_FIELDS: SearchField[] = [
+  { key: "title",     label: "Title" },
+  { key: "order",     label: "Order ID" },
+  { key: "item",      label: "Item ID" },
+  { key: "condition",  label: "Condition" },
+  { key: "notes",     label: "Notes" },
+  { key: "tracking",  label: "Tracking" },
+  { key: "product",   label: "Product" },
+];
 
 type Product = { id: string; product_name: string };
 
@@ -50,19 +61,21 @@ const LS_WIDTHS = "units_col_widths";
 const LS_VISIBLE = "units_col_visible";
 
 function loadWidths(): Record<ColKey, number> {
+  const defaults = Object.fromEntries(ALL_COLUMNS.map(c => [c.key, c.defaultWidth])) as Record<ColKey, number>;
   try {
     const v = localStorage.getItem(LS_WIDTHS);
-    if (v) return JSON.parse(v);
+    if (v) return { ...defaults, ...JSON.parse(v) };
   } catch {}
-  return Object.fromEntries(ALL_COLUMNS.map(c => [c.key, c.defaultWidth])) as Record<ColKey, number>;
+  return defaults;
 }
 
 function loadVisible(): Record<ColKey, boolean> {
+  const defaults = Object.fromEntries(ALL_COLUMNS.map(c => [c.key, true])) as Record<ColKey, boolean>;
   try {
     const v = localStorage.getItem(LS_VISIBLE);
-    if (v) return JSON.parse(v);
+    if (v) return { ...defaults, ...JSON.parse(v) };
   } catch {}
-  return Object.fromEntries(ALL_COLUMNS.map(c => [c.key, true])) as Record<ColKey, boolean>;
+  return defaults;
 }
 
 function stateColor(state: string) {
@@ -486,7 +499,8 @@ function NewProductModal({
 // ─── Main Table Component ─────────────────────────────────────────────────────
 
 export default function UnitsTable({ products: initialProducts }: { products: Product[] }) {
-  const [search, setSearch] = useState("");
+  const [searchChips, setSearchChips] = useState<SearchChip[]>([]);
+  const [searchFreeText, setSearchFreeText] = useState("");
   const [filterStates, setFilterStates] = useState<string[]>([]);
   const [filterConditions, setFilterConditions] = useState<string[]>([]);
   const [filterProductId, setFilterProductId] = useState("");
@@ -584,14 +598,26 @@ export default function UnitsTable({ products: initialProducts }: { products: Pr
   const visibleCols = ALL_COLUMNS.filter(c => colVisible[c.key]);
   const colSpan = 1 + visibleCols.length;
   const searchRef = useRef<HTMLInputElement>(null);
-  useBarcodeScanner(searchRef, (value) => setSearch(value));
+  useBarcodeScanner(searchRef, (value) => {
+    setSearchChips([]);
+    setSearchFreeText(value);
+  });
+
+  const handleSearchChange = useCallback((chips: SearchChip[], freeText: string) => {
+    setSearchChips(chips);
+    setSearchFreeText(freeText);
+  }, []);
+
+  // Serialize chips for stable dependency tracking
+  const chipsKey = JSON.stringify(searchChips);
 
   const fetchUnits = useCallback(async (resetOffset = false) => {
     setLoading(true);
     const currentOffset = resetOffset ? 0 : offset;
     if (resetOffset) setOffset(0);
     const params = new URLSearchParams();
-    if (search) params.set("search", search);
+    if (searchFreeText) params.set("search", searchFreeText);
+    if (searchChips.length > 0) params.set("chips", JSON.stringify(searchChips));
     if (filterStates.length) params.set("state", filterStates.join(","));
     if (filterConditions.length) params.set("condition", filterConditions.join(","));
     if (filterProductId) params.set("productId", filterProductId);
@@ -605,10 +631,11 @@ export default function UnitsTable({ products: initialProducts }: { products: Pr
       setUnits(data.units ?? []);
       setTotal(data.total ?? 0);
     } finally { setLoading(false); }
-  }, [search, filterStates, filterConditions, filterProductId, sortBy, sortDir, offset]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchFreeText, chipsKey, filterStates, filterConditions, filterProductId, sortBy, sortDir, offset]);
 
   useEffect(() => { fetchUnits(true); }, // eslint-disable-next-line react-hooks/exhaustive-deps
-  [search, filterStates, filterConditions, filterProductId, sortBy, sortDir]);
+  [searchFreeText, chipsKey, filterStates, filterConditions, filterProductId, sortBy, sortDir]);
 
   useEffect(() => { if (offset > 0) fetchUnits(false); }, // eslint-disable-next-line react-hooks/exhaustive-deps
   [offset]);
@@ -796,10 +823,13 @@ export default function UnitsTable({ products: initialProducts }: { products: Pr
       <div className="rounded-lg border border-slate-800 bg-slate-900 p-4 space-y-3">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div className="md:col-span-2">
-            <label className="block text-xs text-slate-400 mb-1">Search (title, order, condition, notes, tracking — also accepts barcode scans)</label>
-            <input ref={searchRef} type="text" value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="Type or scan to search..."
-              className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300 placeholder-slate-600" />
+            <label className="block text-xs text-slate-400 mb-1">Search all fields, or type a field name to filter by specific field</label>
+            <ChipSearchInput
+              ref={searchRef}
+              fields={UNIT_SEARCH_FIELDS}
+              placeholder="Search or type a field name (title, order, tracking…)"
+              onChange={handleSearchChange}
+            />
           </div>
           <div>
             <div className="flex items-center justify-between mb-1">

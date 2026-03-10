@@ -2,13 +2,14 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
 import { findTrackingOrderIds } from "@/lib/tracking-search";
+import { parseFieldSearch } from "@/lib/search-parser";
 
 /**
  * GET /api/orders/search
  * Full-featured order search with filtering, sorting, and pagination.
  *
  * Query params:
- *   search      - global text search: order ID, item ID, item title, tracking number (including barcodes), eBay account username
+ *   search      - global text search or field:value (order, item, title, tracking, account)
  *   status      - comma-separated order_status values (e.g. "Complete,Active")
  *   shipStatus  - comma-separated shipment derived_status values (e.g. "delivered,shipped")
  *   checkedIn   - "yes" | "no" | "" (filter by shipment check-in state)
@@ -26,6 +27,7 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const search = searchParams.get("search")?.trim() ?? "";
+  const chipsParam = searchParams.get("chips") ?? "";
   const statusParam = searchParams.get("status") ?? "";
   const shipStatusParam = searchParams.get("shipStatus") ?? "";
   const checkedIn = searchParams.get("checkedIn") ?? "";
@@ -59,58 +61,104 @@ export async function GET(req: Request) {
   // Order status filter
   if (statuses.length > 0) where.order_status = { in: statuses };
 
-  // Global text search — resolves to order IDs from multiple sources
-  if (search) {
-    const orderIdSets: string[][] = [];
+  // --- Helper: resolve a single field search to a set of order IDs ---
+  async function resolveFieldToOrderIds(field: string, value: string): Promise<Set<string>> {
+    const ids = new Set<string>();
+    if (field === "order") {
+      const matches = await prisma.orders.findMany({
+        where: { order_id: { contains: value, mode: "insensitive" } },
+        select: { order_id: true },
+      });
+      matches.forEach(o => ids.add(o.order_id));
+    } else if (field === "item") {
+      const matches = await prisma.order_items.findMany({
+        where: { item_id: { contains: value, mode: "insensitive" } },
+        select: { order_id: true },
+      });
+      matches.forEach(r => ids.add(r.order_id));
+    } else if (field === "title") {
+      const matches = await prisma.order_items.findMany({
+        where: { title: { contains: value, mode: "insensitive" } },
+        select: { order_id: true },
+      });
+      matches.forEach(r => ids.add(r.order_id));
+    } else if (field === "tracking") {
+      const trackingOrderIds = await findTrackingOrderIds(value);
+      trackingOrderIds.forEach(id => ids.add(id));
+    } else if (field === "account") {
+      const accountMatches = await prisma.ebay_accounts.findMany({
+        where: { ebay_username: { contains: value, mode: "insensitive" } },
+        select: { id: true },
+      });
+      if (accountMatches.length > 0) {
+        const accountOrderIds = await prisma.orders.findMany({
+          where: { ebay_account_id: { in: accountMatches.map(a => a.id) } },
+          select: { order_id: true },
+        });
+        accountOrderIds.forEach(o => ids.add(o.order_id));
+      }
+    }
+    return ids;
+  }
 
-    // 1. Direct order ID match
-    orderIdSets.push([search]);
-
-    // 2. Item ID match → find order_items → get order_ids
-    const itemIdMatches = await prisma.order_items.findMany({
-      where: { item_id: { contains: search, mode: "insensitive" } },
-      select: { order_id: true },
-    });
-    if (itemIdMatches.length > 0) orderIdSets.push(itemIdMatches.map(r => r.order_id));
-
-    // 3. Item title match → find order_items → get order_ids
-    const titleMatches = await prisma.order_items.findMany({
-      where: { title: { contains: search, mode: "insensitive" } },
-      select: { order_id: true },
-    });
-    if (titleMatches.length > 0) orderIdSets.push(titleMatches.map(r => r.order_id));
-
-    // 4. Tracking number match (handles typed partials, USPS barcodes, UPS alphanumeric)
-    const trackingOrderIds = await findTrackingOrderIds(search);
-    if (trackingOrderIds.length > 0) orderIdSets.push(trackingOrderIds);
-
-    // 5. eBay account username match → find accounts → get order_ids
-    const accountMatches = await prisma.ebay_accounts.findMany({
-      where: { ebay_username: { contains: search, mode: "insensitive" } },
-      select: { id: true },
-    });
+  // --- Helper: resolve global search to a set of order IDs (union across all fields) ---
+  async function resolveGlobalToOrderIds(value: string): Promise<Set<string>> {
+    const ids = new Set<string>();
+    const [directMatches, itemIdMatches, titleMatches, trackingOrderIds, accountMatches] = await Promise.all([
+      prisma.orders.findMany({ where: { order_id: { contains: value, mode: "insensitive" } }, select: { order_id: true } }),
+      prisma.order_items.findMany({ where: { item_id: { contains: value, mode: "insensitive" } }, select: { order_id: true } }),
+      prisma.order_items.findMany({ where: { title: { contains: value, mode: "insensitive" } }, select: { order_id: true } }),
+      findTrackingOrderIds(value),
+      prisma.ebay_accounts.findMany({ where: { ebay_username: { contains: value, mode: "insensitive" } }, select: { id: true } }),
+    ]);
+    directMatches.forEach(o => ids.add(o.order_id));
+    itemIdMatches.forEach(r => ids.add(r.order_id));
+    titleMatches.forEach(r => ids.add(r.order_id));
+    trackingOrderIds.forEach(id => ids.add(id));
     if (accountMatches.length > 0) {
       const accountOrderIds = await prisma.orders.findMany({
         where: { ebay_account_id: { in: accountMatches.map(a => a.id) } },
         select: { order_id: true },
       });
-      orderIdSets.push(accountOrderIds.map(o => o.order_id));
+      accountOrderIds.forEach(o => ids.add(o.order_id));
     }
+    return ids;
+  }
 
-    // Union all matched order IDs
-    const allMatchedIds = new Set<string>();
-    // Direct order ID match — check if starts with search
-    const directOrderMatches = await prisma.orders.findMany({
-      where: { order_id: { contains: search, mode: "insensitive" } },
-      select: { order_id: true },
-    });
-    directOrderMatches.forEach(o => allMatchedIds.add(o.order_id));
-    // Add all other matches
-    for (const ids of orderIdSets.slice(1)) {
-      ids.forEach(id => allMatchedIds.add(id));
+  // Collect order ID sets from chips (each chip narrows results — AND)
+  type SearchChip = { field: string; value: string };
+  let chips: SearchChip[] = [];
+  if (chipsParam) {
+    try { chips = JSON.parse(chipsParam); } catch {}
+  }
+
+  const chipIdSets: Set<string>[] = [];
+  for (const chip of chips) {
+    if (!chip.field || !chip.value?.trim()) continue;
+    chipIdSets.push(await resolveFieldToOrderIds(chip.field, chip.value.trim()));
+  }
+
+  // Handle free-text search param (legacy field:value syntax or global)
+  const ORDER_SEARCH_FIELDS = ["order", "item", "title", "tracking", "account"];
+  if (search) {
+    const { field, value } = parseFieldSearch(search, ORDER_SEARCH_FIELDS);
+    if (value) {
+      chipIdSets.push(field
+        ? await resolveFieldToOrderIds(field, value)
+        : await resolveGlobalToOrderIds(value)
+      );
+    } else if (field) {
+      chipIdSets.push(new Set()); // field: with no value → no matches
     }
+  }
 
-    where.order_id = { in: Array.from(allMatchedIds) };
+  // Intersect all sets (AND logic across chips + free text)
+  if (chipIdSets.length > 0) {
+    let result = chipIdSets[0];
+    for (let i = 1; i < chipIdSets.length; i++) {
+      result = new Set([...result].filter(id => chipIdSets[i].has(id)));
+    }
+    where.order_id = { in: Array.from(result) };
   }
 
   // Shipment-level filters (derived_status, checked_in)

@@ -2,13 +2,109 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
 import { findTrackingOrderIds } from "@/lib/tracking-search";
+import { parseFieldSearch } from "@/lib/search-parser";
+
+type SearchChip = { field: string; value: string };
+
+/**
+ * Build a Prisma WHERE fragment for a single field:value search on received_units.
+ * Returns conditions to AND into the main where clause.
+ */
+async function buildFieldCondition(field: string, value: string): Promise<any | null> {
+  switch (field) {
+    case "title": {
+      const [listingMatches, orderItemMatches] = await Promise.all([
+        prisma.listings.findMany({
+          where: { title: { contains: value, mode: "insensitive" } },
+          select: { item_id: true }
+        }),
+        prisma.order_items.findMany({
+          where: { title: { contains: value, mode: "insensitive" } },
+          select: { order_id: true }
+        }),
+      ]);
+      const or: any[] = [];
+      if (listingMatches.length > 0) or.push({ item_id: { in: listingMatches.map(l => l.item_id) } });
+      if (orderItemMatches.length > 0) or.push({ order_id: { in: orderItemMatches.map(o => o.order_id) } });
+      return or.length > 0 ? { OR: or } : { id: "__no_match__" };
+    }
+    case "order":
+      return { order_id: { contains: value, mode: "insensitive" } };
+    case "item":
+      return { item_id: { contains: value, mode: "insensitive" } };
+    case "condition":
+      return { condition_status: { contains: value, mode: "insensitive" } };
+    case "notes":
+      return { notes: { contains: value, mode: "insensitive" } };
+    case "tracking": {
+      const trackingOrderIds = await findTrackingOrderIds(value);
+      return trackingOrderIds.length > 0
+        ? { order_id: { in: trackingOrderIds } }
+        : { id: "__no_match__" };
+    }
+    case "product": {
+      const productMatches = await prisma.products.findMany({
+        where: { product_name: { contains: value, mode: "insensitive" } },
+        select: { id: true }
+      });
+      return productMatches.length > 0
+        ? { product_id: { in: productMatches.map(p => p.id) } }
+        : { id: "__no_match__" };
+    }
+    default:
+      return null;
+  }
+}
+
+/**
+ * Build a global (all-fields) search condition.
+ */
+async function buildGlobalCondition(value: string): Promise<any> {
+  const [listingMatches, orderItemMatches, trackingOrderIds, productMatches] = await Promise.all([
+    prisma.listings.findMany({
+      where: { title: { contains: value, mode: "insensitive" } },
+      select: { item_id: true }
+    }),
+    prisma.order_items.findMany({
+      where: { title: { contains: value, mode: "insensitive" } },
+      select: { order_id: true }
+    }),
+    findTrackingOrderIds(value),
+    prisma.products.findMany({
+      where: { product_name: { contains: value, mode: "insensitive" } },
+      select: { id: true }
+    }),
+  ]);
+
+  const searchOr: any[] = [
+    { order_id: { contains: value, mode: "insensitive" } },
+    { item_id: { contains: value, mode: "insensitive" } },
+    { condition_status: { contains: value, mode: "insensitive" } },
+    { notes: { contains: value, mode: "insensitive" } },
+  ];
+  if (listingMatches.length > 0) {
+    searchOr.push({ item_id: { in: listingMatches.map(l => l.item_id) } });
+  }
+  if (orderItemMatches.length > 0) {
+    searchOr.push({ order_id: { in: orderItemMatches.map(o => o.order_id) } });
+  }
+  if (trackingOrderIds.length > 0) {
+    searchOr.push({ order_id: { in: trackingOrderIds } });
+  }
+  if (productMatches.length > 0) {
+    searchOr.push({ product_id: { in: productMatches.map(p => p.id) } });
+  }
+
+  return { OR: searchOr };
+}
 
 /**
  * GET /api/units
  * Returns received units with filtering, search, and sorting.
  *
  * Query params:
- *   search        - text search against title, order_id, condition_status, notes, tracking numbers (including barcodes)
+ *   search        - free-text search (all fields) or legacy field:value syntax
+ *   chips         - JSON array of {field, value} for field-specific searches (AND combined)
  *   productId     - filter by product ID ("none" for uncategorized)
  *   state         - filter by inventory_state (comma-separated for multiple)
  *   condition     - filter by condition_status (comma-separated)
@@ -25,6 +121,7 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const search = searchParams.get("search") ?? "";
+  const chipsParam = searchParams.get("chips") ?? "";
   const productId = searchParams.get("productId") ?? searchParams.get("categoryId") ?? "";
   const stateParam = searchParams.get("state") ?? "";
   const conditionParam = searchParams.get("condition") ?? "";
@@ -51,42 +148,44 @@ export async function GET(req: Request) {
     where.product_id = productId;
   }
 
-  // Text search across title (listing + order_item), order_id, condition, notes
-  let searchOrderIds: string[] | null = null;
+  // Collect all AND conditions from chips and free-text search
+  const andConditions: any[] = [];
+
+  // Parse structured chips param
+  let chips: SearchChip[] = [];
+  if (chipsParam) {
+    try { chips = JSON.parse(chipsParam); } catch {}
+  }
+
+  // Build field-specific conditions from chips (AND combined)
+  for (const chip of chips) {
+    if (!chip.field || !chip.value?.trim()) continue;
+    const cond = await buildFieldCondition(chip.field, chip.value.trim());
+    if (cond) andConditions.push(cond);
+  }
+
+  // Handle free-text search param
+  const UNIT_SEARCH_FIELDS = ["title", "order", "item", "condition", "notes", "tracking", "product"];
   if (search) {
-    const lower = search.toLowerCase();
-    // Search listings titles
-    const listingMatches = await prisma.listings.findMany({
-      where: { title: { contains: search, mode: "insensitive" } },
-      select: { item_id: true }
-    });
-    const itemIds = listingMatches.map(l => l.item_id);
-
-    const searchOr: any[] = [
-      { order_id: { contains: search, mode: "insensitive" } },
-      { item_id: { contains: search, mode: "insensitive" } },
-      { condition_status: { contains: search, mode: "insensitive" } },
-      { notes: { contains: search, mode: "insensitive" } },
-    ];
-    if (itemIds.length > 0) {
-      searchOr.push({ item_id: { in: itemIds } });
+    const { field, value } = parseFieldSearch(search, UNIT_SEARCH_FIELDS);
+    if (value) {
+      if (field) {
+        const cond = await buildFieldCondition(field, value);
+        if (cond) andConditions.push(cond);
+      } else {
+        andConditions.push(await buildGlobalCondition(value));
+      }
+    } else if (field) {
+      // field: with empty value
+      andConditions.push({ id: "__no_match__" });
     }
-    // Also search order_item titles directly
-    const orderItemMatches = await prisma.order_items.findMany({
-      where: { title: { contains: search, mode: "insensitive" } },
-      select: { order_id: true }
-    });
-    if (orderItemMatches.length > 0) {
-      searchOr.push({ order_id: { in: orderItemMatches.map(o => o.order_id) } });
-    }
+  }
 
-    // Search tracking numbers (handles typed partials, USPS barcodes, UPS alphanumeric)
-    const trackingOrderIds = await findTrackingOrderIds(search);
-    if (trackingOrderIds.length > 0) {
-      searchOr.push({ order_id: { in: trackingOrderIds } });
-    }
-
-    where.OR = searchOr;
+  // Apply all search conditions
+  if (andConditions.length === 1) {
+    Object.assign(where, andConditions[0]);
+  } else if (andConditions.length > 1) {
+    where.AND = [...(where.AND ?? []), ...andConditions];
   }
 
   // Build orderBy

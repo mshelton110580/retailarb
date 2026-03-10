@@ -4,6 +4,15 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Link from "next/link";
 import CheckInModal from "@/components/check-in-modal";
 import { useBarcodeScanner } from "@/lib/use-barcode-scanner";
+import ChipSearchInput, { type SearchChip, type SearchField } from "@/components/chip-search-input";
+
+const ORDER_SEARCH_FIELDS: SearchField[] = [
+  { key: "order",    label: "Order ID" },
+  { key: "item",     label: "Item ID" },
+  { key: "title",    label: "Title" },
+  { key: "tracking", label: "Tracking" },
+  { key: "account",  label: "Account" },
+];
 
 type Account = { id: string; ebay_username: string | null };
 
@@ -409,6 +418,7 @@ type SavedFilters = {
   sortBy: ColKey;
   sortDir: "asc" | "desc";
   search: string;
+  searchChips?: SearchChip[];
   filterShipStatus: string[];
   filterOrderStatus: string[];
   filterCheckedIn: string;
@@ -498,13 +508,14 @@ function matchesCaseFilter(order: Order, filters: CaseFilter[]): boolean {
 // ── Fetch params builder ──────────────────────────────────────────────────────
 
 function buildParams(opts: {
-  search: string; filterShipStatus: string[];
+  search: string; searchChips?: SearchChip[]; filterShipStatus: string[];
   filterOrderStatus: string[]; filterCheckedIn: string; filterAccountId: string;
   effectiveDateFrom: string; dateTo: string; sortBy: ColKey; sortDir: "asc" | "desc";
   limit: number; offset: number;
 }) {
   const p = new URLSearchParams();
   if (opts.search) p.set("search", opts.search);
+  if (opts.searchChips && opts.searchChips.length > 0) p.set("chips", JSON.stringify(opts.searchChips));
   if (opts.filterShipStatus.length) p.set("shipStatus", opts.filterShipStatus.join(","));
   if (opts.filterOrderStatus.length) p.set("status", opts.filterOrderStatus.join(","));
   if (opts.filterCheckedIn) p.set("checkedIn", opts.filterCheckedIn);
@@ -550,7 +561,8 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
 
   const [datePreset, setDatePreset] = useState<DatePreset>(saved.datePreset ?? "90");
 
-  const [search, setSearch] = useState(saved.search ?? "");
+  const [searchFreeText, setSearchFreeText] = useState(saved.search ?? "");
+  const [searchChips, setSearchChips] = useState<SearchChip[]>(saved.searchChips ?? []);
   const [filterShipStatus, setFilterShipStatus] = useState<string[]>(saved.filterShipStatus ?? []);
   const [filterOrderStatus, setFilterOrderStatus] = useState<string[]>(saved.filterOrderStatus ?? []);
   const [filterCheckedIn, setFilterCheckedIn] = useState(saved.filterCheckedIn ?? "");
@@ -586,7 +598,17 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   }
 
   const searchRef = useRef<HTMLInputElement>(null);
-  useBarcodeScanner(searchRef, (value) => setSearch(value));
+  useBarcodeScanner(searchRef, (value) => {
+    setSearchChips([]);
+    setSearchFreeText(value);
+  });
+
+  const handleSearchChange = useCallback((chips: SearchChip[], freeText: string) => {
+    setSearchChips(chips);
+    setSearchFreeText(freeText);
+  }, []);
+
+  const chipsKey = JSON.stringify(searchChips);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Cancel token: increment to abort in-flight background loads on filter change
   const fetchGenRef = useRef(0);
@@ -596,7 +618,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   // ── Fetch all pages for current filters ──────────────────────────────────
 
   const fetchAll = useCallback(async (filterSnapshot: {
-    search: string; filterShipStatus: string[];
+    search: string; searchChips?: SearchChip[]; filterShipStatus: string[];
     filterOrderStatus: string[]; filterCheckedIn: string; filterAccountId: string;
     effectiveDateFrom: string; dateTo: string; sortBy: ColKey; sortDir: "asc" | "desc";
   }) => {
@@ -659,25 +681,25 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
       const toSave: SavedFilters = {
         groupBy, visibleCols: Array.from(visibleCols) as ColKey[], colWidths,
         sortBy, sortDir,
-        search, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, filterCase,
+        search: searchFreeText, searchChips, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, filterCase,
         datePreset, dateFrom, dateTo,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
     } catch { /* ignore */ }
-  }, [groupBy, visibleCols, colWidths, sortBy, sortDir, search, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, filterCase, datePreset, dateFrom, dateTo]);
+  }, [groupBy, visibleCols, colWidths, sortBy, sortDir, searchFreeText, chipsKey, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, filterCase, datePreset, dateFrom, dateTo]);
 
   // ── Debounced refetch on filter change ────────────────────────────────────
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    const snapshot = { search, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo, sortBy, sortDir };
+    const snapshot = { search: searchFreeText, searchChips, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo, sortBy, sortDir };
     debounceRef.current = setTimeout(() => { fetchAll(snapshot); }, 300);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo]);
+  }, [searchFreeText, chipsKey, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo]);
 
   useEffect(() => {
-    const snapshot = { search, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo, sortBy, sortDir };
+    const snapshot = { search: searchFreeText, searchChips, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo, sortBy, sortDir };
     fetchAll(snapshot);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1270,9 +1292,16 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
 
         {/* Row 1: Global search + tracking scan */}
         <div>
-          <label className="mb-1 block text-xs text-slate-500">Search (order, item ID, title, tracking, account — also accepts barcode scans)</label>
-          <input ref={searchRef} type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Type or scan to search…"
-            className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-blue-600" />
+          <label className="mb-1 block text-xs text-slate-500">Search all fields, or type a field name to filter by specific field</label>
+          <ChipSearchInput
+            ref={searchRef}
+            fields={ORDER_SEARCH_FIELDS}
+            placeholder="Search or type a field name (order, title, tracking…)"
+            onChange={handleSearchChange}
+            debounceMs={0}
+            initialChips={saved.searchChips}
+            initialFreeText={saved.search}
+          />
         </div>
 
         {/* Row 2: Date presets + account + checked-in */}
@@ -1450,7 +1479,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
             <ColumnPicker visibleCols={visibleCols} onChange={setVisibleCols} groupBy={groupBy} />
             <button
               onClick={() => {
-                setSearch(""); setFilterShipStatus([]); setFilterOrderStatus([]);
+                setSearchFreeText(""); setSearchChips([]); setFilterShipStatus([]); setFilterOrderStatus([]);
                 setFilterCheckedIn(""); setFilterAccountId(""); setFilterCase([]); setDateFrom(""); setDateTo("");
                 setDatePreset("90");
                 setSortBy("date"); setSortDir("desc");
@@ -1566,7 +1595,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
           onSuccess={() => {
             setCheckInTarget(null);
             // Refresh order data to reflect new check-in status
-            const snapshot = { search, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo, sortBy, sortDir };
+            const snapshot = { search: searchFreeText, searchChips, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, effectiveDateFrom, dateTo, sortBy, sortDir };
             fetchAll(snapshot);
           }}
         />

@@ -8,7 +8,7 @@ import SyncAllButton from "@/components/sync-all-button";
 import CheckQuantityPanel from "@/components/check-quantity-panel";
 
 type BucketKey =
-  | "total_orders"
+  | "total_items"
   | "delivered"
   | "shipped"
   | "awaiting_shipment"
@@ -42,7 +42,7 @@ const cardConfig: Array<{
   linkTo?: string;
 }> = [
   // Primary delivery status
-  { key: "total_orders", label: "Total Orders", color: "text-white", border: "border-slate-500", section: "primary" },
+  { key: "total_items", label: "Total Items", color: "text-white", border: "border-slate-500", section: "primary" },
   { key: "cancelled", label: "Cancelled & Refunded", color: "text-slate-400", border: "border-slate-600", description: "Order cancelled on eBay, refunded (not actionable)", section: "primary" },
   { key: "delivered", label: "Delivered", color: "text-green-400", border: "border-green-600", description: "eBay confirms delivery", section: "primary" },
   { key: "shipped", label: "In Transit", color: "text-blue-400", border: "border-blue-600", description: "Has tracking, within expected delivery window, not refunded", section: "primary" },
@@ -269,6 +269,18 @@ export default async function InventoryPage({
     }),
   ]);
 
+  // Compute item count per shipment (sum of order_items qty, minimum 1)
+  const shipmentItemCount = new Map<string, number>();
+  for (const s of shipments) {
+    const itemQty = (s.order?.order_items ?? []).reduce((sum, item) => sum + item.qty, 0);
+    shipmentItemCount.set(s.id, Math.max(1, itemQty));
+  }
+
+  // Helper: count items in a bucket (each shipment weighted by its item count)
+  function countItems(bucket: typeof shipments): number {
+    return bucket.reduce((sum, s) => sum + (shipmentItemCount.get(s.id) ?? 1), 0);
+  }
+
   const receivedOrderIds = new Set(receivedUnits.map((u) => u.order_id));
   const goodConditions = new Set(["good", "new", "like_new", "like new", "acceptable", "excellent"]);
 
@@ -342,7 +354,7 @@ export default async function InventoryPage({
 
   // Categorize shipments into buckets
   const buckets: Record<BucketKey, typeof shipments> = {
-    total_orders: [],
+    total_items: [],
     delivered: [],
     shipped: [],
     awaiting_shipment: [],
@@ -378,8 +390,8 @@ export default async function InventoryPage({
     const isCancelled = shipment.order?.order_status === "Cancelled";
     const isRefunded = shipment.order?.totals && typeof shipment.order.totals === 'object' && 'total' in shipment.order.totals && Number(shipment.order.totals.total) === 0;
 
-    // Total orders — every shipment
-    buckets.total_orders.push(shipment);
+    // Total items — every shipment (each counted by its item qty)
+    buckets.total_items.push(shipment);
 
     // === PRIMARY STATUS (mutually exclusive and exhaustive) ===
     // IMPORTANT: Every shipment must fall into exactly ONE of these categories
@@ -597,7 +609,7 @@ export default async function InventoryPage({
 
   function renderCards(cards: typeof cardConfig) {
     return cards.map((card) => {
-      const count = countOverrides[card.key] ?? buckets[card.key].length;
+      const count = countOverrides[card.key] ?? countItems(buckets[card.key]);
       const isActive = activeFilter === card.key;
 
       // For case cards, link to their dedicated pages
@@ -643,13 +655,13 @@ export default async function InventoryPage({
 
       <div className="flex items-center justify-between">
         <DateRangeFilter />
-        <span className="text-sm text-slate-400">{buckets.total_orders.length} orders</span>
+        <span className="text-sm text-slate-400">{countItems(buckets.total_items)} items across {buckets.total_items.length} orders</span>
       </div>
 
       {/* Primary Delivery Status */}
       <div>
         <h2 className="mb-2 text-sm font-medium text-slate-400 uppercase tracking-wider">Delivery Status</h2>
-        <p className="mb-3 text-xs text-slate-600">Delivered + In Transit + Awaiting Shipment + Cancelled + Never Shipped = Total Orders</p>
+        <p className="mb-3 text-xs text-slate-600">Delivered + In Transit + Awaiting Shipment + Cancelled + Never Shipped = Total Items</p>
         <div className="grid gap-4 md:grid-cols-4">
           {renderCards(primaryCards)}
         </div>
@@ -658,7 +670,7 @@ export default async function InventoryPage({
       {/* Warehouse Status */}
       <div>
         <h2 className="mb-2 text-sm font-medium text-slate-400 uppercase tracking-wider">Warehouse Status</h2>
-        <p className="mb-3 text-xs text-slate-600">Checked In + Not Checked In = Total Orders</p>
+        <p className="mb-3 text-xs text-slate-600">Checked In + Not Checked In = Total Items</p>
         <div className="grid gap-4 md:grid-cols-4">
           {renderCards(warehouseCards)}
         </div>
@@ -705,7 +717,7 @@ export default async function InventoryPage({
       {activeFilter && activeFilter !== "ebay_returns" && activeFilter !== "ebay_inr" && (
         <section className="rounded-lg border border-slate-800 bg-slate-900 p-4">
           <h2 className="mb-3 text-lg font-semibold">
-            {cardConfig.find((c) => c.key === activeFilter)?.label ?? activeFilter} ({filteredItems.length})
+            {cardConfig.find((c) => c.key === activeFilter)?.label ?? activeFilter} ({countItems(filteredItems)} items)
           </h2>
 
           {/* Lot reconciliation — replaces generic drilldown for check_quantity and reviewed_lots */}
