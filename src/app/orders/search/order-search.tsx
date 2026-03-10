@@ -5,6 +5,7 @@ import Link from "next/link";
 import CheckInModal from "@/components/check-in-modal";
 import { useBarcodeScanner } from "@/lib/use-barcode-scanner";
 import ChipSearchInput, { type SearchChip, type SearchField } from "@/components/chip-search-input";
+import SavedSearches from "@/components/saved-searches";
 
 const ORDER_SEARCH_FIELDS: SearchField[] = [
   { key: "order",    label: "Order ID" },
@@ -411,6 +412,21 @@ type DatePreset = "30" | "60" | "90" | "all";
 
 type CaseFilter = "needsReturn" | "hasOpenReturn" | "hasClosedReturn" | "hasOpenInr" | "hasClosedInr" | "needsInr" | "anyRefund" | "fullRefund" | "partialRefund" | "noRefund";
 
+type OrderSavedState = {
+  searchFreeText: string;
+  searchChips: SearchChip[];
+  filterShipStatus: string[];
+  filterOrderStatus: string[];
+  filterCheckedIn: string;
+  filterAccountId: string;
+  filterCase: CaseFilter[];
+  datePreset: DatePreset;
+  dateFrom: string;
+  dateTo: string;
+  sortBy: string;
+  sortDir: "asc" | "desc";
+};
+
 type SavedFilters = {
   groupBy: GroupBy;
   visibleCols: ColKey[];
@@ -570,6 +586,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   const [filterCase, setFilterCase] = useState<CaseFilter[]>(saved.filterCase ?? []);
   const [dateFrom, setDateFrom] = useState(saved.datePreset === "all" || (saved.datePreset == null && !saved.dateFrom) ? "" : (saved.dateFrom ?? ""));
   const [dateTo, setDateTo] = useState(saved.dateTo ?? "");
+  const [searchKey, setSearchKey] = useState(0);
 
   // Data state — orders accumulate as background pages load
   const [orders, setOrders] = useState<Order[]>([]);
@@ -1294,13 +1311,14 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
         <div>
           <label className="mb-1 block text-xs text-slate-500">Search all fields, or type a field name to filter by specific field</label>
           <ChipSearchInput
+            key={searchKey}
             ref={searchRef}
             fields={ORDER_SEARCH_FIELDS}
             placeholder="Search or type a field name (order, title, tracking…)"
             onChange={handleSearchChange}
             debounceMs={0}
-            initialChips={saved.searchChips}
-            initialFreeText={saved.search}
+            initialChips={searchChips}
+            initialFreeText={searchFreeText}
           />
         </div>
 
@@ -1476,6 +1494,29 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
             </button>
           </div>
           <div className="flex items-center gap-2">
+            <SavedSearches<OrderSavedState>
+              storageKey="orders_saved_searches"
+              getCurrentState={() => ({
+                searchFreeText, searchChips, filterShipStatus, filterOrderStatus,
+                filterCheckedIn, filterAccountId, filterCase,
+                datePreset, dateFrom, dateTo, sortBy, sortDir,
+              })}
+              onRestore={(s) => {
+                setSearchFreeText(s.searchFreeText ?? "");
+                setSearchChips(s.searchChips ?? []);
+                setFilterShipStatus(s.filterShipStatus ?? []);
+                setFilterOrderStatus(s.filterOrderStatus ?? []);
+                setFilterCheckedIn(s.filterCheckedIn ?? "");
+                setFilterAccountId(s.filterAccountId ?? "");
+                setFilterCase(s.filterCase ?? []);
+                setDatePreset(s.datePreset ?? "90");
+                setDateFrom(s.dateFrom ?? "");
+                setDateTo(s.dateTo ?? "");
+                setSortBy((s.sortBy ?? "date") as ColKey);
+                setSortDir(s.sortDir ?? "desc");
+                setSearchKey(k => k + 1);
+              }}
+            />
             <ColumnPicker visibleCols={visibleCols} onChange={setVisibleCols} groupBy={groupBy} />
             <button
               onClick={() => {
@@ -1483,6 +1524,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
                 setFilterCheckedIn(""); setFilterAccountId(""); setFilterCase([]); setDateFrom(""); setDateTo("");
                 setDatePreset("90");
                 setSortBy("date"); setSortDir("desc");
+                setSearchKey(k => k + 1);
               }}
               className="rounded border border-slate-700 px-3 py-1 text-xs text-slate-400 hover:bg-slate-800"
             >

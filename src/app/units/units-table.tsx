@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useBarcodeScanner } from "@/lib/use-barcode-scanner";
 import ChipSearchInput, { type SearchChip, type SearchField } from "@/components/chip-search-input";
+import SavedSearches from "@/components/saved-searches";
 
 const UNIT_SEARCH_FIELDS: SearchField[] = [
   { key: "title",     label: "Title" },
@@ -498,6 +499,16 @@ function NewProductModal({
 
 // ─── Main Table Component ─────────────────────────────────────────────────────
 
+type UnitsSavedState = {
+  searchChips: SearchChip[];
+  searchFreeText: string;
+  filterStates: string[];
+  filterConditions: string[];
+  filterProductId: string;
+  sortBy: string;
+  sortDir: "asc" | "desc";
+};
+
 export default function UnitsTable({ products: initialProducts }: { products: Product[] }) {
   const [searchChips, setSearchChips] = useState<SearchChip[]>([]);
   const [searchFreeText, setSearchFreeText] = useState("");
@@ -506,6 +517,7 @@ export default function UnitsTable({ products: initialProducts }: { products: Pr
   const [filterProductId, setFilterProductId] = useState("");
   const [sortBy, setSortBy] = useState("receivedAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [searchKey, setSearchKey] = useState(0); // bump to remount ChipSearchInput on restore
 
   const [units, setUnits] = useState<Unit[]>([]);
   const [total, setTotal] = useState(0);
@@ -825,10 +837,13 @@ export default function UnitsTable({ products: initialProducts }: { products: Pr
           <div className="md:col-span-2">
             <label className="block text-xs text-slate-400 mb-1">Search all fields, or type a field name to filter by specific field</label>
             <ChipSearchInput
+              key={searchKey}
               ref={searchRef}
               fields={UNIT_SEARCH_FIELDS}
               placeholder="Search or type a field name (title, order, tracking…)"
               onChange={handleSearchChange}
+              initialChips={searchChips}
+              initialFreeText={searchFreeText}
             />
           </div>
           <div>
@@ -874,6 +889,22 @@ export default function UnitsTable({ products: initialProducts }: { products: Pr
         </div>
 
         <div className="flex items-center gap-3 pt-1 border-t border-slate-800">
+          <SavedSearches<UnitsSavedState>
+            storageKey="units_saved_searches"
+            getCurrentState={() => ({
+              searchChips, searchFreeText, filterStates, filterConditions, filterProductId, sortBy, sortDir,
+            })}
+            onRestore={(s) => {
+              setSearchChips(s.searchChips ?? []);
+              setSearchFreeText(s.searchFreeText ?? "");
+              setFilterStates(s.filterStates ?? []);
+              setFilterConditions(s.filterConditions ?? []);
+              setFilterProductId(s.filterProductId ?? "");
+              setSortBy(s.sortBy ?? "receivedAt");
+              setSortDir(s.sortDir ?? "desc");
+              setSearchKey(k => k + 1);
+            }}
+          />
           <div className="relative ml-auto">
             <button onClick={() => setShowColPanel(p => !p)}
               className={`text-xs px-2.5 py-1 rounded border flex items-center gap-1.5 ${showColPanel ? "border-slate-500 bg-slate-800 text-slate-200" : "border-slate-700 text-slate-400 hover:bg-slate-800"}`}>
@@ -1061,11 +1092,10 @@ export default function UnitsTable({ products: initialProducts }: { products: Pr
             ) : (
               units.map(unit => (
                 <tr key={unit.id}
-                  className={`hover:bg-slate-800/50 transition-colors cursor-pointer ${selected.has(unit.id) ? "bg-blue-900/20" : ""}`}
-                  onClick={() => toggleSelect(unit.id)}>
-                  <td className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
+                  className={`hover:bg-slate-800/50 transition-colors ${selected.has(unit.id) ? "bg-blue-900/20" : ""}`}>
+                  <td className="px-3 py-2.5">
                     <input type="checkbox" checked={selected.has(unit.id)}
-                      onChange={() => toggleSelect(unit.id)} className="rounded" />
+                      onChange={() => toggleSelect(unit.id)} className="rounded cursor-pointer" />
                   </td>
                   {visibleCols.map(col => (
                     <td key={col.key} className="px-3 py-2.5 overflow-hidden">
