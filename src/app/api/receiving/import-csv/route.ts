@@ -272,33 +272,22 @@ export async function POST(req: Request) {
 
           // Compute inventory state
           const existingReturn = await prisma.returns.findFirst({
-            where: { order_id: shipment.order_id, item_id: targetItem.item_id },
-            select: { ebay_state: true, ebay_status: true, return_shipped_date: true, return_delivered_date: true, refund_issued_date: true, actual_refund: true }
+            where: { order_id: shipment.order_id, ebay_item_id: targetItem.item_id },
+            select: { ebay_state: true, ebay_status: true, return_shipped_date: true, return_delivered_date: true, refund_issued_date: true, actual_refund: true, refund_amount: true, estimated_refund: true }
           });
 
           let inventoryState = computeInventoryState(conditionStatus);
           if (existingReturn) {
-            const goodConditions = new Set(["good", "new", "like_new", "acceptable", "excellent"]);
-            const isBadCondition = !goodConditions.has(conditionStatus?.toLowerCase() ?? "");
             const isClosed =
               existingReturn.ebay_state === "CLOSED" || existingReturn.ebay_status === "CLOSED" ||
               existingReturn.ebay_state === "REFUND_ISSUED" || existingReturn.ebay_state === "RETURN_CLOSED" ||
               existingReturn.ebay_status === "REFUND_ISSUED" || existingReturn.ebay_status === "LESS_THAN_A_FULL_REFUND_ISSUED";
 
             if (existingReturn.return_shipped_date || existingReturn.return_delivered_date) {
-              // Item physically shipped or delivered back to seller
               inventoryState = "returned";
             } else if (isClosed) {
-              // Closed return, no return tracking — we kept the item
-              if (existingReturn.refund_issued_date || existingReturn.actual_refund) {
-                // Got a refund and kept it — parts_repair means "compensated, can scrap/part out"
-                inventoryState = "parts_repair";
-              } else {
-                // Closed with no refund and no shipping — still needs action
-                inventoryState = "to_be_returned";
-              }
+              inventoryState = conditionStatus?.toLowerCase() === "damaged" ? "fair" : "parts_repair";
             } else {
-              // Open return filed, not yet shipped — need to send back
               inventoryState = "to_be_returned";
             }
           }

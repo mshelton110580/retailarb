@@ -313,7 +313,8 @@ export async function findOrCreateProduct(
  * States:
  *   on_hand        — good condition, no return issue, physically on-hand
  *   to_be_returned — bad condition (needs return filed) OR open return filed not yet shipped
- *   parts_repair   — closed return + refund received, item kept (compensated, can part/scrap)
+ *   fair           — damaged condition + refund without return delivery (sellable at fair condition)
+ *   parts_repair   — closed return + refund received, item kept (defective/broken, can part/scrap)
  *   returned       — physically shipped or delivered back to seller
  *   missing        — unit was never physically received (lot short-ship); set only by add-unit
  */
@@ -336,7 +337,7 @@ export function computeInventoryState(
   }
 
   if (hasRefundWithoutReturn) {
-    return "parts_repair";
+    return conditionStatus?.toLowerCase() === "damaged" ? "fair" : "parts_repair";
   }
 
   if (hasReturnFiled) {

@@ -22,12 +22,14 @@ type ProductRowProps = {
     productName: string;
     gtin: string | null;
     onHand: number;
+    fair: number;
     toBeReturned: number;
     partsRepair: number;
     returned: number;
     missing: number;
     totalValue: number;
     onHandValue: number;
+    fairValue: number;
     toBeReturnedValue: number;
     partsRepairValue: number;
   };
@@ -38,6 +40,8 @@ function formatInventoryState(state: string): string {
   switch (state) {
     case "on_hand":
       return "On Hand";
+    case "fair":
+      return "Fair";
     case "to_be_returned":
       return "To Be Returned";
     case "parts_repair":
@@ -55,6 +59,8 @@ function getStateColor(state: string): string {
   switch (state) {
     case "on_hand":
       return "text-green-400";
+    case "fair":
+      return "text-cyan-400";
     case "to_be_returned":
       return "text-yellow-400";
     case "parts_repair":
@@ -116,6 +122,18 @@ export default function ProductRow({ product, units }: ProductRowProps) {
         </td>
         <td className="p-3 text-center">
           <div className="flex flex-col items-center">
+            <span className="text-sm font-medium text-cyan-400">
+              {product.fair}
+            </span>
+            {product.fairValue > 0 && (
+              <span className="text-xs text-slate-500">
+                ${product.fairValue.toFixed(0)}
+              </span>
+            )}
+          </div>
+        </td>
+        <td className="p-3 text-center">
+          <div className="flex flex-col items-center">
             <span className="text-sm font-medium text-yellow-400">
               {product.toBeReturned}
             </span>
@@ -149,7 +167,7 @@ export default function ProductRow({ product, units }: ProductRowProps) {
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={7} className="bg-slate-800/30 p-0">
+          <td colSpan={8} className="bg-slate-800/30 p-0">
             <div className="p-4">
               <h4 className="text-xs font-semibold text-slate-400 mb-3 uppercase tracking-wide">
                 Individual Items ({units.length})

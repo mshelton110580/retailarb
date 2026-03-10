@@ -82,25 +82,69 @@ export default async function OrderDetailPage({ params }: { params: { orderId: s
           </div>
           <div>
             <p className="text-slate-500">Current Balance</p>
-            {(() => {
-              const currentTotal = order.totals && typeof order.totals === "object" && "total" in (order.totals as any)
-                ? Number((order.totals as any).total)
-                : null;
-              const hasRefund = currentTotal != null && order.original_total != null && currentTotal < Number(order.original_total);
-              const hasTax = order.tax_amount != null && Number(order.tax_amount) > 0;
-              return (
-                <p className={hasRefund && hasTax ? "text-amber-400 font-medium" : "text-slate-200"}>
-                  {currentTotal != null ? `$${currentTotal.toFixed(2)}` : "N/A"}
-                  {hasRefund && hasTax && (
-                    <span className="ml-2 text-xs" title="This order had tax and a refund — verify the correct amount was received">⚠ tax+refund — verify</span>
-                  )}
-                  {hasRefund && !hasTax && (
-                    <span className="ml-2 text-xs text-slate-400">(refunded)</span>
-                  )}
-                </p>
-              );
-            })()}
+            <p className="text-slate-200">
+              {(() => {
+                const currentTotal = order.totals && typeof order.totals === "object" && "total" in (order.totals as any)
+                  ? Number((order.totals as any).total)
+                  : null;
+                return currentTotal != null ? `$${currentTotal.toFixed(2)}` : "N/A";
+              })()}
+            </p>
           </div>
+          {(() => {
+            const currentTotal = order.totals && typeof order.totals === "object" && "total" in (order.totals as any)
+              ? Number((order.totals as any).total)
+              : null;
+            const calculatedRefund = currentTotal != null && order.original_total != null
+              ? Number(order.original_total) - currentTotal
+              : null;
+            const hasCalculatedRefund = calculatedRefund != null && calculatedRefund > 0.005;
+
+            // Sum actual_refund from all returns on this order
+            const totalActualRefund = order.returns.reduce((sum, ret) => {
+              return sum + (ret.actual_refund != null ? Number(ret.actual_refund) : 0);
+            }, 0);
+            const hasActualRefund = totalActualRefund > 0.005;
+
+            if (!hasCalculatedRefund && !hasActualRefund) return null;
+
+            const refundToShow = hasActualRefund ? totalActualRefund : (calculatedRefund ?? 0);
+
+            // Check for mismatch between eBay actual_refund and calculated balance difference
+            const mismatch = hasActualRefund && hasCalculatedRefund
+              ? Math.abs(totalActualRefund - calculatedRefund!) > 0.02
+              : false;
+
+            return (
+              <div className="col-span-2 rounded border border-slate-700 bg-slate-800/50 p-3 mt-1">
+                <p className="text-xs text-slate-500 mb-1.5">Refund Summary</p>
+                <div className="flex items-baseline gap-3">
+                  <span className="text-lg font-semibold text-green-400">
+                    ${refundToShow.toFixed(2)}
+                  </span>
+                  {hasActualRefund ? (
+                    <span className="text-xs text-green-500">confirmed by eBay</span>
+                  ) : (
+                    <span className="text-xs text-yellow-500">calculated from balance change</span>
+                  )}
+                </div>
+                {mismatch && (
+                  <div className="mt-2 rounded bg-amber-950 border border-amber-800 px-2 py-1.5 text-xs text-amber-300">
+                    <span className="font-medium">Mismatch:</span>{" "}
+                    eBay reports ${totalActualRefund.toFixed(2)} refund but balance changed by ${calculatedRefund!.toFixed(2)}
+                    {order.tax_amount != null && Number(order.tax_amount) > 0 && (
+                      <span className="text-amber-400"> (tax: ${Number(order.tax_amount).toFixed(2)} — may account for difference)</span>
+                    )}
+                  </div>
+                )}
+                {!mismatch && hasActualRefund && hasCalculatedRefund && (
+                  <p className="mt-1 text-xs text-slate-500">
+                    Balance change: ${calculatedRefund!.toFixed(2)} — matches eBay refund
+                  </p>
+                )}
+              </div>
+            );
+          })()}
         </div>
       </section>
 
@@ -291,11 +335,28 @@ export default async function OrderDetailPage({ params }: { params: { orderId: s
               return (
                 <div key={ret.id} className="rounded border border-slate-800 p-3 text-sm">
                   <div className="flex items-center gap-2">
-                    <span className={`rounded px-2 py-0.5 text-xs ${badgeColor}`}>
-                      {state.replace(/_/g, " ")}
-                    </span>
+                    {(() => {
+                      const returnUrl = ret.ebay_return_id
+                        ? `https://www.ebay.com/rt/GetShippingLabel?returnId=${ret.ebay_return_id}`
+                        : null;
+                      return returnUrl ? (
+                        <a
+                          href={returnUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className={`rounded px-2 py-0.5 text-xs hover:opacity-80 transition-opacity ${badgeColor}`}
+                          title="View return on eBay"
+                        >
+                          {state.replace(/_/g, " ")} ↗
+                        </a>
+                      ) : (
+                        <span className={`rounded px-2 py-0.5 text-xs ${badgeColor}`}>
+                          {state.replace(/_/g, " ")}
+                        </span>
+                      );
+                    })()}
                     {ret.ebay_return_id && (
-                      <span className="text-xs text-slate-400">eBay Return #{ret.ebay_return_id}</span>
+                      <span className="text-xs text-slate-400">#{ret.ebay_return_id}</span>
                     )}
                     {ret.return_reason && (
                       <span className="text-xs text-slate-400">{ret.return_reason.replace(/_/g, " ")}</span>

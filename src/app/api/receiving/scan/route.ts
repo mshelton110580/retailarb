@@ -680,7 +680,7 @@ export async function POST(req: Request) {
       const existingReturn = await prisma.returns.findFirst({
         where: {
           order_id: shipment.order_id,
-          item_id: targetItem.item_id
+          ebay_item_id: targetItem.item_id
         },
         select: {
           ebay_state: true,
@@ -688,7 +688,9 @@ export async function POST(req: Request) {
           return_shipped_date: true,
           return_delivered_date: true,
           refund_issued_date: true,
-          actual_refund: true
+          actual_refund: true,
+          refund_amount: true,
+          estimated_refund: true
         }
       });
 
@@ -697,8 +699,6 @@ export async function POST(req: Request) {
 
       // Override state if there's a return
       if (existingReturn) {
-        const goodConditions = new Set(["good", "new", "like_new", "acceptable", "excellent"]);
-        const isBadCondition = !goodConditions.has(body.data.condition_status?.toLowerCase() ?? "");
         const isClosed =
           existingReturn.ebay_state === "CLOSED" ||
           existingReturn.ebay_status === "CLOSED" ||
@@ -711,14 +711,8 @@ export async function POST(req: Request) {
           // Item physically shipped or delivered back to seller
           inventoryState = "returned";
         } else if (isClosed) {
-          // Closed return, no return tracking — we kept the item
-          if (existingReturn.refund_issued_date || existingReturn.actual_refund) {
-            // Got a refund and kept it — parts_repair means "compensated, can scrap/part out"
-            inventoryState = "parts_repair";
-          } else {
-            // Closed with no refund and no shipping — still needs action
-            inventoryState = "to_be_returned";
-          }
+          // Closed return, no return delivery — keeping the item (refunded, denied, or expired)
+          inventoryState = body.data.condition_status?.toLowerCase() === "damaged" ? "fair" : "parts_repair";
         } else {
           // Open return filed, not yet shipped — need to send back
           inventoryState = "to_be_returned";

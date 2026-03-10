@@ -828,6 +828,7 @@ export default async function InventoryPage({
                         {orderUnits.map((unit, idx) => {
                           const condColor =
                             unit.inventory_state === 'on_hand' ? 'text-emerald-400' :
+                            unit.inventory_state === 'fair' ? 'text-cyan-400' :
                             unit.inventory_state === 'to_be_returned' ? 'text-red-400' :
                             unit.inventory_state === 'parts_repair' ? 'text-orange-400' :
                             unit.inventory_state === 'returned' ? 'text-slate-400' :

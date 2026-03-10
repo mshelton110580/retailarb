@@ -8,12 +8,14 @@ type ProductStats = {
   productName: string;
   gtin: string | null;
   onHand: number;
+  fair: number;
   toBeReturned: number;
   partsRepair: number;
   returned: number;
   missing: number;
   totalValue: number;
   onHandValue: number;
+  fairValue: number;
   toBeReturnedValue: number;
   partsRepairValue: number;
 };
@@ -202,7 +204,7 @@ export default async function OnHandPage() {
   const goodConditionSet = new Set(["good", "new", "like_new", "acceptable", "excellent"]);
   // A unit is "bad" if its condition is not good, OR if it's parts/repair/missing (not resaleable)
   const isBadUnit = (u: { condition_status: string; inventory_state: string }) =>
-    !goodConditionSet.has(u.condition_status?.toLowerCase() ?? "") || u.inventory_state === "parts_repair" || u.inventory_state === "missing";
+    !goodConditionSet.has(u.condition_status?.toLowerCase() ?? "") || u.inventory_state === "parts_repair" || u.inventory_state === "fair" || u.inventory_state === "missing";
 
   for (const unit of units) {
     if (unit.order_item_id) {
@@ -346,12 +348,14 @@ export default async function OnHandPage() {
         productName: unit.product.product_name,
         gtin: unit.product.gtin, // Keep first GTIN found (may be null)
         onHand: 0,
+        fair: 0,
         toBeReturned: 0,
         partsRepair: 0,
         returned: 0,
         missing: 0,
         totalValue: 0,
         onHandValue: 0,
+        fairValue: 0,
         toBeReturnedValue: 0,
         partsRepairValue: 0
       });
@@ -365,6 +369,10 @@ export default async function OnHandPage() {
       case "on_hand":
         stats.onHand++;
         stats.onHandValue += itemCost;
+        break;
+      case "fair":
+        stats.fair++;
+        stats.fairValue += itemCost;
         break;
       case "to_be_returned":
         stats.toBeReturned++;
@@ -408,11 +416,13 @@ export default async function OnHandPage() {
   // Calculate totals across all products
   const totals = {
     onHand: products.reduce((sum, p) => sum + p.onHand, 0),
+    fair: products.reduce((sum, p) => sum + p.fair, 0),
     toBeReturned: products.reduce((sum, p) => sum + p.toBeReturned, 0),
     partsRepair: products.reduce((sum, p) => sum + p.partsRepair, 0),
     returned: products.reduce((sum, p) => sum + p.returned, 0),
     missing: products.reduce((sum, p) => sum + p.missing, 0),
     onHandValue: products.reduce((sum, p) => sum + p.onHandValue, 0),
+    fairValue: products.reduce((sum, p) => sum + p.fairValue, 0),
     toBeReturnedValue: products.reduce((sum, p) => sum + p.toBeReturnedValue, 0),
     partsRepairValue: products.reduce((sum, p) => sum + p.partsRepairValue, 0),
     totalValue: products.reduce((sum, p) => sum + p.totalValue, 0)
@@ -423,12 +433,20 @@ export default async function OnHandPage() {
       <PageHeader title="Items on Hand" />
 
       {/* Summary Dashboard */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <div className="rounded-lg border border-green-800 bg-slate-900 p-4">
           <h3 className="text-sm font-medium text-slate-400">On Hand (Good)</h3>
           <p className="mt-1 text-2xl font-bold text-green-400">{totals.onHand}</p>
           <p className="mt-1 text-xs text-slate-500">
             ${totals.onHandValue.toFixed(2)} total value
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-cyan-800 bg-slate-900 p-4">
+          <h3 className="text-sm font-medium text-slate-400">Fair</h3>
+          <p className="mt-1 text-2xl font-bold text-cyan-400">{totals.fair}</p>
+          <p className="mt-1 text-xs text-slate-500">
+            ${totals.fairValue.toFixed(2)} total value
           </p>
         </div>
 
@@ -487,6 +505,7 @@ export default async function OnHandPage() {
                   <th className="p-3">Product</th>
                   <th className="p-3 text-center">GTIN</th>
                   <th className="p-3 text-center">On Hand</th>
+                  <th className="p-3 text-center">Fair</th>
                   <th className="p-3 text-center">To Return</th>
                   <th className="p-3 text-center">Parts/Repair</th>
                   <th className="p-3 text-center">Returned</th>

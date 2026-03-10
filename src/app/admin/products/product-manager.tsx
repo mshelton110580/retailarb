@@ -111,6 +111,7 @@ export default function ProductManager({
   function formatState(state: string) {
     switch (state) {
       case "on_hand": return "On Hand";
+      case "fair": return "Fair";
       case "to_be_returned": return "To Return";
       case "parts_repair": return "Parts/Repair";
       case "returned": return "Returned";
@@ -121,6 +122,7 @@ export default function ProductManager({
   function stateColor(state: string) {
     switch (state) {
       case "on_hand": return "text-green-400";
+      case "fair": return "text-cyan-400";
       case "to_be_returned": return "text-yellow-400";
       case "parts_repair": return "text-red-400";
       case "returned": return "text-slate-500";

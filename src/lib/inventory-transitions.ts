@@ -2,6 +2,11 @@ import { prisma } from "@/lib/db";
 
 const CLOSED_STATES = ["CLOSED"];
 
+// Conditions where the item is cosmetically damaged but still functional/sellable at fair condition.
+// These get "fair" state when refunded without return delivery (kept + compensated).
+// All other bad conditions get "parts_repair" (not sellable as-is).
+const FAIR_CONDITIONS = new Set(["damaged"]);
+
 /**
  * Check if a return is closed (matching inventory/returns page logic)
  */
@@ -44,7 +49,7 @@ export async function updateInventoryStatesFromReturns() {
     select: {
       id: true,
       order_id: true,
-      item_id: true,
+      ebay_item_id: true,
       ebay_state: true,
       ebay_status: true,
       ebay_type: true,
@@ -64,7 +69,7 @@ export async function updateInventoryStatesFromReturns() {
     const units = await prisma.received_units.findMany({
       where: {
         order_id: ret.order_id,
-        item_id: ret.item_id || undefined
+        item_id: ret.ebay_item_id || undefined
       },
       select: {
         id: true,
@@ -86,16 +91,15 @@ export async function updateInventoryStatesFromReturns() {
       if (ret.return_shipped_date || ret.return_delivered_date) {
         newState = isBadCondition ? "returned" : "on_hand";
       }
-      // PRIORITY 2: Return is closed with no return tracking
+      // PRIORITY 2: Return is closed with no return delivery — we're keeping the item
+      // regardless of whether a refund was received (could be refunded, denied, or expired)
       else if (isReturnClosed(ret)) {
-        // Refunded but item was never shipped back — we kept it
-        if (ret.refund_issued_date || ret.actual_refund || ret.refund_amount || ret.estimated_refund) {
-          // Bad condition → parts_repair, good condition → stays on_hand (no change)
-          if (isBadCondition) {
-            newState = "parts_repair";
-          }
+        if (isBadCondition) {
+          newState = FAIR_CONDITIONS.has(unit.condition_status?.toLowerCase() ?? "")
+            ? "fair"
+            : "parts_repair";
         }
-        // Closed with no refund and no return tracking — leave state as-is (on_hand or parts_repair)
+        // Good condition → stays on_hand (no change needed)
       }
       // PRIORITY 3: Open return, not yet shipped — we need to send it back
       else {
@@ -136,7 +140,7 @@ export async function recomputeAllInventoryStates(): Promise<{
     select: {
       id: true,
       order_id: true,
-      item_id: true,
+      ebay_item_id: true,
       ebay_state: true,
       ebay_status: true,
       ebay_type: true,
@@ -158,7 +162,7 @@ export async function recomputeAllInventoryStates(): Promise<{
     const units = await prisma.received_units.findMany({
       where: {
         order_id: ret.order_id,
-        item_id: ret.item_id || undefined
+        item_id: ret.ebay_item_id || undefined
       },
       select: { id: true, inventory_state: true, condition_status: true }
     });
@@ -173,8 +177,13 @@ export async function recomputeAllInventoryStates(): Promise<{
       if (ret.return_shipped_date || ret.return_delivered_date) {
         newState = isBadCondition ? "returned" : "on_hand";
       } else if (isReturnClosed(ret)) {
-        if (ret.refund_issued_date || ret.actual_refund || ret.refund_amount || ret.estimated_refund) {
-          newState = isBadCondition ? "parts_repair" : "on_hand";
+        // Closed with no return delivery — keeping the item (refunded, denied, or expired)
+        if (isBadCondition) {
+          newState = FAIR_CONDITIONS.has(unit.condition_status?.toLowerCase() ?? "")
+            ? "fair"
+            : "parts_repair";
+        } else {
+          newState = "on_hand";
         }
       } else {
         newState = "to_be_returned";
@@ -220,7 +229,7 @@ export async function recomputeAllInventoryStates(): Promise<{
  */
 export async function updateUnitInventoryState(
   unitId: string,
-  newState: "on_hand" | "to_be_returned" | "parts_repair" | "returned"
+  newState: "on_hand" | "to_be_returned" | "parts_repair" | "fair" | "returned"
 ) {
   await prisma.received_units.update({
     where: { id: unitId },

@@ -72,14 +72,16 @@ export async function PATCH(req: Request) {
     for (const unit of units) {
       // Look up return for this order/item — same query as the scan route
       const existingReturn = await prisma.returns.findFirst({
-        where: { order_id: unit.order_id, item_id: unit.item_id },
+        where: { order_id: unit.order_id, ebay_item_id: unit.item_id },
         select: {
           ebay_state: true,
           ebay_status: true,
           return_shipped_date: true,
           return_delivered_date: true,
           refund_issued_date: true,
-          actual_refund: true
+          actual_refund: true,
+          refund_amount: true,
+          estimated_refund: true
         }
       });
 
@@ -87,7 +89,6 @@ export async function PATCH(req: Request) {
       let inventoryState = computeInventoryState(updates.condition);
 
       if (existingReturn) {
-        const goodConditions = new Set(["good", "new", "like_new", "acceptable", "excellent"]);
         const isClosed =
           existingReturn.ebay_state === "CLOSED" ||
           existingReturn.ebay_status === "CLOSED" ||
@@ -99,11 +100,7 @@ export async function PATCH(req: Request) {
         if (existingReturn.return_shipped_date || existingReturn.return_delivered_date) {
           inventoryState = "returned";
         } else if (isClosed) {
-          if (existingReturn.refund_issued_date || existingReturn.actual_refund) {
-            inventoryState = "parts_repair";
-          } else {
-            inventoryState = "to_be_returned";
-          }
+          inventoryState = updates.condition?.toLowerCase() === "damaged" ? "fair" : "parts_repair";
         } else {
           inventoryState = "to_be_returned";
         }

@@ -185,18 +185,22 @@ export async function POST(req: Request) {
     return_delivered_date: Date | null;
     refund_issued_date: Date | null;
     actual_refund: any;
+    refund_amount: any;
+    estimated_refund: any;
   }>();
 
   for (const iid of allItemIds) {
     const existingReturn = await prisma.returns.findFirst({
-      where: { order_id: orderId, item_id: iid },
+      where: { order_id: orderId, ebay_item_id: iid },
       select: {
         ebay_state: true,
         ebay_status: true,
         return_shipped_date: true,
         return_delivered_date: true,
         refund_issued_date: true,
-        actual_refund: true
+        actual_refund: true,
+        refund_amount: true,
+        estimated_refund: true
       }
     });
     if (existingReturn) returnsByItemId.set(iid, existingReturn);
@@ -243,11 +247,7 @@ export async function POST(req: Request) {
       if (existingReturn.return_shipped_date || existingReturn.return_delivered_date) {
         inventoryState = "returned";
       } else if (isClosed) {
-        if (existingReturn.refund_issued_date || existingReturn.actual_refund) {
-          inventoryState = "parts_repair";
-        } else {
-          inventoryState = "to_be_returned";
-        }
+        inventoryState = unit.condition?.toLowerCase() === "damaged" ? "fair" : "parts_repair";
       } else {
         inventoryState = "to_be_returned";
       }
