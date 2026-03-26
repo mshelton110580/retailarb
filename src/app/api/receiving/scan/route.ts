@@ -279,6 +279,23 @@ export async function POST(req: Request) {
     });
   }
 
+  // === Duplicate scan guard ===
+  // If every matched shipment is already at capacity, block the scan.
+  const allAtCapacity = shipmentAnalyses.every(a => a.currentScanned >= a.capacity);
+  if (allAtCapacity) {
+    const totalUnits = shipmentAnalyses.reduce((s, a) => s + a.capacity, 0);
+    const orderCount = shipmentAnalyses.length;
+    const orderIds = shipmentAnalyses.map(a => a.shipment.order_id);
+    return NextResponse.json({
+      scan,
+      resolution: resolutionState,
+      matchCount: matches.length,
+      message: `Already checked in — ${totalUnits} unit${totalUnits !== 1 ? "s" : ""} across ${orderCount} order${orderCount !== 1 ? "s" : ""}`,
+      duplicate: true,
+      orders: orderIds,
+    });
+  }
+
   // === Select target shipment for this scan ===
   // For shared tracking numbers: allocate to the first shipment that isn't full.
   // Items are the same product so it doesn't matter which order gets which unit.

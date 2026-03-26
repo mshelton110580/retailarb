@@ -200,7 +200,10 @@ export default function ReceivingForm() {
       if (res.ok) {
         setResult(data);
 
-        if (data.resolution === "UNRESOLVED") {
+        if ((data as any).duplicate) {
+          setStatus(`⚠ ${data.message}`);
+          setStatusType("warning");
+        } else if (data.resolution === "UNRESOLVED") {
           setStatus("⚠ No matching tracking number found. Scan saved as UNRESOLVED.");
           setStatusType("warning");
         } else if (data.results?.[0]?.lotConfirmation) {
