@@ -320,15 +320,9 @@ export async function POST(req: Request) {
   // can confirm the entire box at once instead of one shipment at a time.
   if (shipmentAnalyses.length > 1) {
     const allFirstScan = shipmentAnalyses.every(a => a.currentScanned === 0);
-    const allHaveBreakdown = shipmentAnalyses.every(a => {
-      const breakdown = a.aiLotBreakdown
-        ?? (a.shipment.lot_manifest as Array<{ desc: string; qty: number }> | null)?.map(
-          m => ({ product: m.desc, quantity: m.qty })
-        );
-      return (breakdown && breakdown.length > 0) || a.orderQty > 1;
-    });
-
-    if (allFirstScan && allHaveBreakdown) {
+    // For shared tracking: always show combined confirmation on first scan.
+    // Lots have AI breakdowns; single-qty items build breakdowns from order items.
+    if (allFirstScan) {
       const results: any[] = [];
       const combinedShipments: Array<{
         shipmentId: string;
@@ -384,7 +378,7 @@ export async function POST(req: Request) {
           expectedUnits: totalUnits,
           itemBreakdown: scaledBreakdown,
           isLot: shipment.is_lot,
-          ...(!shipment.is_lot && orderQty > 1 ? {
+          ...(!shipment.is_lot ? {
             orderItems: orderItems.map(i => ({
               itemId: i.item_id,
               orderItemId: i.id,
@@ -396,12 +390,13 @@ export async function POST(req: Request) {
       }
 
       const totalUnitsAll = combinedShipments.reduce((s, sh) => s + sh.expectedUnits, 0);
+      const anyLots = combinedShipments.some(sh => sh.isLot);
 
       results.push({
         orderId: combinedShipments[0].orderId,
-        isLot: true,
+        isLot: anyLots,
         lotSize: null,
-        scanStatus: "check_quantity",
+        scanStatus: anyLots ? "check_quantity" : "pending",
         scannedSoFar: 0,
         expectedUnits: totalUnitsAll,
         condition: body.data.condition_status,

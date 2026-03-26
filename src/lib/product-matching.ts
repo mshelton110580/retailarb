@@ -20,7 +20,14 @@ export function detectMultipleProducts(title: string): boolean {
   if (models && models.length >= 2) {
     const realModels = models.filter(m => {
       const prefix = m.replace(/[-\s]?\d+.*$/, "").toLowerCase();
-      return !noiseWords.has(prefix);
+      if (noiseWords.has(prefix)) return false;
+      // Filter out year-like numbers (e.g., "Vtg 1999", "circa 2005")
+      const digits = m.match(/\d{4}/)?.[0];
+      if (digits) {
+        const num = parseInt(digits, 10);
+        if (num >= 1900 && num <= 2099) return false;
+      }
+      return true;
     });
     const uniqueModels = new Set(realModels.map(m => m.toLowerCase().trim()));
     if (uniqueModels.size >= 2) {
