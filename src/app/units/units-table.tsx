@@ -58,8 +58,8 @@ const ALL_COLUMNS = [
 
 type ColKey = (typeof ALL_COLUMNS)[number]["key"];
 
-const LS_WIDTHS = "units_col_widths";
-const LS_VISIBLE = "units_col_visible";
+const LS_WIDTHS = "units_col_widths_v2";
+const LS_VISIBLE = "units_col_visible_v2";
 
 function loadWidths(): Record<ColKey, number> {
   const defaults = Object.fromEntries(ALL_COLUMNS.map(c => [c.key, c.defaultWidth])) as Record<ColKey, number>;
