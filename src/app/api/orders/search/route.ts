@@ -241,7 +241,8 @@ export async function GET(req: Request) {
           }
         },
         received_units: {
-          select: { inventory_state: true, order_item_id: true },
+          select: { id: true, unit_index: true, condition_status: true, inventory_state: true, order_item_id: true, notes: true },
+          orderBy: { unit_index: "asc" },
         },
         returns: {
           select: {
@@ -392,6 +393,13 @@ export async function GET(req: Request) {
             carrier: t.carrier,
           })),
         } : null,
+        receivedUnits: o.received_units.map(u => ({
+          id: u.id,
+          unitIndex: u.unit_index,
+          condition: u.condition_status,
+          inventoryState: u.inventory_state,
+          notes: u.notes,
+        })),
         returnCase: (() => {
           const r = o.returns[0];
           if (!r) return null;

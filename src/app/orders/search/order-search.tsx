@@ -65,6 +65,14 @@ type InrCase = {
   url: string;
 };
 
+type ReceivedUnit = {
+  id: string;
+  unitIndex: number;
+  condition: string;
+  inventoryState: string;
+  notes: string | null;
+};
+
 type Order = {
   orderId: string;
   purchaseDate: string;
@@ -84,6 +92,7 @@ type Order = {
   ebayAccountId: string;
   ebayUsername: string | null;
   items: OrderItem[];
+  receivedUnits: ReceivedUnit[];
   shipment: Shipment | null;
   returnCase: ReturnCase | null;
   inrCase: InrCase | null;
@@ -396,7 +405,7 @@ const DEFAULT_COL_WIDTHS: Partial<Record<ColKey, number>> = {
   refund:     144,
   tracking:   220,
   shipStatus: 112,
-  checkedIn:  80,
+  checkedIn:  120,
   returnCase: 80,
   inrCase:    80,
   escalated:  96,
@@ -907,20 +916,39 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
               {shipment.derivedStatus.replace(/_/g, " ")}
             </span>
           : <span className="text-xs text-slate-600">—</span>;
-      case "checkedIn":
+      case "checkedIn": {
+        const received = order.receivedUnits?.length ?? 0;
+        const expected = shipment?.expectedUnits ?? 0;
+        const missing = expected - received;
+        if (!shipment?.checkedInAt) {
+          return (
+            <button
+              onClick={e => triggerCheckIn(order, e)}
+              title="Click to check in"
+              className="inline-block rounded px-2 py-0.5 text-[10px] font-medium transition-colors bg-slate-800 text-slate-500 hover:bg-slate-700 hover:text-slate-300 cursor-pointer"
+            >
+              Not in
+            </button>
+          );
+        }
+        const condCounts: Record<string, number> = {};
+        for (const u of order.receivedUnits ?? []) {
+          condCounts[u.condition] = (condCounts[u.condition] ?? 0) + 1;
+        }
+        const condParts = Object.entries(condCounts).map(([c, n]) => `${n} ${c.replace(/_/g, " ")}`);
         return (
-          <button
-            onClick={e => { if (!shipment?.checkedInAt) triggerCheckIn(order, e); else e.stopPropagation(); }}
-            title={shipment?.checkedInAt ? `Checked in ${new Date(shipment.checkedInAt).toLocaleDateString()}` : "Click to check in"}
-            className={`inline-block rounded px-2 py-0.5 text-[10px] font-medium transition-colors ${
-              shipment?.checkedInAt
-                ? "bg-emerald-900 text-emerald-300 cursor-default"
-                : "bg-slate-800 text-slate-500 hover:bg-slate-700 hover:text-slate-300 cursor-pointer"
-            }`}
-          >
-            {shipment?.checkedInAt ? "✓ In" : "Not in"}
-          </button>
+          <div className="flex flex-col gap-0.5" onClick={e => e.stopPropagation()}>
+            <span className="inline-block rounded px-2 py-0.5 text-[10px] font-medium bg-emerald-900 text-emerald-300 w-fit">
+              {received}/{expected}{missing > 0 ? ` (${missing} missing)` : ""}
+            </span>
+            {condParts.length > 0 && (
+              <span className="text-[9px] text-slate-500 truncate max-w-[120px]" title={condParts.join(", ")}>
+                {condParts.join(", ")}
+              </span>
+            )}
+          </div>
         );
+      }
       case "returnCase":
         if (order.returnCase) return <ReturnBadge r={order.returnCase} />;
         if (order.needsReturn) return (
@@ -999,20 +1027,39 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
               {shipment.derivedStatus.replace(/_/g, " ")}
             </span>
           : <span className="text-xs text-slate-600">—</span>;
-      case "checkedIn":
+      case "checkedIn": {
+        const received = order.receivedUnits?.length ?? 0;
+        const expected = shipment?.expectedUnits ?? 0;
+        const missing = expected - received;
+        if (!shipment?.checkedInAt) {
+          return (
+            <button
+              onClick={e => triggerCheckIn(order, e)}
+              title="Click to check in"
+              className="inline-block rounded px-2 py-0.5 text-[10px] font-medium transition-colors bg-slate-800 text-slate-500 hover:bg-slate-700 hover:text-slate-300 cursor-pointer"
+            >
+              Not in
+            </button>
+          );
+        }
+        const condCounts: Record<string, number> = {};
+        for (const u of order.receivedUnits ?? []) {
+          condCounts[u.condition] = (condCounts[u.condition] ?? 0) + 1;
+        }
+        const condParts = Object.entries(condCounts).map(([c, n]) => `${n} ${c.replace(/_/g, " ")}`);
         return (
-          <button
-            onClick={e => { if (!shipment?.checkedInAt) triggerCheckIn(order, e); else e.stopPropagation(); }}
-            title={shipment?.checkedInAt ? `Checked in ${new Date(shipment.checkedInAt).toLocaleDateString()}` : "Click to check in"}
-            className={`inline-block rounded px-2 py-0.5 text-[10px] font-medium transition-colors ${
-              shipment?.checkedInAt
-                ? "bg-emerald-900 text-emerald-300 cursor-default"
-                : "bg-slate-800 text-slate-500 hover:bg-slate-700 hover:text-slate-300 cursor-pointer"
-            }`}
-          >
-            {shipment?.checkedInAt ? `✓ ${new Date(shipment.checkedInAt).toLocaleDateString()}` : "Not in"}
-          </button>
+          <div className="flex flex-col gap-0.5" onClick={e => e.stopPropagation()}>
+            <span className="inline-block rounded px-2 py-0.5 text-[10px] font-medium bg-emerald-900 text-emerald-300 w-fit">
+              {received}/{expected}{missing > 0 ? ` (${missing} missing)` : ""}
+            </span>
+            {condParts.length > 0 && (
+              <span className="text-[9px] text-slate-500 truncate max-w-[120px]" title={condParts.join(", ")}>
+                {condParts.join(", ")}
+              </span>
+            )}
+          </div>
         );
+      }
       case "returnCase":
         if (order.returnCase) return <ReturnBadge r={order.returnCase} />;
         if (order.needsReturn) return (
@@ -1050,6 +1097,31 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   }
 
   // ── Expanded detail panels ────────────────────────────────────────────────
+
+  const unitCondColor: Record<string, string> = {
+    good: "text-green-400", new_sealed: "text-blue-400", like_new: "text-cyan-400",
+    acceptable: "text-yellow-400", fair: "text-yellow-500",
+    damaged: "text-red-400", wrong_item: "text-orange-400",
+    missing_parts: "text-amber-400", defective: "text-rose-400", missing: "text-red-500",
+  };
+
+  function ReceivedUnitsList({ units }: { units: ReceivedUnit[] }) {
+    if (units.length === 0) return null;
+    return (
+      <div className="text-xs">
+        <span className="text-slate-500">Units: </span>
+        {units.map((u, i) => (
+          <span key={u.id}>
+            {i > 0 && <span className="text-slate-700">, </span>}
+            <span className={unitCondColor[u.condition] ?? "text-slate-400"}>
+              #{u.unitIndex} {u.condition.replace(/_/g, " ")}
+            </span>
+            {u.notes && <span className="text-slate-600 italic"> ({u.notes})</span>}
+          </span>
+        ))}
+      </div>
+    );
+  }
 
   function ExpandedDetail({ order }: { order: Order }) {
     const shipment = order.shipment;
@@ -1104,9 +1176,14 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
         {shipment && (
           <div className="flex flex-wrap gap-4 text-xs">
             {shipment.deliveredAt && <div><span className="text-slate-500">Delivered </span><span className="text-slate-300">{fmtDate(shipment.deliveredAt)}</span></div>}
-            <div><span className="text-slate-500">Scan </span><span className="text-slate-400">{shipment.scannedUnits}/{shipment.expectedUnits} units · {shipment.scanStatus}</span></div>
+            <div><span className="text-slate-500">Received </span><span className="text-slate-400">{order.receivedUnits.length}/{shipment.expectedUnits} units</span>
+              {shipment.expectedUnits - order.receivedUnits.length > 0 && (
+                <span className="text-red-400 ml-1">({shipment.expectedUnits - order.receivedUnits.length} missing)</span>
+              )}
+            </div>
           </div>
         )}
+        <ReceivedUnitsList units={order.receivedUnits} />
         <div className="flex flex-wrap gap-2 pt-1">
           <Link href={`/orders/${order.orderId}`} className="rounded bg-slate-800 px-3 py-1 text-xs text-slate-300 hover:bg-slate-700 transition-colors">
             Order details →
@@ -1198,9 +1275,14 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
         {shipment && (
           <div className="flex flex-wrap gap-4 text-xs">
             {shipment.deliveredAt && <div><span className="text-slate-500">Delivered </span><span className="text-slate-300">{fmtDate(shipment.deliveredAt)}</span></div>}
-            <div><span className="text-slate-500">Scan </span><span className="text-slate-400">{shipment.scannedUnits}/{shipment.expectedUnits} units · {shipment.scanStatus}</span></div>
+            <div><span className="text-slate-500">Received </span><span className="text-slate-400">{order.receivedUnits.length}/{shipment.expectedUnits} units</span>
+              {shipment.expectedUnits - order.receivedUnits.length > 0 && (
+                <span className="text-red-400 ml-1">({shipment.expectedUnits - order.receivedUnits.length} missing)</span>
+              )}
+            </div>
           </div>
         )}
+        <ReceivedUnitsList units={order.receivedUnits} />
         <div className="flex flex-wrap gap-2 pt-1">
           <Link href={`/orders/${order.orderId}`} className="rounded bg-slate-800 px-3 py-1 text-xs text-slate-300 hover:bg-slate-700 transition-colors">
             Order details →
