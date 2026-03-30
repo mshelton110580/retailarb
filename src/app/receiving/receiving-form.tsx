@@ -107,6 +107,7 @@ export default function ReceivingForm() {
   const [result, setResult] = useState<ScanResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const submittingRef = useRef(false); // Synchronous guard against double-submission
+  const modalKeysRef = useRef({ lastTime: 0, burst: 0 }); // Detect scanner input in modal
   const formRef = useRef<HTMLFormElement>(null);
   const trackingRef = useRef<HTMLInputElement>(null);
   const [productOptions, setProductOptions] = useState<Product[]>([]);
@@ -162,11 +163,12 @@ export default function ReceivingForm() {
 
   // Detect barcode scanner input and route to tracking field
   useBarcodeScanner(trackingRef, (value) => {
+    if (lotConfirmation) return; // Block scanner while lot confirmation modal is open
     submitScan(value);
   });
 
   const submitScan = useCallback(async (trackingValue: string) => {
-    if (!trackingValue.trim() || loading || submittingRef.current) return;
+    if (!trackingValue.trim() || loading || submittingRef.current || lotConfirmation) return;
     submittingRef.current = true;
 
     setLoading(true);
@@ -332,7 +334,7 @@ export default function ReceivingForm() {
       setLoading(false);
       submittingRef.current = false;
     }
-  }, [loading, router]);
+  }, [loading, lotConfirmation, router]);
 
   function handleTrackingKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter") {
@@ -630,6 +632,7 @@ export default function ReceivingForm() {
           setStatusType(photoGroups.length > 0 ? "warning" : "success");
         }
         if (trackingRef.current) trackingRef.current.value = "";
+        setTimeout(() => trackingRef.current?.focus(), 100);
         router.refresh();
 
         startPhotoFlow(photoGroups);
@@ -669,6 +672,7 @@ export default function ReceivingForm() {
           setStatus(`✓ ${received} units checked in${missingText}${photoCount > 0 ? ` — ${photoCount} need photos` : ""}`);
           setStatusType(photoCount > 0 ? "warning" : "success");
           if (trackingRef.current) trackingRef.current.value = "";
+          setTimeout(() => trackingRef.current?.focus(), 100);
           router.refresh();
 
           startPhotoFlow(photoGroups);
@@ -720,6 +724,7 @@ export default function ReceivingForm() {
         setStatus(`✓ ${data.unitsCreated} units checked in${photoCount > 0 ? ` — ${photoCount} need photos` : ""}`);
         setStatusType(photoCount > 0 ? "warning" : "success");
         if (trackingRef.current) trackingRef.current.value = "";
+        setTimeout(() => trackingRef.current?.focus(), 100);
         router.refresh();
 
         startPhotoFlow(photoGroups);
@@ -769,12 +774,13 @@ export default function ReceivingForm() {
         <div className="mt-3 grid gap-3 md:grid-cols-3">
           <input
             ref={trackingRef}
-            className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-mono"
+            className={`rounded border px-3 py-2 text-sm font-mono ${lotConfirmation ? "border-fuchsia-700 bg-slate-900 text-slate-500" : "border-slate-700 bg-slate-950"}`}
             name="tracking"
-            placeholder="Scan or enter tracking number"
+            placeholder={lotConfirmation ? "Complete lot confirmation first..." : "Scan or enter tracking number"}
             autoFocus
             autoComplete="off"
             required
+            disabled={!!lotConfirmation}
             onKeyDown={handleTrackingKeyDown}
           />
           <select
@@ -980,7 +986,32 @@ export default function ReceivingForm() {
 
       {/* Lot confirmation modal */}
       {lotConfirmation && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          onKeyDown={(e) => {
+            // Block Enter everywhere in the modal — barcode scanners send Enter
+            // after digits which could accidentally trigger "Yes, All Good" or
+            // "Continue" buttons. Users must click buttons to confirm.
+            if (e.key === "Enter") {
+              e.preventDefault();
+              e.stopPropagation();
+              return;
+            }
+            // Detect barcode scanner rapid-fire input and block it from
+            // corrupting number fields in the modal. Scanner sends 20+ chars
+            // in <200ms. Normal human typing is 1 char every 100-300ms.
+            if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+              const now = Date.now();
+              const elapsed = now - modalKeysRef.current.lastTime;
+              modalKeysRef.current.lastTime = now;
+              modalKeysRef.current.burst = elapsed < 80 ? modalKeysRef.current.burst + 1 : 0;
+              if (modalKeysRef.current.burst >= 3) {
+                e.preventDefault();
+                e.stopPropagation();
+              }
+            }
+          }}
+        >
           <div className="w-full max-w-lg rounded-lg border border-blue-800 bg-slate-900 p-6 shadow-2xl mx-4 max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-semibold text-blue-400">
               {lotConfirmation.shipments
@@ -1333,6 +1364,7 @@ export default function ReceivingForm() {
                 setResult(null);
                 setStatus("Scan cancelled");
                 setStatusType("warning");
+                setTimeout(() => trackingRef.current?.focus(), 100);
               }}
               className="mt-4 w-full text-center text-xs text-slate-500 hover:text-slate-400"
             >
