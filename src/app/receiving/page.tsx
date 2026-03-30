@@ -100,7 +100,7 @@ export default async function ReceivingPage({
           })
         : [];
 
-      if (trackingMatches.length === 0) {
+      if (trackingMatches.length === 0 && scan.tracking_last8.length > 0) {
         trackingMatches = await prisma.tracking_numbers.findMany({
           where: { tracking_number: { endsWith: scan.tracking_last8 } },
           include: { shipment: { include: { order: { include: { order_items: true } } } } }

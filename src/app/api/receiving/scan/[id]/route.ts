@@ -24,10 +24,12 @@ export async function DELETE(
   }
 
   // Find tracking numbers matching this scan's last8
-  const trackingMatches = await prisma.tracking_numbers.findMany({
-    where: { tracking_number: { endsWith: scan.tracking_last8 } },
-    include: { shipment: true }
-  });
+  const trackingMatches = scan.tracking_last8.length > 0
+    ? await prisma.tracking_numbers.findMany({
+        where: { tracking_number: { endsWith: scan.tracking_last8 } },
+        include: { shipment: true }
+      })
+    : [];
 
   const affectedOrderIds: string[] = [];
 

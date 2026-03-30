@@ -123,6 +123,9 @@ export async function POST(req: Request) {
   }
 
   const trackingInput = body.data.tracking.trim();
+  if (!/\d/.test(trackingInput)) {
+    return NextResponse.json({ error: "Invalid tracking number — must contain digits" }, { status: 400 });
+  }
   const tracking_last8 = last8(trackingInput);
 
   // Try exact match first, then fall back to last-8 match
@@ -131,7 +134,7 @@ export async function POST(req: Request) {
     include: { shipment: { include: { order: { include: { order_items: true } } } } }
   });
 
-  if (matches.length === 0) {
+  if (matches.length === 0 && tracking_last8.length > 0) {
     matches = await prisma.tracking_numbers.findMany({
       where: { tracking_number: { endsWith: tracking_last8 } },
       include: { shipment: { include: { order: { include: { order_items: true } } } } }
