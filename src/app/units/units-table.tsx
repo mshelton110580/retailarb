@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useBarcodeScanner } from "@/lib/use-barcode-scanner";
 import ChipSearchInput, { type SearchChip, type SearchField } from "@/components/chip-search-input";
 import SavedSearches from "@/components/saved-searches";
+import ImageUploadPanel from "@/components/image-upload-panel";
 
 const UNIT_SEARCH_FIELDS: SearchField[] = [
   { key: "title",     label: "Title" },
@@ -539,6 +540,7 @@ export default function UnitsTable({ products: initialProducts }: { products: Pr
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkPanel, setBulkPanel] = useState(false);
+  const [photoUploadUnit, setPhotoUploadUnit] = useState<{ id: string; unitIndex: number; title: string } | null>(null);
   const [bulkCondition, setBulkCondition] = useState("");
   const [bulkProductId, setBulkProductId] = useState("__unchanged__");
   const [bulkLoading, setBulkLoading] = useState(false);
@@ -806,22 +808,29 @@ export default function UnitsTable({ products: initialProducts }: { products: Pr
       case "notes":
         return <NotesCell unit={unit} onUpdated={handleNotesUpdated} />;
       case "photos":
-        return unit.images?.length > 0 ? (
-          <div className="flex flex-wrap gap-1">
-            {unit.images.slice(0, 3).map((img) => (
+        return (
+          <div className="flex flex-wrap gap-1 items-center">
+            {unit.images?.slice(0, 3).map((img) => (
               <a key={img.id} href={img.url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={img.url} alt="Unit photo"
                   className="h-10 w-10 rounded border border-slate-700 object-cover hover:opacity-80 transition-opacity" />
               </a>
             ))}
-            {unit.images.length > 3 && (
+            {(unit.images?.length ?? 0) > 3 && (
               <span className="flex h-10 w-10 items-center justify-center rounded border border-slate-700 text-xs text-slate-500">
                 +{unit.images.length - 3}
               </span>
             )}
+            <button
+              onClick={e => { e.stopPropagation(); setPhotoUploadUnit({ id: unit.id, unitIndex: unit.unitIndex, title: unit.title }); }}
+              className="flex h-10 w-10 items-center justify-center rounded border border-dashed border-slate-700 text-slate-500 hover:border-blue-600 hover:text-blue-400 transition-colors"
+              title="Add photo"
+            >
+              +
+            </button>
           </div>
-        ) : <span className="text-xs text-slate-700">—</span>;
+        );
     }
   }
 
@@ -829,6 +838,14 @@ export default function UnitsTable({ products: initialProducts }: { products: Pr
     <div className="space-y-4">
       {showNewProductModal && (
         <NewProductModal onClose={() => setShowNewProductModal(false)} onCreated={handleNewProductCreated} />
+      )}
+      {photoUploadUnit && (
+        <ImageUploadPanel
+          receivedUnitId={photoUploadUnit.id}
+          unitTitle={photoUploadUnit.title}
+          unitIndex={photoUploadUnit.unitIndex}
+          onClose={() => { setPhotoUploadUnit(null); fetchUnits(false); }}
+        />
       )}
 
       {/* Filters */}
