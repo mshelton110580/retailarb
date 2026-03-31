@@ -1216,24 +1216,36 @@ export default function ReceivingForm() {
                       <div className="mt-4">
                         <p className="text-sm font-medium text-slate-200">
                           {totalReceived === 0
-                            ? "No items received?"
+                            ? "Confirm nothing was received?"
                             : `Are all ${totalReceived} received items in good condition?`}
                         </p>
                         <div className="mt-3 flex gap-3">
-                          <button
-                            onClick={() => handleReceivedConfirmAllGood()}
-                            disabled={lotSubmitting || totalReceived === 0 || hasUnresolvedProducts}
-                            className="flex-1 rounded-lg bg-green-600 hover:bg-green-700 px-4 py-3 text-sm font-medium text-white transition-colors disabled:opacity-50"
-                          >
-                            {lotSubmitting ? "Saving..." : "Yes, All Good"}
-                          </button>
-                          <button
-                            onClick={() => handleReceivedGoToConditions()}
-                            disabled={totalReceived === 0 || hasUnresolvedProducts}
-                            className="flex-1 rounded-lg border border-yellow-700 px-4 py-3 text-sm font-medium text-yellow-400 hover:bg-yellow-900/30 transition-colors disabled:opacity-50"
-                          >
-                            No, Some Have Issues
-                          </button>
+                          {totalReceived === 0 ? (
+                            <button
+                              onClick={() => handleReceivedConfirmAllGood()}
+                              disabled={lotSubmitting}
+                              className="flex-1 rounded-lg bg-red-600 hover:bg-red-700 px-4 py-3 text-sm font-medium text-white transition-colors disabled:opacity-50"
+                            >
+                              {lotSubmitting ? "Saving..." : `Confirm All ${totalExpected} Missing`}
+                            </button>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => handleReceivedConfirmAllGood()}
+                                disabled={lotSubmitting || hasUnresolvedProducts}
+                                className="flex-1 rounded-lg bg-green-600 hover:bg-green-700 px-4 py-3 text-sm font-medium text-white transition-colors disabled:opacity-50"
+                              >
+                                {lotSubmitting ? "Saving..." : "Yes, All Good"}
+                              </button>
+                              <button
+                                onClick={() => handleReceivedGoToConditions()}
+                                disabled={hasUnresolvedProducts}
+                                className="flex-1 rounded-lg border border-yellow-700 px-4 py-3 text-sm font-medium text-yellow-400 hover:bg-yellow-900/30 transition-colors disabled:opacity-50"
+                              >
+                                No, Some Have Issues
+                              </button>
+                            </>
+                          )}
                         </div>
                       </div>
                     </>
