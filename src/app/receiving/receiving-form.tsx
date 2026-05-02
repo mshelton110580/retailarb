@@ -689,57 +689,6 @@ export default function ReceivingForm() {
     }
   }
 
-  async function handleLotConfirm() {
-    if (!lotConfirmation || lotSubmitting) return;
-    setLotSubmitting(true);
-    try {
-      const res = await fetch("/api/receiving/confirm-lot", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          shipmentId: lotConfirmation.shipmentId,
-          orderId: lotConfirmation.orderId,
-          itemId: lotConfirmation.itemId,
-          orderItemId: lotConfirmation.orderItemId,
-          units: lotUnits.map(u => ({
-            product: u.product,
-            condition: u.condition,
-            notes: u.notes || undefined,
-            productId: u.productId || undefined,
-          })),
-          ...(lotConfirmation.isMultiQty ? {
-            isMultiQty: true,
-            orderItems: lotConfirmation.orderItems,
-          } : {}),
-        }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        const createdUnits: Array<{ id: string; unitIndex: number; condition: string; product: string }> = data.units ?? [];
-        const photoGroups = buildPhotoGroups(createdUnits);
-        const photoCount = photoGroups.reduce((s, g) => s + (g.groupUnitIds?.length ?? 1), 0);
-
-        setLotConfirmation(null);
-        setResult(null);
-        setStatus(`✓ ${data.unitsCreated} units checked in${photoCount > 0 ? ` — ${photoCount} need photos` : ""}`);
-        setStatusType(photoCount > 0 ? "warning" : "success");
-        if (trackingRef.current) trackingRef.current.value = "";
-        setTimeout(() => trackingRef.current?.focus(), 100);
-        router.refresh();
-
-        startPhotoFlow(photoGroups);
-      } else {
-        setStatus(`Error: ${data.error}`);
-        setStatusType("error");
-      }
-    } catch {
-      setStatus("Network error confirming lot");
-      setStatusType("error");
-    } finally {
-      setLotSubmitting(false);
-    }
-  }
-
   // Check if scan result requires manual product selection
   useEffect(() => {
     if (result?.results?.[0]?.productInfo?.requiresManualSelection) {
@@ -1356,7 +1305,7 @@ export default function ReceivingForm() {
                     Back
                   </button>
                   <button
-                    onClick={() => handleLotConfirm()}
+                    onClick={() => handleLotConfirmWithUnits(lotUnits)}
                     disabled={lotSubmitting}
                     className="flex-1 rounded-lg bg-blue-600 hover:bg-blue-700 px-4 py-2 text-sm font-medium text-white transition-colors disabled:opacity-50"
                   >
