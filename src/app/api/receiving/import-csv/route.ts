@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
 import { TargetType, TargetStatus } from "@prisma/client";
 import { findOrCreateProduct, computeInventoryState, generateProductName } from "@/lib/product-matching";
+import { planRowImport } from "@/lib/import-dedupe";
 import { onProductCreated } from "@/lib/ai";
 
 // Parse a Google Sheets timestamp in various formats:
@@ -74,8 +75,14 @@ export async function POST(req: Request) {
   let totalSkipped = 0;
   let totalErrors = 0;
 
-  // Track order IDs processed in this batch so repeated tracking = lot (never skip within same import)
-  const processedOrderIds = new Set<string>();
+  // Per-order dedupe accounting for this run:
+  // - preRunExisting: units that existed for the order BEFORE this run (snapshot on first encounter)
+  // - requestedSoFar: cumulative qty requested for the order by rows already processed this run
+  // A row only creates units whose cumulative index exceeds preRunExisting — so an exact
+  // reimport skips everything (including lots), while new rows appended to a sheet still import,
+  // and repeated tracking within a fresh import still builds lots.
+  const preRunExisting = new Map<string, number>();
+  const requestedSoFar = new Map<string, number>();
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -157,19 +164,18 @@ export async function POST(req: Request) {
         where: { order_id: shipment.order_id }
       });
 
-      // Skip only if this order was already fully checked in by a PREVIOUS import/scan run,
-      // AND it has not appeared in the current batch (which would mean it's a lot),
-      // AND it is not already flagged as a lot (lots always allow more units).
-      // processedOrderIds tracks what we've already touched this run — if it's in there,
-      // the same tracking appeared again in the sheet → lot, always create more units.
-      const seenThisRun = processedOrderIds.has(shipment.order_id);
       const isAlreadyLot = shipment.is_lot;
-      const checkedInPreviously = !seenThisRun && !isAlreadyLot && shipment.checked_in_at != null && existingCount >= shipment.expected_units && existingCount > 0;
-      const isExactRepeat = checkedInPreviously;
 
-      if (isExactRepeat) {
-        // Mark as seen so subsequent rows with the same tracking are treated as a lot
-        processedOrderIds.add(shipment.order_id);
+      // Units imported by PREVIOUS runs occupy cumulative indices 1..preRunExisting.
+      // This row covers indices (requested, requested+qty] — only create the excess.
+      if (!preRunExisting.has(shipment.order_id)) {
+        preRunExisting.set(shipment.order_id, existingCount);
+      }
+      const requested = requestedSoFar.get(shipment.order_id) ?? 0;
+      const plan = planRowImport({ qty, requestedSoFar: requested, preRunExisting: preRunExisting.get(shipment.order_id)! });
+      requestedSoFar.set(shipment.order_id, requested + qty);
+
+      if (plan.createCount === 0) {
         // Same tracking, same qty — check if we should update condition/notes
         const isNonDefaultCondition = conditionStatus && conditionStatus.toLowerCase() !== "good";
         if (isNonDefaultCondition || conditionNotes) {
@@ -193,11 +199,10 @@ export async function POST(req: Request) {
         }
         continue;
       }
-      // If same tracking appears again with additional units, fall through to create them (lot scenario)
+      // Units beyond what previous runs imported — create them (fresh import or lot growth)
 
       try {
-        // Create received_units for each unit in this row's quantity
-        for (let u = 0; u < qty; u++) {
+        for (let u = 0; u < plan.createCount; u++) {
           const unitIndex = existingCount + u + 1;
 
           // Determine which order item this unit belongs to.
@@ -344,7 +349,6 @@ export async function POST(req: Request) {
           }
         });
 
-        processedOrderIds.add(shipment.order_id);
         totalImported++;
         results.push({ row: rowNum, tracking: trackingInput, status: "imported", message: `Created ${unitsCreated} unit(s)`, unitsCreated });
 

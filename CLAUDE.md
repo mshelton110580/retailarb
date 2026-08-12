@@ -450,9 +450,4 @@ APP_BASE_URL               # Used by eBay OAuth callback for redirects
 
 ## Known Issues
 
-### Lot Reimport Creates Duplicate Units
-**File**: `src/app/api/receiving/import-csv/route.ts`
-When reimporting scan records for orders already flagged as lots (`is_lot = true`), the duplicate guard is bypassed. Every reimport creates additional units on top of existing ones.
-
-### Re-scan Guard Missing
-No guard against re-scanning already-complete shipments. Scanning a completed shipment again could create duplicate units.
+None currently tracked. (Previously listed issues are fixed: CSV reimport duplicates — including for lots — are prevented by per-order cumulative dedupe in `src/lib/import-dedupe.ts` (exact reimports skip all rows, appended rows still import); re-scanning at-capacity shipments is blocked in the scan route.)
