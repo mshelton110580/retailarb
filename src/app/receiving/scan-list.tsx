@@ -74,6 +74,11 @@ export default function ScanList({ entries }: { entries: ScanEntry[] }) {
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [creatingProduct, setCreatingProduct] = useState<string | null>(null);
   const [newProductName, setNewProductName] = useState<string>("");
+  const [editingCondition, setEditingCondition] = useState<string | null>(null);
+  const [conditionDraft, setConditionDraft] = useState<string>("");
+  const [conditionOptions, setConditionOptions] = useState<string[]>([]);
+  const [loadingConditions, setLoadingConditions] = useState(false);
+  const [savingCondition, setSavingCondition] = useState<string | null>(null);
 
   async function handleDeleteLot(trackingLast8: string, scanIds: string[]) {
     if (!confirm(`Delete entire lot (...${trackingLast8})? This will delete ${scanIds.length} scan${scanIds.length > 1 ? "s" : ""} and reverse all check-ins.`)) return;
@@ -202,15 +207,96 @@ export default function ScanList({ entries }: { entries: ScanEntry[] }) {
     loadProducts();
   }
 
+  async function loadConditions() {
+    if (conditionOptions.length > 0) return;
+    setLoadingConditions(true);
+    try {
+      const res = await fetch("/api/units/conditions");
+      const data = await res.json();
+      if (res.ok) setConditionOptions(data.conditions);
+    } catch (err) {
+      console.error("Failed to load conditions:", err);
+    } finally {
+      setLoadingConditions(false);
+    }
+  }
+
+  function handleEditCondition(unitId: string, currentCondition: string) {
+    setEditingCondition(unitId);
+    setConditionDraft(currentCondition);
+    loadConditions();
+  }
+
+  async function handleSaveCondition(unitId: string) {
+    setSavingCondition(unitId);
+    setMessage(null);
+    try {
+      const res = await fetch(`/api/units/${unitId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ condition: conditionDraft })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setMessage(
+          data.reevaluatedState
+            ? `✓ Condition updated — inventory state → ${data.reevaluatedState.replace(/_/g, " ")}`
+            : "✓ Condition updated"
+        );
+        setEditingCondition(null);
+        router.refresh();
+      } else {
+        setMessage(`Error: ${data.error}`);
+      }
+    } catch {
+      setMessage("Network error. Please try again.");
+    } finally {
+      setSavingCondition(null);
+    }
+  }
+
   function renderUnit(unit: ReceivedUnit) {
     return (
       <div key={unit.id} className="mt-0.5 space-y-1">
         <div className="flex items-center gap-2 text-xs">
           <span className="text-slate-500">#{unit.unitIndex}</span>
           <span className="text-slate-300">{unit.title}</span>
-          <span className={`rounded px-1.5 py-0.5 text-[10px] ${conditionColors[unit.condition] ?? "bg-slate-700 text-slate-300"}`}>
-            {unit.condition.replace(/_/g, " ")}
-          </span>
+          {editingCondition === unit.id ? (
+            loadingConditions ? (
+              <span className="text-[10px] text-slate-500">Loading...</span>
+            ) : (
+              <>
+                <select
+                  className="rounded border border-slate-700 bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-300"
+                  value={conditionDraft}
+                  onChange={(e) => setConditionDraft(e.target.value)}
+                  autoFocus
+                >
+                  {conditionOptions.map((c) => (
+                    <option key={c} value={c}>{c.replace(/_/g, " ")}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => handleSaveCondition(unit.id)}
+                  disabled={savingCondition === unit.id}
+                  className="rounded bg-amber-600 hover:bg-amber-700 px-1.5 py-0.5 text-[10px] text-white disabled:opacity-50"
+                >
+                  {savingCondition === unit.id ? "..." : "Save"}
+                </button>
+                <button
+                  onClick={() => setEditingCondition(null)}
+                  disabled={savingCondition === unit.id}
+                  className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-slate-700 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </>
+            )
+          ) : (
+            <span className={`rounded px-1.5 py-0.5 text-[10px] ${conditionColors[unit.condition] ?? "bg-slate-700 text-slate-300"}`}>
+              {unit.condition.replace(/_/g, " ")}
+            </span>
+          )}
           {unit.product && (
             <span className="rounded bg-indigo-900 px-1.5 py-0.5 text-[10px] text-indigo-300">{unit.product.name}</span>
           )}
@@ -223,6 +309,15 @@ export default function ScanList({ entries }: { entries: ScanEntry[] }) {
           >
             Edit Product
           </button>
+          {editingCondition !== unit.id && (
+            <button
+              onClick={() => handleEditCondition(unit.id, unit.condition)}
+              className="rounded border border-amber-800 px-1.5 py-0.5 text-[10px] text-amber-400 hover:bg-amber-900"
+              title="Edit condition"
+            >
+              Edit Condition
+            </button>
+          )}
           <button
             onClick={() => handleDeleteUnit(unit.id, unit.unitIndex)}
             disabled={deletingUnit === unit.id}

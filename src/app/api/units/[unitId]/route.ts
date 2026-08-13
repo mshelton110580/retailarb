@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
-import { computeInventoryState } from "@/lib/product-matching";
+import { reevaluateUnit } from "@/lib/inventory-transitions";
 
 /**
  * PATCH /api/units/:unitId
@@ -64,45 +64,7 @@ export async function PATCH(
     return NextResponse.json({ error: "Unit not found" }, { status: 404 });
   }
 
-  // When condition changes, recompute inventory_state using the same logic as
-  // the bulk route and the original scan path.
-  if (data.condition_status) {
-    const existingReturn = await prisma.returns.findFirst({
-      where: { order_id: unit.order_id, ebay_item_id: unit.item_id },
-      select: {
-        ebay_state: true,
-        ebay_status: true,
-        return_shipped_date: true,
-        return_delivered_date: true,
-        refund_issued_date: true,
-        actual_refund: true,
-        refund_amount: true,
-        estimated_refund: true
-      }
-    });
-
-    let inventoryState = computeInventoryState(data.condition_status);
-
-    if (existingReturn) {
-      const isClosed =
-        existingReturn.ebay_state === "CLOSED" ||
-        existingReturn.ebay_status === "CLOSED" ||
-        existingReturn.ebay_state === "REFUND_ISSUED" ||
-        existingReturn.ebay_state === "RETURN_CLOSED" ||
-        existingReturn.ebay_status === "REFUND_ISSUED" ||
-        existingReturn.ebay_status === "LESS_THAN_A_FULL_REFUND_ISSUED";
-
-      if (existingReturn.return_shipped_date || existingReturn.return_delivered_date) {
-        inventoryState = "returned";
-      } else if (isClosed) {
-        inventoryState = data.condition_status?.toLowerCase() === "damaged" ? "fair" : "parts_repair";
-      } else {
-        inventoryState = "to_be_returned";
-      }
-    }
-
-    data.inventory_state = inventoryState;
-  }
+  const conditionChanged = Boolean(data.condition_status);
 
   const updated = await prisma.received_units.update({
     where: { id: unitId },
@@ -110,5 +72,16 @@ export async function PATCH(
     select: { id: true, condition_status: true, notes: true, product_id: true, inventory_state: true }
   });
 
-  return NextResponse.json({ ok: true, unit: updated });
+  // When condition changes, re-evaluate inventory_state with the evaluator —
+  // the single source of truth shared with the bulk transition planner —
+  // rather than duplicating condition->state logic here.
+  let reevaluatedState: string | null = null;
+  if (conditionChanged) {
+    reevaluatedState = await reevaluateUnit(unitId);
+    if (reevaluatedState) {
+      updated.inventory_state = reevaluatedState;
+    }
+  }
+
+  return NextResponse.json({ ok: true, unit: updated, reevaluatedState });
 }

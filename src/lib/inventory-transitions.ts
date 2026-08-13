@@ -149,6 +149,45 @@ export async function recomputeAllInventoryStates(): Promise<{
 }
 
 /**
+ * Re-evaluate a single unit's inventory state from its current condition,
+ * returns, and linked cases — the same evaluator the bulk planner uses.
+ * Loads the unit fresh (so it reflects any just-committed condition change),
+ * fetches its return group and linked cases exactly as `planInventoryTransitions`
+ * does, and applies the update only if the evaluator computes a different state.
+ * Returns the new state, or null if nothing changed (or the unit doesn't exist).
+ */
+export async function reevaluateUnit(unitId: string, db: Db = prisma): Promise<string | null> {
+  const unit = await db.received_units.findUnique({
+    where: { id: unitId },
+    select: { id: true, order_id: true, item_id: true, inventory_state: true, condition_status: true }
+  });
+  if (!unit) return null;
+
+  const returns = await db.returns.findMany({
+    where: { order_id: unit.order_id, ebay_item_id: unit.item_id },
+    select: {
+      ebay_state: true,
+      ebay_status: true,
+      escalated: true,
+      case_id: true,
+      creation_date: true,
+      return_shipped_date: true,
+      return_delivered_date: true
+    }
+  });
+  const cases = await db.inr_cases.findMany({
+    where: { order_id: unit.order_id, ebay_item_id: unit.item_id, case_id: { not: null } },
+    select: { case_id: true, ebay_status: true }
+  });
+
+  const to = evaluateUnitState(unit, returns, cases);
+  if (!to) return null;
+
+  await db.received_units.update({ where: { id: unitId }, data: { inventory_state: to } });
+  return to;
+}
+
+/**
  * Manually update inventory state for a specific unit.
  * Used when user manually marks item for return or changes condition.
  */

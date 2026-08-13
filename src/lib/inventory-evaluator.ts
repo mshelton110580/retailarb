@@ -28,6 +28,7 @@ export function evaluateUnitState(unit: UnitForEval, returns: ReturnForEval[], c
 
   if (returns.length === 0) {
     if (isBad && unit.inventory_state === "on_hand") return "to_be_returned";
+    if (!isBad && unit.inventory_state === "to_be_returned") return "on_hand";
     return null;
   }
 
