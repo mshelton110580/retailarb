@@ -8,6 +8,7 @@ import ChipSearchInput, { type SearchChip, type SearchField } from "@/components
 import SavedSearches from "@/components/saved-searches";
 import { buildReturnUrl, buildInrUrl } from "@/lib/ebay-links";
 import { type TriState, cycle, encode, decode, matches } from "@/lib/filter-negation";
+import { BUILTIN_CONDITIONS } from "@/lib/conditions";
 
 const ORDER_SEARCH_FIELDS: SearchField[] = [
   { key: "order",    label: "Order ID" },
@@ -422,6 +423,7 @@ type OrderSavedState = {
   filterCheckedIn: string;
   filterAccountId: string;
   filterCase: string[];
+  filterCondition: string[];
   datePreset: DatePreset;
   dateFrom: string;
   dateTo: string;
@@ -443,6 +445,7 @@ type SavedFilters = {
   filterCheckedIn: string;
   filterAccountId: string;
   filterCase: string[];
+  filterCondition: string[];
   datePreset: DatePreset;
   dateFrom: string;
   dateTo: string;
@@ -451,6 +454,18 @@ type SavedFilters = {
 const VALID_SHIP_STATUSES = new Set(SHIP_STATUSES.map(s => s.value));
 const VALID_ORDER_STATUSES = new Set(ORDER_STATUSES);
 const VALID_CASE_FILTERS = new Set<CaseFilter>(["needsReturn", "hasOpenReturn", "hasClosedReturn", "hasOpenInr", "hasClosedInr", "needsInr", "anyRefund", "fullRefund", "partialRefund", "noRefund"]);
+// Unit conditions are fetched dynamically from /api/units/conditions (custom conditions can be
+// added over time), so there's no static list to validate against at initial-state time — and by
+// the time the fetch resolves, decode() has already run once for the mount-time state initializer.
+// Rather than re-validating after the fetch (which would need a second decode pass and risks
+// dropping a saved filter for a split second), accept any non-empty value up front: decode() only
+// ever receives strings that its own encode() wrote, so this can't admit garbage, and a condition
+// that later disappears from the DB just never matches any order (harmless no-op), same as e.g. a
+// stale ship-status value would if the enum ever shrank.
+class AnyStringSet extends Set<string> {
+  has(): boolean { return true; }
+}
+const VALID_CONDITIONS: Set<string> = new AnyStringSet();
 
 function loadSaved(): Partial<SavedFilters> {
   if (typeof window === "undefined") return {};
@@ -521,6 +536,15 @@ function caseFilterKeysFor(order: Order): CaseFilter[] {
 function matchesCaseFilter(order: Order, filters: Map<CaseFilter, TriState>): boolean {
   if (filters.size === 0) return true;
   return matches(caseFilterKeysFor(order), filters);
+}
+
+// Candidates = the conditions of this order's received units. An order with zero
+// units has an empty candidate list, so it matches only when the filter has no
+// includes (matches()'s `!hasIncludes` branch) — same "vacuously true" behavior
+// as the case-filter predicate above.
+function matchesConditionFilter(order: Order, filters: Map<string, TriState>): boolean {
+  if (filters.size === 0) return true;
+  return matches(order.receivedUnits.map(u => u.condition), filters);
 }
 
 // ── Fetch params builder ──────────────────────────────────────────────────────
@@ -594,6 +618,18 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   const [filterCase, setFilterCase] = useState<Map<CaseFilter, TriState>>(
     () => decode(saved.filterCase ?? [], VALID_CASE_FILTERS) as Map<CaseFilter, TriState>
   );
+  const [filterCondition, setFilterCondition] = useState<Map<string, TriState>>(
+    () => decode(saved.filterCondition ?? [], VALID_CONDITIONS)
+  );
+  const [conditions, setConditions] = useState<string[]>([...BUILTIN_CONDITIONS]);
+
+  // Fetch unit conditions once on mount (same pattern as units-table.tsx)
+  useEffect(() => {
+    fetch("/api/units/conditions")
+      .then(r => r.json())
+      .then(data => { if (Array.isArray(data.conditions)) setConditions(data.conditions); })
+      .catch(() => {});
+  }, []);
   const [dateFrom, setDateFrom] = useState(saved.datePreset === "all" || (saved.datePreset == null && !saved.dateFrom) ? "" : (saved.dateFrom ?? ""));
   const [dateTo, setDateTo] = useState(saved.dateTo ?? "");
   const [searchKey, setSearchKey] = useState(0);
@@ -713,11 +749,12 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
         filterOrderStatus: encode(filterOrderStatus),
         filterCheckedIn, filterAccountId,
         filterCase: encode(filterCase),
+        filterCondition: encode(filterCondition),
         datePreset, dateFrom, dateTo,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
     } catch { /* ignore */ }
-  }, [groupBy, visibleCols, colWidths, sortBy, sortDir, searchFreeText, chipsKey, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, filterCase, datePreset, dateFrom, dateTo]);
+  }, [groupBy, visibleCols, colWidths, sortBy, sortDir, searchFreeText, chipsKey, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, filterCase, filterCondition, datePreset, dateFrom, dateTo]);
 
   // ── Debounced refetch on filter change ────────────────────────────────────
 
@@ -756,8 +793,8 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   const colDef = useMemo(() => ALL_COLS.find(c => c.key === sortBy), [sortBy]);
 
   const sortedItemRows = useMemo<ItemRow[]>(() => {
-    const filtered = filterCase.size > 0
-      ? itemRows.filter(row => matchesCaseFilter(row.order, filterCase))
+    const filtered = (filterCase.size > 0 || filterCondition.size > 0)
+      ? itemRows.filter(row => matchesCaseFilter(row.order, filterCase) && matchesConditionFilter(row.order, filterCondition))
       : itemRows;
     if (!colDef?.sortValue) return filtered;
     const dir = sortDir === "asc" ? 1 : -1;
@@ -768,11 +805,11 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
       if (av > bv) return dir;
       return 0;
     });
-  }, [itemRows, colDef, sortDir, filterCase]);
+  }, [itemRows, colDef, sortDir, filterCase, filterCondition]);
 
   const sortedOrders = useMemo<Order[]>(() => {
-    const filtered = filterCase.size > 0
-      ? orders.filter(o => matchesCaseFilter(o, filterCase))
+    const filtered = (filterCase.size > 0 || filterCondition.size > 0)
+      ? orders.filter(o => matchesCaseFilter(o, filterCase) && matchesConditionFilter(o, filterCondition))
       : orders;
     if (!colDef?.sortValue) return filtered;
     const dir = sortDir === "asc" ? 1 : -1;
@@ -783,7 +820,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
       if (av > bv) return dir;
       return 0;
     });
-  }, [orders, colDef, sortDir, filterCase]);
+  }, [orders, colDef, sortDir, filterCase, filterCondition]);
 
   // ── Sort handler ──────────────────────────────────────────────────────────
 
@@ -817,6 +854,13 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   }
   function cycleCaseFilter(val: CaseFilter) {
     setFilterCase(prev => {
+      const next = new Map(prev);
+      next.set(val, cycle(next.get(val) ?? "off"));
+      return next;
+    });
+  }
+  function cycleCondition(val: string) {
+    setFilterCondition(prev => {
       const next = new Map(prev);
       next.set(val, cycle(next.get(val) ?? "off"));
       return next;
@@ -1523,6 +1567,27 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
           </div>
         </div>
 
+        {/* Row 3b: Unit condition chips */}
+        <div>
+          <p className="mb-1.5 text-xs text-slate-500">Unit condition</p>
+          <div className="flex flex-wrap gap-1.5">
+            {conditions.map(c => {
+              const state = filterCondition.get(c) ?? "off";
+              return (
+                <button key={c} onClick={() => cycleCondition(c)}
+                  title="Click to include, click again to exclude, click again to clear"
+                  className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                    state === "exclude" ? EXCLUDE_CHIP_CLASS
+                      : state === "include" ? "bg-blue-700 text-blue-100"
+                      : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                  }`}>
+                  {c.replace(/_/g, " ")}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Row 4: Order status chips */}
         <div>
           <p className="mb-1.5 text-xs text-slate-500">eBay order status</p>
@@ -1636,6 +1701,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
                 filterOrderStatus: encode(filterOrderStatus),
                 filterCheckedIn, filterAccountId,
                 filterCase: encode(filterCase),
+                filterCondition: encode(filterCondition),
                 datePreset, dateFrom, dateTo, sortBy, sortDir,
               })}
               onRestore={(s) => {
@@ -1646,6 +1712,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
                 setFilterCheckedIn(s.filterCheckedIn ?? "");
                 setFilterAccountId(s.filterAccountId ?? "");
                 setFilterCase(decode(s.filterCase ?? [], VALID_CASE_FILTERS) as Map<CaseFilter, TriState>);
+                setFilterCondition(decode(s.filterCondition ?? [], VALID_CONDITIONS));
                 setDatePreset(s.datePreset ?? "90");
                 setDateFrom(s.dateFrom ?? "");
                 setDateTo(s.dateTo ?? "");
@@ -1658,7 +1725,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
             <button
               onClick={() => {
                 setSearchFreeText(""); setSearchChips([]); setFilterShipStatus(new Map()); setFilterOrderStatus(new Map());
-                setFilterCheckedIn(""); setFilterAccountId(""); setFilterCase(new Map()); setDateFrom(""); setDateTo("");
+                setFilterCheckedIn(""); setFilterAccountId(""); setFilterCase(new Map()); setFilterCondition(new Map()); setDateFrom(""); setDateTo("");
                 setDatePreset("90");
                 setSortBy("date"); setSortDir("desc");
                 setSearchKey(k => k + 1);
@@ -1685,7 +1752,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
             <>
               <span className="font-medium text-slate-200">{rowCount.toLocaleString()}</span>
               {groupBy === "items" ? " items" : " orders"}
-              {filterCase.size > 0 || rowCount < loadedCount ? (
+              {filterCase.size > 0 || filterCondition.size > 0 || rowCount < loadedCount ? (
                 <span className="text-slate-500"> (filtered from {loadedCount.toLocaleString()})</span>
               ) : null}
               {total > 0 && loadedCount < total ? (
