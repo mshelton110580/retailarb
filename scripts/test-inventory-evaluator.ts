@@ -19,6 +19,7 @@ function check(name: string, actual: string | null, expected: string | null) {
 check("bad condition, no return, on_hand -> to_be_returned", evaluateUnitState(bad, [], []), "to_be_returned");
 check("bad condition, no return, already to_be_returned -> no change", evaluateUnitState(badTBR, [], []), null);
 check("good condition, no return -> no change", evaluateUnitState(goodOnHand, [], []), null);
+check("good condition, no return, stuck at to_be_returned -> on_hand", evaluateUnitState({ condition_status: "good", inventory_state: "to_be_returned" }, [], []), "on_hand");
 check("bad condition, no return, already returned -> no change", evaluateUnitState({ condition_status: "cracked", inventory_state: "returned" }, [], []), null);
 // open return
 check("open return -> return_filed (bad)", evaluateUnitState(badTBR, [R({ ebay_state: "RETURN_REQUESTED", ebay_status: "RETURN_REQUESTED" })], []), "return_filed");
