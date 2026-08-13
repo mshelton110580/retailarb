@@ -1,3 +1,4 @@
+import { PrismaClient, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { evaluateUnitState } from "@/lib/inventory-evaluator";
 
@@ -11,8 +12,19 @@ export type PlannedTransition = {
 };
 
 /**
+ * A regular PrismaClient or an in-flight `$transaction` callback client.
+ * Passing a transaction client lets callers (e.g. the reclassify script's
+ * dry-run mode) run planning against writes that haven't committed yet,
+ * then roll everything back — making the preview byte-for-byte faithful
+ * to what `--apply` would actually do.
+ */
+export type Db = PrismaClient | Prisma.TransactionClient;
+
+/**
  * Compute the full set of inventory-state transitions across all units.
- * Read-only — writes nothing.
+ * Read-only against `db` — writes nothing itself. When `db` is a
+ * transaction client that the caller later rolls back, the plan reflects
+ * whatever that transaction has (uncommitted) written so far.
  *
  * Two passes:
  *   1. Return groups — every unit belonging to an (order_id, ebay_item_id)
@@ -20,9 +32,9 @@ export type PlannedTransition = {
  *   2. Orphan pass — units with no return record but stuck at on_hand in
  *      bad condition.
  */
-export async function planInventoryTransitions(): Promise<PlannedTransition[]> {
+export async function planInventoryTransitions(db: Db = prisma): Promise<PlannedTransition[]> {
   const plan: PlannedTransition[] = [];
-  const returns = await prisma.returns.findMany({
+  const returns = await db.returns.findMany({
     where: { order_id: { not: null } },
     select: {
       id: true,
@@ -53,11 +65,11 @@ export async function planInventoryTransitions(): Promise<PlannedTransition[]> {
   const coveredUnitIds = new Set<string>();
   for (const [key, groupReturns] of groups) {
     const [orderId, itemId] = key.split("::");
-    const units = await prisma.received_units.findMany({
+    const units = await db.received_units.findMany({
       where: { order_id: orderId, item_id: itemId },
       select: { id: true, inventory_state: true, condition_status: true }
     });
-    const cases = await prisma.inr_cases.findMany({
+    const cases = await db.inr_cases.findMany({
       where: { order_id: orderId, ebay_item_id: itemId, case_id: { not: null } },
       select: { case_id: true, ebay_status: true }
     });
@@ -78,7 +90,7 @@ export async function planInventoryTransitions(): Promise<PlannedTransition[]> {
   }
 
   // Orphan pass: units with no return
-  const orphans = await prisma.received_units.findMany({
+  const orphans = await db.received_units.findMany({
     where: { inventory_state: "on_hand" },
     select: { id: true, order_id: true, item_id: true, inventory_state: true, condition_status: true }
   });
@@ -103,9 +115,9 @@ export async function planInventoryTransitions(): Promise<PlannedTransition[]> {
  * Apply a previously-computed transition plan. Writes inventory_state for
  * every planned unit and returns the number of units updated.
  */
-export async function applyInventoryTransitions(plan: PlannedTransition[]): Promise<number> {
+export async function applyInventoryTransitions(plan: PlannedTransition[], db: Db = prisma): Promise<number> {
   for (const t of plan) {
-    await prisma.received_units.update({ where: { id: t.unitId }, data: { inventory_state: t.to } });
+    await db.received_units.update({ where: { id: t.unitId }, data: { inventory_state: t.to } });
     console.log(`[Inventory Transition] ${t.unitId}: ${t.from} -> ${t.to} (${t.reason})`);
   }
   return plan.length;
