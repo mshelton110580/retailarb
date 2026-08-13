@@ -568,6 +568,14 @@ async function upsertCase(cs: EbayCaseSummary) {
   const lastModifiedStr = cs.lastModifiedDate?.value ?? null;
   const respondByStr = cs.respondByDate?.value ?? null;
 
+  // Link this case to its originating escalated return (same order + item, not yet linked)
+  if (resolvedOrderId && itemId) {
+    await prisma.returns.updateMany({
+      where: { order_id: resolvedOrderId, ebay_item_id: itemId, escalated: true, case_id: null },
+      data: { case_id: caseId },
+    });
+  }
+
   // First, check if this case already exists as an escalated inquiry
   // (i.e., an inquiry was filed first, then escalated to this case)
   const existingByCase = await prisma.inr_cases.findFirst({
