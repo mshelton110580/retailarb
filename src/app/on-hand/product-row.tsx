@@ -24,6 +24,7 @@ type ProductRowProps = {
     onHand: number;
     fair: number;
     toBeReturned: number;
+    returnInProgress: number;
     partsRepair: number;
     returned: number;
     missing: number;
@@ -31,6 +32,7 @@ type ProductRowProps = {
     onHandValue: number;
     fairValue: number;
     toBeReturnedValue: number;
+    returnInProgressValue: number;
     partsRepairValue: number;
   };
   units: UnitDetail[];
@@ -154,6 +156,18 @@ export default function ProductRow({ product, units }: ProductRowProps) {
         </td>
         <td className="p-3 text-center">
           <div className="flex flex-col items-center">
+            <span className="text-sm font-medium text-blue-400">
+              {product.returnInProgress}
+            </span>
+            {product.returnInProgressValue > 0 && (
+              <span className="text-xs text-slate-500">
+                ${product.returnInProgressValue.toFixed(0)}
+              </span>
+            )}
+          </div>
+        </td>
+        <td className="p-3 text-center">
+          <div className="flex flex-col items-center">
             <span className="text-sm font-medium text-red-400">
               {product.partsRepair}
             </span>
@@ -175,7 +189,7 @@ export default function ProductRow({ product, units }: ProductRowProps) {
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={8} className="bg-slate-800/30 p-0">
+          <td colSpan={9} className="bg-slate-800/30 p-0">
             <div className="p-4">
               <h4 className="text-xs font-semibold text-slate-400 mb-3 uppercase tracking-wide">
                 Individual Items ({units.length})

@@ -10,6 +10,7 @@ type ProductStats = {
   onHand: number;
   fair: number;
   toBeReturned: number;
+  returnInProgress: number;
   partsRepair: number;
   returned: number;
   missing: number;
@@ -17,6 +18,7 @@ type ProductStats = {
   onHandValue: number;
   fairValue: number;
   toBeReturnedValue: number;
+  returnInProgressValue: number;
   partsRepairValue: number;
 };
 
@@ -350,6 +352,7 @@ export default async function OnHandPage() {
         onHand: 0,
         fair: 0,
         toBeReturned: 0,
+        returnInProgress: 0,
         partsRepair: 0,
         returned: 0,
         missing: 0,
@@ -357,6 +360,7 @@ export default async function OnHandPage() {
         onHandValue: 0,
         fairValue: 0,
         toBeReturnedValue: 0,
+        returnInProgressValue: 0,
         partsRepairValue: 0
       });
     }
@@ -377,6 +381,12 @@ export default async function OnHandPage() {
       case "to_be_returned":
         stats.toBeReturned++;
         stats.toBeReturnedValue += itemCost;
+        break;
+      case "return_filed":
+      case "return_escalated":
+        // Combined bucket: return in-flight (filed or escalated to a case), not yet resolved
+        stats.returnInProgress++;
+        stats.returnInProgressValue += itemCost;
         break;
       case "parts_repair":
         stats.partsRepair++;
@@ -418,12 +428,14 @@ export default async function OnHandPage() {
     onHand: products.reduce((sum, p) => sum + p.onHand, 0),
     fair: products.reduce((sum, p) => sum + p.fair, 0),
     toBeReturned: products.reduce((sum, p) => sum + p.toBeReturned, 0),
+    returnInProgress: products.reduce((sum, p) => sum + p.returnInProgress, 0),
     partsRepair: products.reduce((sum, p) => sum + p.partsRepair, 0),
     returned: products.reduce((sum, p) => sum + p.returned, 0),
     missing: products.reduce((sum, p) => sum + p.missing, 0),
     onHandValue: products.reduce((sum, p) => sum + p.onHandValue, 0),
     fairValue: products.reduce((sum, p) => sum + p.fairValue, 0),
     toBeReturnedValue: products.reduce((sum, p) => sum + p.toBeReturnedValue, 0),
+    returnInProgressValue: products.reduce((sum, p) => sum + p.returnInProgressValue, 0),
     partsRepairValue: products.reduce((sum, p) => sum + p.partsRepairValue, 0),
     totalValue: products.reduce((sum, p) => sum + p.totalValue, 0)
   };
@@ -457,6 +469,16 @@ export default async function OnHandPage() {
             ${totals.toBeReturnedValue.toFixed(2)} total value
           </p>
         </div>
+
+        {totals.returnInProgress > 0 && (
+          <div className="rounded-lg border border-blue-800 bg-slate-900 p-4">
+            <h3 className="text-sm font-medium text-slate-400">Return In Progress</h3>
+            <p className="mt-1 text-2xl font-bold text-blue-400">{totals.returnInProgress}</p>
+            <p className="mt-1 text-xs text-slate-500">
+              ${totals.returnInProgressValue.toFixed(2)} total value — filed or escalated, unresolved
+            </p>
+          </div>
+        )}
 
         <div className="rounded-lg border border-red-800 bg-slate-900 p-4">
           <h3 className="text-sm font-medium text-slate-400">Parts / Repair</h3>
@@ -507,6 +529,7 @@ export default async function OnHandPage() {
                   <th className="p-3 text-center">On Hand</th>
                   <th className="p-3 text-center">Fair</th>
                   <th className="p-3 text-center">To Return</th>
+                  <th className="p-3 text-center">Return In Progress</th>
                   <th className="p-3 text-center">Parts/Repair</th>
                   <th className="p-3 text-center">Returned</th>
                   <th className="p-3 text-right">Total Value</th>
