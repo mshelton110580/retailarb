@@ -50,6 +50,8 @@ const RESOLVED_CASE_STATUSES = ["CLOSED", "CS_CLOSED", "PAID_OUT"];
  *     - remaining == 0 → Full Refund
  *     - remaining > 0  → Partial Refund
  */
+type RefundType = "full" | "partial" | "none" | "escalated" | "open";
+
 function getReturnRefundType(ret: {
   actual_refund: unknown;
   estimated_refund: unknown;
@@ -59,14 +61,14 @@ function getReturnRefundType(ret: {
   orderRemainingBalance: number | null;
   orderOriginalTotal: number | null;
   linkedCase: { case_id: string | null; ebay_status: string | null; claim_amount: unknown } | null;
-}): "full" | "partial" | "none" | "escalated" | "open" {
+}): { type: RefundType; caseRefundAmount: number | null } {
   const actual = ret.actual_refund !== null ? Number(ret.actual_refund) : null;
   const estimated = ret.estimated_refund !== null ? Number(ret.estimated_refund) : null;
   const isEsc = ret.escalated || ret.ebay_status === "ESCALATED" || ret.ebay_state === "RETURN_ESCALATED" || ret.ebay_state === "ESCALATED";
 
   // Still in-flight — classify as open or escalated
   if (ret.ebay_state != null && OPEN_STATES.has(ret.ebay_state)) {
-    return isEsc ? "escalated" : "open";
+    return { type: isEsc ? "escalated" : "open", caseRefundAmount: null };
   }
 
   // Terminal state (CLOSED, REFUND_ISSUED, RETURN_CLOSED, null, unknown, etc.)
@@ -77,9 +79,9 @@ function getReturnRefundType(ret: {
       ret.ebay_status === "LESS_THAN_A_FULL_REFUND_ISSUED" ||
       (estimated !== null && estimated > 0 && actual < estimated)
     ) {
-      return "partial";
+      return { type: "partial", caseRefundAmount: null };
     }
-    return "full";
+    return { type: "full", caseRefundAmount: null };
   }
 
   // No actual_refund — for escalated returns, prefer the linked case's outcome
@@ -89,14 +91,16 @@ function getReturnRefundType(ret: {
       const caseResolved = RESOLVED_CASE_STATUSES.includes(ret.linkedCase.ebay_status ?? "");
       if (caseResolved && ret.linkedCase.claim_amount != null) {
         const claimAmt = Number(ret.linkedCase.claim_amount);
-        if (claimAmt <= 0) return "none";
+        if (claimAmt <= 0) return { type: "none", caseRefundAmount: null };
+        // The dollar amount driving this classification is the case's claim_amount —
+        // expose it so the badge renders the same number that decided full vs. partial.
         if (estimated !== null && estimated > 0 && claimAmt < estimated) {
-          return "partial";
+          return { type: "partial", caseRefundAmount: claimAmt };
         }
-        return "full";
+        return { type: "full", caseRefundAmount: claimAmt };
       }
       // Linked but unresolved (or resolved with no claim amount) — case still in flight
-      return "escalated";
+      return { type: "escalated", caseRefundAmount: null };
     }
 
     // No linked case — pre-linkage return; fall back to order remaining balance
@@ -105,16 +109,16 @@ function getReturnRefundType(ret: {
     if (remaining !== null && origTotalNum !== null && origTotalNum > 0) {
       // Only classify as full/partial if a refund actually occurred
       // (remaining < origTotal means some refund happened)
-      if (remaining === 0) return "full";
-      if (remaining < origTotalNum) return "partial";
+      if (remaining === 0) return { type: "full", caseRefundAmount: null };
+      if (remaining < origTotalNum) return { type: "partial", caseRefundAmount: null };
       // remaining >= origTotal means no refund was processed
-      return "none";
+      return { type: "none", caseRefundAmount: null };
     }
-    if (remaining !== null && remaining === 0) return "full";
-    return "escalated";
+    if (remaining !== null && remaining === 0) return { type: "full", caseRefundAmount: null };
+    return { type: "escalated", caseRefundAmount: null };
   }
 
-  return "none";
+  return { type: "none", caseRefundAmount: null };
 }
 
 export default async function ReturnsPage({
@@ -160,11 +164,13 @@ export default async function ReturnsPage({
     const orderRemainingBalance = totals?.total != null ? Number(totals.total) : null;
     const orderOriginalTotal = ret.order?.original_total != null ? Number(ret.order.original_total) : null;
     const linkedCase = ret.case_id ? linkedCaseByCaseId.get(ret.case_id) ?? null : null;
+    const { type: refundType, caseRefundAmount } = getReturnRefundType({ ...ret, orderRemainingBalance, orderOriginalTotal, linkedCase });
     return {
       ...ret,
       orderRemainingBalance,
       linkedCase,
-      refundType: getReturnRefundType({ ...ret, orderRemainingBalance, orderOriginalTotal, linkedCase }),
+      refundType,
+      caseRefundAmount,
     };
   });
 
@@ -344,12 +350,16 @@ export default async function ReturnsPage({
                         )}
                         {/* Refund type badge */}
                         {ret.refundType === "full" && (() => {
-                          // Use actual_refund if available; for escalated returns fall back to estimated_refund
-                          const refundAmt = ret.actual_refund
-                            ? Number(ret.actual_refund)
-                            : ret.estimated_refund
-                              ? Number(ret.estimated_refund)
-                              : null;
+                          // Classified via a linked resolved case → the claim_amount is the
+                          // number that drove classification; render that, not a different field.
+                          // Otherwise: actual_refund if available, falling back to estimated_refund.
+                          const refundAmt = ret.caseRefundAmount != null
+                            ? ret.caseRefundAmount
+                            : ret.actual_refund
+                              ? Number(ret.actual_refund)
+                              : ret.estimated_refund
+                                ? Number(ret.estimated_refund)
+                                : null;
                           return (
                             <span className="rounded bg-green-900 px-2 py-0.5 text-xs text-green-300">
                               Full Refund{refundAmt !== null ? `: $${refundAmt.toFixed(2)}` : ""}
@@ -361,7 +371,12 @@ export default async function ReturnsPage({
                           let refundAmt: number | null = null;
                           let totalPaid: number | null = null;
 
-                          if (isEsc && ret.actual_refund == null) {
+                          if (ret.caseRefundAmount != null) {
+                            // Classified via a linked resolved case → render the claim_amount
+                            // that drove classification, alongside the requested amount.
+                            refundAmt = ret.caseRefundAmount;
+                            totalPaid = ret.estimated_refund ? Number(ret.estimated_refund) : null;
+                          } else if (isEsc && ret.actual_refund == null) {
                             // Escalated partial: refund = original_total - remaining balance
                             // original_total is on the order; orderRemainingBalance is totals.total
                             const origTotal = ret.order?.original_total != null ? Number(ret.order.original_total) : null;
