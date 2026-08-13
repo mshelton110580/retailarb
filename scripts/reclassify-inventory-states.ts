@@ -18,7 +18,7 @@ async function backfillCaseLinks(db: Db): Promise<number> {
   for (const r of escalated) {
     const cs = await db.inr_cases.findFirst({
       where: { order_id: r.order_id!, ebay_item_id: r.ebay_item_id!, case_id: { not: null } },
-      orderBy: { creation_date: "desc" },
+      orderBy: { creation_date: { sort: "desc", nulls: "last" } },
       select: { case_id: true, ebay_status: true }
     });
     if (!cs?.case_id) { console.log(`  return ${r.ebay_return_id}: NO matching case found`); continue; }
@@ -96,7 +96,7 @@ async function main() {
       printPlan(plan);
 
       throw ROLLBACK;
-    });
+    }, { timeout: 120_000, maxWait: 10_000 });
   } catch (e) {
     if (e !== ROLLBACK) throw e;
   }
