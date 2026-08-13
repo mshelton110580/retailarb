@@ -2,6 +2,7 @@ import PageHeader from "@/components/page-header";
 import { prisma } from "@/lib/db";
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import { buildReturnUrl, buildInrUrl } from "@/lib/ebay-links";
 
 export default async function OrderDetailPage({ params }: { params: { orderId: string } }) {
   const order = await prisma.orders.findUnique({
@@ -458,12 +459,9 @@ export default async function OrderDetailPage({ params }: { params: { orderId: s
               <div className="space-y-2">
                 {order.order_items.map((item) => {
                   const label = item.title.length > 45 ? item.title.slice(0, 45) + "…" : item.title;
-                  const returnUrl = item.transaction_id
-                    ? `https://www.ebay.com/rtn/Return/ReturnViewSelectedItem?itemId=${item.item_id}&transactionId=${item.transaction_id}`
-                    : `https://order.ebay.com/ord/show?orderId=${order.order_id}`;
-                  const inrUrl = item.transaction_id
-                    ? `https://www.ebay.com/ItemNotReceived/CreateRequest?itemId=${item.item_id}&transactionId=${item.transaction_id}`
-                    : `https://order.ebay.com/ord/show?orderId=${order.order_id}`;
+                  const linkItem = { itemId: item.item_id, transactionId: item.transaction_id };
+                  const returnUrl = buildReturnUrl(order.order_id, linkItem);
+                  const inrUrl = buildInrUrl(order.order_id, linkItem);
                   return (
                     <div key={item.id} className="flex flex-wrap items-center gap-2">
                       {order.order_items.length > 1 && (

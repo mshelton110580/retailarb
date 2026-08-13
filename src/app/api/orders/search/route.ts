@@ -223,6 +223,7 @@ export async function GET(req: Request) {
             qty: true,
             transaction_price: true,
             order_line_item_id: true,
+            transaction_id: true,
           }
         },
         shipments: {
@@ -378,6 +379,7 @@ export async function GET(req: Request) {
             refund: ir?.refund ?? null,
             refundMethod: ir?.method ?? null,
             needsAudit: ir?.needsAudit ?? false,
+            transactionId: i.transaction_id,
           };
         }),
         shipment: shipment ? {
