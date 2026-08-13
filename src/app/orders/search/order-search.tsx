@@ -209,7 +209,7 @@ type ItemRow = {
 function ReturnBadge({ r }: { r: ReturnCase }) {
   const state = (r.state ?? r.status ?? "").replace(/_/g, " ").toLowerCase();
   const color = r.escalated
-    ? "bg-red-900 text-red-300"
+    ? "bg-amber-900 text-amber-300"
     : state.includes("closed") || state.includes("refund")
       ? "bg-slate-700 text-slate-400"
       : "bg-orange-900 text-orange-300";

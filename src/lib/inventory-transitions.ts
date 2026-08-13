@@ -29,8 +29,10 @@ export type Db = PrismaClient | Prisma.TransactionClient;
  * Two passes:
  *   1. Return groups — every unit belonging to an (order_id, ebay_item_id)
  *      return group is evaluated against that group's returns/cases.
- *   2. Orphan pass — units with no return record but stuck at on_hand in
- *      bad condition.
+ *   2. Orphan pass — units with no return record that are either stuck at
+ *      on_hand in bad condition, or stuck at to_be_returned in good
+ *      condition (e.g. condition was corrected but no return was ever
+ *      filed).
  */
 export async function planInventoryTransitions(db: Db = prisma): Promise<PlannedTransition[]> {
   const plan: PlannedTransition[] = [];
@@ -89,9 +91,11 @@ export async function planInventoryTransitions(db: Db = prisma): Promise<Planned
     }
   }
 
-  // Orphan pass: units with no return
+  // Orphan pass: units with no return. Covers both directions the evaluator
+  // can flip an orphan: bad-condition on_hand -> to_be_returned, and
+  // good-condition to_be_returned (stuck with no return record) -> on_hand.
   const orphans = await db.received_units.findMany({
-    where: { inventory_state: "on_hand" },
+    where: { inventory_state: { in: ["on_hand", "to_be_returned"] } },
     select: { id: true, order_id: true, item_id: true, inventory_state: true, condition_status: true }
   });
   for (const unit of orphans) {
@@ -104,7 +108,9 @@ export async function planInventoryTransitions(db: Db = prisma): Promise<Planned
         itemId: unit.item_id,
         from: unit.inventory_state,
         to,
-        reason: "bad condition, no return filed"
+        reason: to === "to_be_returned"
+          ? "bad condition, no return filed"
+          : "good condition, no return filed (rescued from to_be_returned)"
       });
     }
   }
@@ -144,7 +150,7 @@ export async function recomputeAllInventoryStates(): Promise<{
   await applyInventoryTransitions(plan);
   return {
     returnPass: plan.filter(t => t.reason.startsWith("return group")).length,
-    orphanPass: plan.filter(t => t.reason.startsWith("bad condition")).length
+    orphanPass: plan.filter(t => t.reason.startsWith("bad condition") || t.reason.startsWith("good condition")).length
   };
 }
 

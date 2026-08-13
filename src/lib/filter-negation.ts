@@ -34,7 +34,7 @@ export function decode(raw: string[], valid: Set<string>): Map<string, TriState>
   for (const entry of raw) {
     if (entry.startsWith("!")) {
       const value = entry.slice(1);
-      if (valid.has(value)) out.set(value, "exclude");
+      if (value && valid.has(value)) out.set(value, "exclude");
     } else {
       if (valid.has(entry)) out.set(entry, "include");
     }

@@ -46,6 +46,8 @@ const RESOLVED_CASE_STATUSES = ["CLOSED", "CS_CLOSED", "PAID_OUT"];
  * (returns.case_id → inr_cases.case_id):
  *   - linked case resolved with a claim_amount → classify by claim_amount
  *   - linked case still unresolved → "escalated" (case in flight)
+ *   - linked case resolved but claim_amount is null → not in flight; fall
+ *     back to order remaining balance (same as "no linked case" below)
  *   - no linked case (pre-linkage return) → fall back to order remaining balance
  *     - remaining == 0 → Full Refund
  *     - remaining > 0  → Partial Refund
@@ -99,11 +101,16 @@ function getReturnRefundType(ret: {
         }
         return { type: "full", caseRefundAmount: claimAmt };
       }
-      // Linked but unresolved (or resolved with no claim amount) — case still in flight
-      return { type: "escalated", caseRefundAmount: null };
+      if (!caseResolved) {
+        // Linked but unresolved — case still in flight
+        return { type: "escalated", caseRefundAmount: null };
+      }
+      // Resolved with no claim_amount — not in flight; fall through to the
+      // order-balance fallback below (same as "no linked case").
     }
 
-    // No linked case — pre-linkage return; fall back to order remaining balance
+    // No linked case, or linked case resolved with no claim_amount —
+    // fall back to order remaining balance
     const remaining = ret.orderRemainingBalance;
     const origTotalNum = ret.orderOriginalTotal;
     if (remaining !== null && origTotalNum !== null && origTotalNum > 0) {

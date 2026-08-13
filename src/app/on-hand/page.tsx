@@ -440,12 +440,24 @@ export default async function OnHandPage() {
     totalValue: products.reduce((sum, p) => sum + p.totalValue, 0)
   };
 
+  // Base tiles (On Hand, Fair, To Be Returned, Parts/Repair, Returned) are
+  // always shown; Return In Progress and Missing are conditional. Pick a
+  // column count that fits however many are actually visible so the grid
+  // doesn't wrap awkwardly.
+  const summaryTileCount = 5 + (totals.returnInProgress > 0 ? 1 : 0) + (totals.missing > 0 ? 1 : 0);
+  const summaryGridClass =
+    summaryTileCount === 7
+      ? "grid grid-cols-1 md:grid-cols-4 lg:grid-cols-7 gap-4"
+      : summaryTileCount === 6
+        ? "grid grid-cols-1 md:grid-cols-6 gap-4"
+        : "grid grid-cols-1 md:grid-cols-5 gap-4";
+
   return (
     <div className="space-y-6">
       <PageHeader title="Items on Hand" />
 
       {/* Summary Dashboard */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+      <div className={summaryGridClass}>
         <div className="rounded-lg border border-green-800 bg-slate-900 p-4">
           <h3 className="text-sm font-medium text-slate-400">On Hand (Good)</h3>
           <p className="mt-1 text-2xl font-bold text-green-400">{totals.onHand}</p>

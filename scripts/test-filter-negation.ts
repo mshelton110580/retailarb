@@ -40,6 +40,10 @@ check("decode unprefixed=include, !=exclude, invalid dropped",
 
 check("decode empty raw", Array.from(decode([], new Set(["a"])).entries()), []);
 
+check("decode stray '!' (empty value after strip) is skipped",
+  Array.from(decode(["!", "a"], new Set(["a"])).entries()),
+  [["a", "include"]]);
+
 // ── matches ────────────────────────────────────────────────────────────────
 
 check("matches: no filters => true",
