@@ -160,6 +160,8 @@ const SHIP_STATUSES = [
   { value: "shipped",       label: "Shipped" },
   { value: "not_delivered", label: "Not Delivered" },
   { value: "not_received",  label: "Never Shipped" },
+  { value: "late",          label: "Late" },
+  { value: "pending",       label: "Pending" },
 ];
 
 const ORDER_STATUSES = ["Completed", "Cancelled"];
@@ -169,6 +171,8 @@ const shipStatusColor: Record<string, string> = {
   shipped:       "bg-blue-900 text-blue-300",
   not_delivered: "bg-red-900 text-red-300",
   not_received:  "bg-rose-900 text-rose-300",
+  late:          "bg-amber-900 text-amber-300",
+  pending:       "bg-sky-900 text-sky-300",
 };
 
 function fmt$(n: number | null | undefined) {

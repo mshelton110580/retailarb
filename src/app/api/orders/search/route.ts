@@ -165,7 +165,18 @@ export async function GET(req: Request) {
   let shipmentOrderIds: string[] | null = null;
   if (shipStatuses.length > 0 || checkedIn === "yes" || checkedIn === "no") {
     const shipWhere: any = {};
-    if (shipStatuses.length > 0) shipWhere.derived_status = { in: shipStatuses };
+    if (shipStatuses.length > 0) {
+      // Handle special case: "pending" chip matches "pending" OR "pre_shipment"
+      const expandedStatuses: string[] = [];
+      for (const status of shipStatuses) {
+        if (status === "pending") {
+          expandedStatuses.push("pending", "pre_shipment");
+        } else {
+          expandedStatuses.push(status);
+        }
+      }
+      shipWhere.derived_status = { in: expandedStatuses };
+    }
     if (checkedIn === "yes") shipWhere.checked_in_at = { not: null };
     if (checkedIn === "no") shipWhere.checked_in_at = null;
 
