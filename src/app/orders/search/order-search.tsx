@@ -7,6 +7,7 @@ import { useBarcodeScanner } from "@/lib/use-barcode-scanner";
 import ChipSearchInput, { type SearchChip, type SearchField } from "@/components/chip-search-input";
 import SavedSearches from "@/components/saved-searches";
 import { buildReturnUrl, buildInrUrl } from "@/lib/ebay-links";
+import { type TriState, cycle, encode, decode, matches } from "@/lib/filter-negation";
 
 const ORDER_SEARCH_FIELDS: SearchField[] = [
   { key: "order",    label: "Order ID" },
@@ -165,6 +166,8 @@ const SHIP_STATUSES = [
 ];
 
 const ORDER_STATUSES = ["Completed", "Cancelled"];
+
+const EXCLUDE_CHIP_CLASS = "bg-red-950 border border-red-800 text-red-400 line-through";
 
 const shipStatusColor: Record<string, string> = {
   delivered:     "bg-green-900 text-green-300",
@@ -413,11 +416,12 @@ type CaseFilter = "needsReturn" | "hasOpenReturn" | "hasClosedReturn" | "hasOpen
 type OrderSavedState = {
   searchFreeText: string;
   searchChips: SearchChip[];
+  // Encoded tri-state chip groups: unprefixed = include, "!v" = exclude (see filter-negation.ts)
   filterShipStatus: string[];
   filterOrderStatus: string[];
   filterCheckedIn: string;
   filterAccountId: string;
-  filterCase: CaseFilter[];
+  filterCase: string[];
   datePreset: DatePreset;
   dateFrom: string;
   dateTo: string;
@@ -433,11 +437,12 @@ type SavedFilters = {
   sortDir: "asc" | "desc";
   search: string;
   searchChips?: SearchChip[];
+  // Encoded tri-state chip groups: unprefixed = include, "!v" = exclude (see filter-negation.ts)
   filterShipStatus: string[];
   filterOrderStatus: string[];
   filterCheckedIn: string;
   filterAccountId: string;
-  filterCase: CaseFilter[];
+  filterCase: string[];
   datePreset: DatePreset;
   dateFrom: string;
   dateTo: string;
@@ -453,15 +458,9 @@ function loadSaved(): Partial<SavedFilters> {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return {};
     const parsed: Partial<SavedFilters> = JSON.parse(raw);
-    if (parsed.filterShipStatus) {
-      parsed.filterShipStatus = parsed.filterShipStatus.filter(v => VALID_SHIP_STATUSES.has(v));
-    }
-    if (parsed.filterOrderStatus) {
-      parsed.filterOrderStatus = parsed.filterOrderStatus.filter(v => VALID_ORDER_STATUSES.has(v));
-    }
-    if (parsed.filterCase) {
-      parsed.filterCase = parsed.filterCase.filter(v => VALID_CASE_FILTERS.has(v));
-    }
+    // Note: filterShipStatus/filterOrderStatus/filterCase are validated (and "!"-prefix
+    // stripped) by `decode()` at the point they're turned into Map<string, TriState> state,
+    // not here — a plain VALID_*.has(v) check would incorrectly drop "!v" exclude entries.
     return parsed;
   } catch { return {}; }
 }
@@ -494,44 +493,51 @@ function isPartialRefund(o: Order): boolean {
 
 // ── Case filter predicate ─────────────────────────────────────────────────────
 
-function matchesCaseFilter(order: Order, filters: CaseFilter[]): boolean {
-  if (filters.length === 0) return true;
-  return filters.every(f => {
-    switch (f) {
-      case "needsReturn": return order.needsReturn && !order.returnCase;
-      case "hasOpenReturn":   return order.returnCase != null && !isReturnClosed(order.returnCase);
-      case "hasClosedReturn": return order.returnCase != null && isReturnClosed(order.returnCase);
-      case "hasOpenInr":      return order.inrCase != null && !isInrClosed(order.inrCase);
-      case "hasClosedInr":    return order.inrCase != null && isInrClosed(order.inrCase);
-      case "needsInr": {
-        const s = order.shipment?.derivedStatus;
-        // Only actionable for active (non-cancelled, non-refunded) orders with unshipped/undelivered items
-        return (s === "not_received" || s === "not_delivered")
-          && !order.inrCase
-          && order.orderStatus !== "Cancelled"
-          && !order.hasRefund;
-      }
-      case "anyRefund":     return order.hasRefund;
-      case "fullRefund":    return isFullRefund(order);
-      case "partialRefund": return isPartialRefund(order);
-      case "noRefund":      return !order.hasRefund;
-    }
-  });
+// All case-filter keys that currently apply to this order (an order can carry more
+// than one — e.g. "hasOpenReturn" + "anyRefund"). Fed into `matches()` against the
+// selected filter map: within the group, multiple "include" chips OR together
+// (same as the ship-status / order-status chip groups), and any "exclude" hit drops
+// the order — this replaces the old all-selected-chips-must-match (AND) behavior.
+function caseFilterKeysFor(order: Order): CaseFilter[] {
+  const keys: CaseFilter[] = [];
+  if (order.needsReturn && !order.returnCase) keys.push("needsReturn");
+  if (order.returnCase) keys.push(isReturnClosed(order.returnCase) ? "hasClosedReturn" : "hasOpenReturn");
+  if (order.inrCase) keys.push(isInrClosed(order.inrCase) ? "hasClosedInr" : "hasOpenInr");
+  const s = order.shipment?.derivedStatus;
+  // Only actionable for active (non-cancelled, non-refunded) orders with unshipped/undelivered items
+  if ((s === "not_received" || s === "not_delivered") && !order.inrCase
+      && order.orderStatus !== "Cancelled" && !order.hasRefund) {
+    keys.push("needsInr");
+  }
+  if (order.hasRefund) {
+    keys.push("anyRefund");
+    keys.push(isFullRefund(order) ? "fullRefund" : "partialRefund");
+  } else {
+    keys.push("noRefund");
+  }
+  return keys;
+}
+
+function matchesCaseFilter(order: Order, filters: Map<CaseFilter, TriState>): boolean {
+  if (filters.size === 0) return true;
+  return matches(caseFilterKeysFor(order), filters);
 }
 
 // ── Fetch params builder ──────────────────────────────────────────────────────
 
 function buildParams(opts: {
-  search: string; searchChips?: SearchChip[]; filterShipStatus: string[];
-  filterOrderStatus: string[]; filterCheckedIn: string; filterAccountId: string;
+  search: string; searchChips?: SearchChip[]; filterShipStatus: Map<string, TriState>;
+  filterOrderStatus: Map<string, TriState>; filterCheckedIn: string; filterAccountId: string;
   effectiveDateFrom: string; dateTo: string; sortBy: ColKey; sortDir: "asc" | "desc";
   limit: number; offset: number;
 }) {
   const p = new URLSearchParams();
   if (opts.search) p.set("search", opts.search);
   if (opts.searchChips && opts.searchChips.length > 0) p.set("chips", JSON.stringify(opts.searchChips));
-  if (opts.filterShipStatus.length) p.set("shipStatus", opts.filterShipStatus.join(","));
-  if (opts.filterOrderStatus.length) p.set("status", opts.filterOrderStatus.join(","));
+  const shipStatusValues = encode(opts.filterShipStatus);
+  if (shipStatusValues.length) p.set("shipStatus", shipStatusValues.join(","));
+  const orderStatusValues = encode(opts.filterOrderStatus);
+  if (orderStatusValues.length) p.set("status", orderStatusValues.join(","));
   if (opts.filterCheckedIn) p.set("checkedIn", opts.filterCheckedIn);
   if (opts.filterAccountId) p.set("accountId", opts.filterAccountId);
   if (opts.effectiveDateFrom) p.set("dateFrom", opts.effectiveDateFrom);
@@ -577,11 +583,17 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
 
   const [searchFreeText, setSearchFreeText] = useState(saved.search ?? "");
   const [searchChips, setSearchChips] = useState<SearchChip[]>(saved.searchChips ?? []);
-  const [filterShipStatus, setFilterShipStatus] = useState<string[]>(saved.filterShipStatus ?? []);
-  const [filterOrderStatus, setFilterOrderStatus] = useState<string[]>(saved.filterOrderStatus ?? []);
+  const [filterShipStatus, setFilterShipStatus] = useState<Map<string, TriState>>(
+    () => decode(saved.filterShipStatus ?? [], VALID_SHIP_STATUSES)
+  );
+  const [filterOrderStatus, setFilterOrderStatus] = useState<Map<string, TriState>>(
+    () => decode(saved.filterOrderStatus ?? [], VALID_ORDER_STATUSES)
+  );
   const [filterCheckedIn, setFilterCheckedIn] = useState(saved.filterCheckedIn ?? "");
   const [filterAccountId, setFilterAccountId] = useState(saved.filterAccountId ?? "");
-  const [filterCase, setFilterCase] = useState<CaseFilter[]>(saved.filterCase ?? []);
+  const [filterCase, setFilterCase] = useState<Map<CaseFilter, TriState>>(
+    () => decode(saved.filterCase ?? [], VALID_CASE_FILTERS) as Map<CaseFilter, TriState>
+  );
   const [dateFrom, setDateFrom] = useState(saved.datePreset === "all" || (saved.datePreset == null && !saved.dateFrom) ? "" : (saved.dateFrom ?? ""));
   const [dateTo, setDateTo] = useState(saved.dateTo ?? "");
   const [searchKey, setSearchKey] = useState(0);
@@ -633,8 +645,8 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   // ── Fetch all pages for current filters ──────────────────────────────────
 
   const fetchAll = useCallback(async (filterSnapshot: {
-    search: string; searchChips?: SearchChip[]; filterShipStatus: string[];
-    filterOrderStatus: string[]; filterCheckedIn: string; filterAccountId: string;
+    search: string; searchChips?: SearchChip[]; filterShipStatus: Map<string, TriState>;
+    filterOrderStatus: Map<string, TriState>; filterCheckedIn: string; filterAccountId: string;
     effectiveDateFrom: string; dateTo: string; sortBy: ColKey; sortDir: "asc" | "desc";
   }) => {
     const gen = ++fetchGenRef.current;
@@ -696,7 +708,11 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
       const toSave: SavedFilters = {
         groupBy, visibleCols: Array.from(visibleCols) as ColKey[], colWidths,
         sortBy, sortDir,
-        search: searchFreeText, searchChips, filterShipStatus, filterOrderStatus, filterCheckedIn, filterAccountId, filterCase,
+        search: searchFreeText, searchChips,
+        filterShipStatus: encode(filterShipStatus),
+        filterOrderStatus: encode(filterOrderStatus),
+        filterCheckedIn, filterAccountId,
+        filterCase: encode(filterCase),
         datePreset, dateFrom, dateTo,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
@@ -740,7 +756,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   const colDef = useMemo(() => ALL_COLS.find(c => c.key === sortBy), [sortBy]);
 
   const sortedItemRows = useMemo<ItemRow[]>(() => {
-    const filtered = filterCase.length > 0
+    const filtered = filterCase.size > 0
       ? itemRows.filter(row => matchesCaseFilter(row.order, filterCase))
       : itemRows;
     if (!colDef?.sortValue) return filtered;
@@ -755,7 +771,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
   }, [itemRows, colDef, sortDir, filterCase]);
 
   const sortedOrders = useMemo<Order[]>(() => {
-    const filtered = filterCase.length > 0
+    const filtered = filterCase.size > 0
       ? orders.filter(o => matchesCaseFilter(o, filterCase))
       : orders;
     if (!colDef?.sortValue) return filtered;
@@ -785,14 +801,26 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
     return <span className="ml-1 text-blue-400 text-[10px]">{sortDir === "asc" ? "↑" : "↓"}</span>;
   }
 
-  function toggleShipStatus(val: string) {
-    setFilterShipStatus(prev => prev.includes(val) ? prev.filter(s => s !== val) : [...prev, val]);
+  function cycleShipStatus(val: string) {
+    setFilterShipStatus(prev => {
+      const next = new Map(prev);
+      next.set(val, cycle(next.get(val) ?? "off"));
+      return next;
+    });
   }
-  function toggleOrderStatus(val: string) {
-    setFilterOrderStatus(prev => prev.includes(val) ? prev.filter(s => s !== val) : [...prev, val]);
+  function cycleOrderStatus(val: string) {
+    setFilterOrderStatus(prev => {
+      const next = new Map(prev);
+      next.set(val, cycle(next.get(val) ?? "off"));
+      return next;
+    });
   }
-  function toggleCaseFilter(val: CaseFilter) {
-    setFilterCase(prev => prev.includes(val) ? prev.filter(s => s !== val) : [...prev, val]);
+  function cycleCaseFilter(val: CaseFilter) {
+    setFilterCase(prev => {
+      const next = new Map(prev);
+      next.set(val, cycle(next.get(val) ?? "off"));
+      return next;
+    });
   }
   function toggleExpand(key: string) {
     setExpanded(prev => {
@@ -1478,16 +1506,20 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
         <div>
           <p className="mb-1.5 text-xs text-slate-500">Shipment status</p>
           <div className="flex flex-wrap gap-1.5">
-            {SHIP_STATUSES.map(s => (
-              <button key={s.value} onClick={() => toggleShipStatus(s.value)}
-                className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
-                  filterShipStatus.includes(s.value)
-                    ? (shipStatusColor[s.value] ?? "bg-blue-700 text-blue-100")
-                    : "bg-slate-800 text-slate-400 hover:bg-slate-700"
-                }`}>
-                {s.label}
-              </button>
-            ))}
+            {SHIP_STATUSES.map(s => {
+              const state = filterShipStatus.get(s.value) ?? "off";
+              return (
+                <button key={s.value} onClick={() => cycleShipStatus(s.value)}
+                  title="Click to include, click again to exclude, click again to clear"
+                  className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                    state === "exclude" ? EXCLUDE_CHIP_CLASS
+                      : state === "include" ? (shipStatusColor[s.value] ?? "bg-blue-700 text-blue-100")
+                      : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                  }`}>
+                  {s.label}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -1495,14 +1527,20 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
         <div>
           <p className="mb-1.5 text-xs text-slate-500">eBay order status</p>
           <div className="flex flex-wrap gap-1.5">
-            {ORDER_STATUSES.map(s => (
-              <button key={s} onClick={() => toggleOrderStatus(s)}
-                className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
-                  filterOrderStatus.includes(s) ? "bg-blue-700 text-blue-100" : "bg-slate-800 text-slate-400 hover:bg-slate-700"
-                }`}>
-                {s}
-              </button>
-            ))}
+            {ORDER_STATUSES.map(s => {
+              const state = filterOrderStatus.get(s) ?? "off";
+              return (
+                <button key={s} onClick={() => cycleOrderStatus(s)}
+                  title="Click to include, click again to exclude, click again to clear"
+                  className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                    state === "exclude" ? EXCLUDE_CHIP_CLASS
+                      : state === "include" ? "bg-blue-700 text-blue-100"
+                      : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                  }`}>
+                  {s}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -1519,15 +1557,19 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
               { value: "hasClosedInr"  as CaseFilter, label: "Closed INR",      activeClass: "bg-slate-700 text-slate-300" },
             ]).map(chip => {
               const count = caseFilterCounts[chip.value];
+              const state = filterCase.get(chip.value) ?? "off";
               return (
-                <button key={chip.value} onClick={() => toggleCaseFilter(chip.value)}
+                <button key={chip.value} onClick={() => cycleCaseFilter(chip.value)}
+                  title="Click to include, click again to exclude, click again to clear"
                   className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
-                    filterCase.includes(chip.value) ? chip.activeClass : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                    state === "exclude" ? EXCLUDE_CHIP_CLASS
+                      : state === "include" ? chip.activeClass
+                      : "bg-slate-800 text-slate-400 hover:bg-slate-700"
                   }`}>
                   {chip.label}
                   {count > 0 && (
                     <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
-                      filterCase.includes(chip.value) ? "bg-black/30 text-current" : "bg-slate-700 text-slate-300"
+                      state !== "off" ? "bg-black/30 text-current" : "bg-slate-700 text-slate-300"
                     }`}>
                       {count}
                     </span>
@@ -1549,15 +1591,19 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
               { value: "partialRefund" as CaseFilter, label: "Partial Refund", activeClass: "bg-amber-900 text-amber-200" },
             ]).map(chip => {
               const count = caseFilterCounts[chip.value];
+              const state = filterCase.get(chip.value) ?? "off";
               return (
-                <button key={chip.value} onClick={() => toggleCaseFilter(chip.value)}
+                <button key={chip.value} onClick={() => cycleCaseFilter(chip.value)}
+                  title="Click to include, click again to exclude, click again to clear"
                   className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
-                    filterCase.includes(chip.value) ? chip.activeClass : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                    state === "exclude" ? EXCLUDE_CHIP_CLASS
+                      : state === "include" ? chip.activeClass
+                      : "bg-slate-800 text-slate-400 hover:bg-slate-700"
                   }`}>
                   {chip.label}
                   {count > 0 && (
                     <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
-                      filterCase.includes(chip.value) ? "bg-black/30 text-current" : "bg-slate-700 text-slate-300"
+                      state !== "off" ? "bg-black/30 text-current" : "bg-slate-700 text-slate-300"
                     }`}>
                       {count}
                     </span>
@@ -1585,18 +1631,21 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
             <SavedSearches<OrderSavedState>
               storageKey="orders_saved_searches"
               getCurrentState={() => ({
-                searchFreeText, searchChips, filterShipStatus, filterOrderStatus,
-                filterCheckedIn, filterAccountId, filterCase,
+                searchFreeText, searchChips,
+                filterShipStatus: encode(filterShipStatus),
+                filterOrderStatus: encode(filterOrderStatus),
+                filterCheckedIn, filterAccountId,
+                filterCase: encode(filterCase),
                 datePreset, dateFrom, dateTo, sortBy, sortDir,
               })}
               onRestore={(s) => {
                 setSearchFreeText(s.searchFreeText ?? "");
                 setSearchChips(s.searchChips ?? []);
-                setFilterShipStatus(s.filterShipStatus ?? []);
-                setFilterOrderStatus(s.filterOrderStatus ?? []);
+                setFilterShipStatus(decode(s.filterShipStatus ?? [], VALID_SHIP_STATUSES));
+                setFilterOrderStatus(decode(s.filterOrderStatus ?? [], VALID_ORDER_STATUSES));
                 setFilterCheckedIn(s.filterCheckedIn ?? "");
                 setFilterAccountId(s.filterAccountId ?? "");
-                setFilterCase(s.filterCase ?? []);
+                setFilterCase(decode(s.filterCase ?? [], VALID_CASE_FILTERS) as Map<CaseFilter, TriState>);
                 setDatePreset(s.datePreset ?? "90");
                 setDateFrom(s.dateFrom ?? "");
                 setDateTo(s.dateTo ?? "");
@@ -1608,8 +1657,8 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
             <ColumnPicker visibleCols={visibleCols} onChange={setVisibleCols} groupBy={groupBy} />
             <button
               onClick={() => {
-                setSearchFreeText(""); setSearchChips([]); setFilterShipStatus([]); setFilterOrderStatus([]);
-                setFilterCheckedIn(""); setFilterAccountId(""); setFilterCase([]); setDateFrom(""); setDateTo("");
+                setSearchFreeText(""); setSearchChips([]); setFilterShipStatus(new Map()); setFilterOrderStatus(new Map());
+                setFilterCheckedIn(""); setFilterAccountId(""); setFilterCase(new Map()); setDateFrom(""); setDateTo("");
                 setDatePreset("90");
                 setSortBy("date"); setSortDir("desc");
                 setSearchKey(k => k + 1);
@@ -1636,7 +1685,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
             <>
               <span className="font-medium text-slate-200">{rowCount.toLocaleString()}</span>
               {groupBy === "items" ? " items" : " orders"}
-              {filterCase.length > 0 || rowCount < loadedCount ? (
+              {filterCase.size > 0 || rowCount < loadedCount ? (
                 <span className="text-slate-500"> (filtered from {loadedCount.toLocaleString()})</span>
               ) : null}
               {total > 0 && loadedCount < total ? (

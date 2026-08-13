@@ -10,8 +10,10 @@ import { parseFieldSearch } from "@/lib/search-parser";
  *
  * Query params:
  *   search      - global text search or field:value (order, item, title, tracking, account)
- *   status      - comma-separated order_status values (e.g. "Complete,Active")
- *   shipStatus  - comma-separated shipment derived_status values (e.g. "delivered,shipped")
+ *   status      - comma-separated order_status values (e.g. "Complete,Active"); a "!"-prefixed
+ *                 value excludes it instead of including it (e.g. "Completed,!Cancelled")
+ *   shipStatus  - comma-separated shipment derived_status values (e.g. "delivered,shipped");
+ *                 "!"-prefixed values exclude (tri-state chips — see src/lib/filter-negation.ts)
  *   checkedIn   - "yes" | "no" | "" (filter by shipment check-in state)
  *   dateFrom    - ISO date string (purchase_date >=)
  *   dateTo      - ISO date string (purchase_date <=)
@@ -39,8 +41,32 @@ export async function GET(req: Request) {
   const limit = Math.min(parseInt(searchParams.get("limit") ?? "250"), 2000);
   const offset = parseInt(searchParams.get("offset") ?? "0");
 
-  const statuses = statusParam ? statusParam.split(",").filter(Boolean) : [];
-  const shipStatuses = shipStatusParam ? shipStatusParam.split(",").filter(Boolean) : [];
+  // Tri-state chip param: unprefixed = include, "!v" = exclude (see src/lib/filter-negation.ts).
+  // Back-compat: pre-tri-state URLs/localStorage only ever wrote unprefixed (include) values.
+  function splitIncludeExclude(csv: string): { includes: string[]; excludes: string[] } {
+    const includes: string[] = [];
+    const excludes: string[] = [];
+    for (const raw of csv ? csv.split(",").filter(Boolean) : []) {
+      if (raw.startsWith("!")) excludes.push(raw.slice(1));
+      else includes.push(raw);
+    }
+    return { includes, excludes };
+  }
+
+  const { includes: statusIncludes, excludes: statusExcludes } = splitIncludeExclude(statusParam);
+
+  // "pending" chip matches "pending" OR "pre_shipment" on either side of the filter
+  function expandPendingStatus(values: string[]): string[] {
+    const out: string[] = [];
+    for (const v of values) {
+      if (v === "pending") out.push("pending", "pre_shipment");
+      else out.push(v);
+    }
+    return out;
+  }
+  const { includes: shipStatusIncludesRaw, excludes: shipStatusExcludesRaw } = splitIncludeExclude(shipStatusParam);
+  const shipStatusIncludes = expandPendingStatus(shipStatusIncludesRaw);
+  const shipStatusExcludes = expandPendingStatus(shipStatusExcludesRaw);
 
   const where: any = {};
 
@@ -58,8 +84,12 @@ export async function GET(req: Request) {
   // eBay account filter
   if (accountId) where.ebay_account_id = accountId;
 
-  // Order status filter
-  if (statuses.length > 0) where.order_status = { in: statuses };
+  // Order status filter (include/exclude tri-state)
+  if (statusIncludes.length > 0 || statusExcludes.length > 0) {
+    where.order_status = {};
+    if (statusIncludes.length > 0) where.order_status.in = statusIncludes;
+    if (statusExcludes.length > 0) where.order_status.notIn = statusExcludes;
+  }
 
   // --- Helper: resolve a single field search to a set of order IDs ---
   async function resolveFieldToOrderIds(field: string, value: string): Promise<Set<string>> {
@@ -163,19 +193,12 @@ export async function GET(req: Request) {
 
   // Shipment-level filters (derived_status, checked_in)
   let shipmentOrderIds: string[] | null = null;
-  if (shipStatuses.length > 0 || checkedIn === "yes" || checkedIn === "no") {
+  if (shipStatusIncludes.length > 0 || shipStatusExcludes.length > 0 || checkedIn === "yes" || checkedIn === "no") {
     const shipWhere: any = {};
-    if (shipStatuses.length > 0) {
-      // Handle special case: "pending" chip matches "pending" OR "pre_shipment"
-      const expandedStatuses: string[] = [];
-      for (const status of shipStatuses) {
-        if (status === "pending") {
-          expandedStatuses.push("pending", "pre_shipment");
-        } else {
-          expandedStatuses.push(status);
-        }
-      }
-      shipWhere.derived_status = { in: expandedStatuses };
+    if (shipStatusIncludes.length > 0 || shipStatusExcludes.length > 0) {
+      shipWhere.derived_status = {};
+      if (shipStatusIncludes.length > 0) shipWhere.derived_status.in = shipStatusIncludes;
+      if (shipStatusExcludes.length > 0) shipWhere.derived_status.notIn = shipStatusExcludes;
     }
     if (checkedIn === "yes") shipWhere.checked_in_at = { not: null };
     if (checkedIn === "no") shipWhere.checked_in_at = null;
