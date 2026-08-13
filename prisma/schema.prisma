@@ -213,7 +213,7 @@ model received_units {
   order_item_id      String?
   unit_index         Int
   condition_status   String
-  inventory_state    String @default("on_hand")  // on_hand, to_be_returned, parts_repair, returned, missing
+  inventory_state    String @default("on_hand")  // on_hand, to_be_returned, return_filed, return_escalated, parts_repair, fair, returned, missing
   product_id         String?
   received_at        DateTime @default(now())
   scanned_by_user_id String
@@ -298,6 +298,7 @@ model returns {
   last_modified     DateTime?
   respond_by_date   DateTime?
   escalated         Boolean   @default(false)
+  case_id           String?   // linked inr_cases.case_id when this return was escalated to a case
   // Return tracking (from API)
   return_carrier         String?
   return_tracking_number String?
@@ -369,6 +370,18 @@ model products {
   created_at         DateTime @default(now())
   updated_at         DateTime @updatedAt
   received_units     received_units[]
+  product_aliases    product_aliases[] @relation("product_aliases_to_product")
+}
+
+model product_aliases {
+  id                 String @id @default(cuid())
+  from_product_name  String @unique
+  to_product_id      String
+  created_at         DateTime @default(now())
+  created_by         String?
+  to_product         products @relation("product_aliases_to_product", fields: [to_product_id], references: [id])
+
+  @@index([to_product_id])
 }
 
 model audit_log {
@@ -380,4 +393,14 @@ model audit_log {
   payload_json  Json
   created_at    DateTime @default(now())
   actor         users? @relation(fields: [actor_user_id], references: [id])
+}
+
+model inventory_state_snapshots {
+  id              String   @id @default(cuid())
+  unit_id         String
+  inventory_state String
+  batch_label     String
+  created_at      DateTime @default(now())
+
+  @@index([batch_label])
 }
