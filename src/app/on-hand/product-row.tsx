@@ -44,6 +44,10 @@ function formatInventoryState(state: string): string {
       return "Fair";
     case "to_be_returned":
       return "To Be Returned";
+    case "return_filed":
+      return "Return Filed";
+    case "return_escalated":
+      return "Return Escalated";
     case "parts_repair":
       return "Parts/Repair";
     case "returned":
@@ -63,6 +67,10 @@ function getStateColor(state: string): string {
       return "text-cyan-400";
     case "to_be_returned":
       return "text-yellow-400";
+    case "return_filed":
+      return "text-blue-400";
+    case "return_escalated":
+      return "text-amber-400";
     case "parts_repair":
       return "text-red-400";
     case "returned":

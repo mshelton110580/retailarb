@@ -469,9 +469,9 @@ export default async function InventoryPage({
     }
 
     // Needs return: has units with inventory_state=to_be_returned (bad condition, no return filed yet)
-    // The to_be_returned state already excludes orders with returns filed — but also exclude
-    // if a return was filed since the last sync (open return in orderIdsWithReturns)
-    if (needsReturnOrderIds.has(orderId) && !orderIdsWithReturns.has(orderId)) {
+    // The to_be_returned state itself now excludes orders with returns filed — once a return is
+    // filed, the unit transitions to return_filed/return_escalated, so no separate exclusion needed.
+    if (needsReturnOrderIds.has(orderId)) {
       buckets.needs_return.push(shipment);
     }
 
@@ -842,6 +842,8 @@ export default async function InventoryPage({
                             unit.inventory_state === 'on_hand' ? 'text-emerald-400' :
                             unit.inventory_state === 'fair' ? 'text-cyan-400' :
                             unit.inventory_state === 'to_be_returned' ? 'text-red-400' :
+                            unit.inventory_state === 'return_filed' ? 'text-blue-400' :
+                            unit.inventory_state === 'return_escalated' ? 'text-amber-400' :
                             unit.inventory_state === 'parts_repair' ? 'text-orange-400' :
                             unit.inventory_state === 'returned' ? 'text-slate-400' :
                             unit.inventory_state === 'missing' ? 'text-orange-400' :

@@ -154,7 +154,7 @@ export async function recomputeAllInventoryStates(): Promise<{
  */
 export async function updateUnitInventoryState(
   unitId: string,
-  newState: "on_hand" | "to_be_returned" | "parts_repair" | "fair" | "returned"
+  newState: "on_hand" | "to_be_returned" | "return_filed" | "return_escalated" | "parts_repair" | "fair" | "returned" | "missing"
 ) {
   await prisma.received_units.update({
     where: { id: unitId },
