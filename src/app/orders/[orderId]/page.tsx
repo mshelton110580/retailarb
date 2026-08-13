@@ -325,13 +325,17 @@ export default async function OrderDetailPage({ params }: { params: { orderId: s
           <h2 className="text-lg font-semibold">Returns</h2>
           <div className="mt-3 space-y-2">
             {order.returns.map((ret) => {
+              const isEsc = ret.escalated || ret.ebay_status === "ESCALATED";
+              const linkedCase = isEsc ? order.inr_cases.find(c => c.case_id && c.case_id === ret.case_id) ?? null : null;
+              const caseResolved = linkedCase != null && ["CLOSED", "CS_CLOSED", "PAID_OUT"].includes(linkedCase.ebay_status ?? "");
               const state = ret.ebay_state || ret.ebay_status || ret.status_scraped || "UNKNOWN";
-              const isClosed = state === "CLOSED" || state === "REFUND_ISSUED" || state === "RETURN_CLOSED";
-              const badgeColor = isClosed
-                ? "bg-green-900 text-green-300"
-                : state === "RETURN_REQUESTED" || state === "RETURN_STARTED"
-                  ? "bg-yellow-900 text-yellow-300"
-                  : "bg-red-900 text-red-300";
+              const isClosed = !isEsc && (state === "CLOSED" || state === "REFUND_ISSUED" || state === "RETURN_CLOSED");
+              const badgeColor = isEsc
+                ? (caseResolved ? "bg-green-900 text-green-300" : "bg-amber-900 text-amber-300")
+                : isClosed ? "bg-green-900 text-green-300"
+                : state === "RETURN_REQUESTED" || state === "RETURN_STARTED" ? "bg-yellow-900 text-yellow-300"
+                : "bg-red-900 text-red-300";
+              const badgeText = isEsc ? "ESCALATED" : state.replace(/_/g, " ");
               return (
                 <div key={ret.id} className="rounded border border-slate-800 p-3 text-sm">
                   <div className="flex items-center gap-2">
@@ -347,11 +351,11 @@ export default async function OrderDetailPage({ params }: { params: { orderId: s
                           className={`rounded px-2 py-0.5 text-xs hover:opacity-80 transition-opacity ${badgeColor}`}
                           title="View return on eBay"
                         >
-                          {state.replace(/_/g, " ")} ↗
+                          {badgeText} ↗
                         </a>
                       ) : (
                         <span className={`rounded px-2 py-0.5 text-xs ${badgeColor}`}>
-                          {state.replace(/_/g, " ")}
+                          {badgeText}
                         </span>
                       );
                     })()}
@@ -362,6 +366,12 @@ export default async function OrderDetailPage({ params }: { params: { orderId: s
                       <span className="text-xs text-slate-400">{ret.return_reason.replace(/_/g, " ")}</span>
                     )}
                   </div>
+                  {isEsc && (
+                    <p className="mt-1 text-xs text-amber-300">
+                      Escalated → case {linkedCase ? `${linkedCase.case_id} · ${(linkedCase.ebay_status ?? "UNKNOWN").replace(/_/g, " ")}` : "not yet synced"}
+                      {linkedCase?.claim_amount != null && ` · $${Number(linkedCase.claim_amount).toFixed(2)}`}
+                    </p>
+                  )}
                   {ret.notes && <p className="mt-1 text-xs text-slate-500">{ret.notes}</p>}
                   {ret.actual_refund != null && (
                     <p className="mt-1 text-xs text-green-400">Refund: ${Number(ret.actual_refund).toFixed(2)}</p>
@@ -387,11 +397,15 @@ export default async function OrderDetailPage({ params }: { params: { orderId: s
       )}
 
       {/* INR Cases */}
-      {order.inr_cases.length > 0 && (
+      {(() => {
+        const linkedCaseIds = new Set(order.returns.map(r => r.case_id).filter(Boolean));
+        const standaloneInrCases = order.inr_cases.filter(c => !(c.case_id && linkedCaseIds.has(c.case_id)));
+        if (standaloneInrCases.length === 0) return null;
+        return (
         <section className="rounded-lg border border-slate-800 bg-slate-900 p-4">
           <h2 className="text-lg font-semibold">Item Not Received (INR) Cases</h2>
           <div className="mt-3 space-y-2">
-            {order.inr_cases.map((inr) => (
+            {standaloneInrCases.map((inr) => (
               <div key={inr.id} className="rounded border border-slate-800 p-3 text-sm">
                 <div className="flex items-center gap-2">
                   <span className="rounded bg-amber-900 px-2 py-0.5 text-xs text-amber-300">
@@ -412,7 +426,8 @@ export default async function OrderDetailPage({ params }: { params: { orderId: s
             ))}
           </div>
         </section>
-      )}
+        );
+      })()}
 
       {/* Quick Actions */}
       <section className="rounded-lg border border-slate-800 bg-slate-900 p-4">

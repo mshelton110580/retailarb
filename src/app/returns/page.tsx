@@ -31,6 +31,9 @@ const OPEN_STATES = new Set([
   "PENDING",
 ]);
 
+// Case statuses that indicate the linked inr_cases record is fully resolved
+const RESOLVED_CASE_STATUSES = ["CLOSED", "CS_CLOSED", "PAID_OUT"];
+
 /**
  * Determine the refund classification for a return.
  *
@@ -39,9 +42,13 @@ const OPEN_STATES = new Set([
  * treated as terminal and classified by refund amounts.
  *
  * For non-escalated closed returns: actual_refund vs estimated_refund.
- * For escalated closed returns with no actual_refund: order remaining balance.
- *   - remaining == 0 → Full Refund
- *   - remaining > 0  → Partial Refund
+ * For escalated closed returns with no actual_refund, prefer the linked case
+ * (returns.case_id → inr_cases.case_id):
+ *   - linked case resolved with a claim_amount → classify by claim_amount
+ *   - linked case still unresolved → "escalated" (case in flight)
+ *   - no linked case (pre-linkage return) → fall back to order remaining balance
+ *     - remaining == 0 → Full Refund
+ *     - remaining > 0  → Partial Refund
  */
 function getReturnRefundType(ret: {
   actual_refund: unknown;
@@ -51,6 +58,7 @@ function getReturnRefundType(ret: {
   escalated: boolean;
   orderRemainingBalance: number | null;
   orderOriginalTotal: number | null;
+  linkedCase: { case_id: string | null; ebay_status: string | null; claim_amount: unknown } | null;
 }): "full" | "partial" | "none" | "escalated" | "open" {
   const actual = ret.actual_refund !== null ? Number(ret.actual_refund) : null;
   const estimated = ret.estimated_refund !== null ? Number(ret.estimated_refund) : null;
@@ -74,9 +82,24 @@ function getReturnRefundType(ret: {
     return "full";
   }
 
-  // No actual_refund — for escalated returns use order remaining balance
+  // No actual_refund — for escalated returns, prefer the linked case's outcome
   // (refund was issued through case resolution, not directly on the return record)
   if (isEsc) {
+    if (ret.linkedCase != null) {
+      const caseResolved = RESOLVED_CASE_STATUSES.includes(ret.linkedCase.ebay_status ?? "");
+      if (caseResolved && ret.linkedCase.claim_amount != null) {
+        const claimAmt = Number(ret.linkedCase.claim_amount);
+        if (claimAmt <= 0) return "none";
+        if (estimated !== null && estimated > 0 && claimAmt < estimated) {
+          return "partial";
+        }
+        return "full";
+      }
+      // Linked but unresolved (or resolved with no claim amount) — case still in flight
+      return "escalated";
+    }
+
+    // No linked case — pre-linkage return; fall back to order remaining balance
     const remaining = ret.orderRemainingBalance;
     const origTotalNum = ret.orderOriginalTotal;
     if (remaining !== null && origTotalNum !== null && origTotalNum > 0) {
@@ -117,15 +140,31 @@ export default async function ReturnsPage({
     orderBy: { creation_date: "desc" },
   });
 
+  // Fetch linked inr_cases for escalated returns (returns.case_id → inr_cases.case_id)
+  const linkedCaseIds = Array.from(
+    new Set(returns.map((r) => r.case_id).filter((id): id is string => Boolean(id)))
+  );
+  const linkedCases = linkedCaseIds.length > 0
+    ? await prisma.inr_cases.findMany({
+        where: { case_id: { in: linkedCaseIds } },
+        select: { case_id: true, ebay_status: true, claim_amount: true },
+      })
+    : [];
+  const linkedCaseByCaseId = new Map(
+    linkedCases.filter((c) => c.case_id).map((c) => [c.case_id as string, c])
+  );
+
   // Enrich each return with its refund type
   const enrichedReturns = returns.map((ret) => {
     const totals = ret.order?.totals as { total?: string } | null | undefined;
     const orderRemainingBalance = totals?.total != null ? Number(totals.total) : null;
     const orderOriginalTotal = ret.order?.original_total != null ? Number(ret.order.original_total) : null;
+    const linkedCase = ret.case_id ? linkedCaseByCaseId.get(ret.case_id) ?? null : null;
     return {
       ...ret,
       orderRemainingBalance,
-      refundType: getReturnRefundType({ ...ret, orderRemainingBalance, orderOriginalTotal }),
+      linkedCase,
+      refundType: getReturnRefundType({ ...ret, orderRemainingBalance, orderOriginalTotal, linkedCase }),
     };
   });
 
