@@ -20,6 +20,17 @@ export type PlannedTransition = {
  */
 export type Db = PrismaClient | Prisma.TransactionClient;
 
+// Full refund = the order's total dropped to zero from a positive original.
+// Used by the no-return evaluator path: nothing left to claim -> never needs-return.
+function isOrderFullyRefunded(order: { original_total: unknown; totals: unknown } | null | undefined): boolean {
+  if (!order) return false;
+  const orig = order.original_total != null ? Number(order.original_total) : null;
+  const cur = order.totals && typeof order.totals === "object" && "total" in (order.totals as any)
+    ? Number((order.totals as any).total)
+    : null;
+  return orig != null && cur != null && orig > 0 && cur <= 0.01;
+}
+
 /**
  * Compute the full set of inventory-state transitions across all units.
  * Read-only against `db` — writes nothing itself. When `db` is a
@@ -111,10 +122,22 @@ export async function planInventoryTransitions(db: Db = prisma): Promise<Planned
     if (!inrByPair.has(k)) inrByPair.set(k, []);
     inrByPair.get(k)!.push({ case_id: c.case_id, ebay_status: c.ebay_status });
   }
+  // Prefetch orphan orders' refund state (full refund clears needs-return)
+  const orphanOrderIds = [...new Set(orphans.map(u => u.order_id))];
+  const refundedOrders = new Set<string>();
+  for (let i = 0; i < orphanOrderIds.length; i += 500) {
+    const chunk = await db.orders.findMany({
+      where: { order_id: { in: orphanOrderIds.slice(i, i + 500) } },
+      select: { order_id: true, original_total: true, totals: true }
+    });
+    for (const o of chunk) if (isOrderFullyRefunded(o)) refundedOrders.add(o.order_id);
+  }
+
   for (const unit of orphans) {
     if (coveredUnitIds.has(unit.id)) continue;
     const inrCases = inrByPair.get(`${unit.order_id}::${unit.item_id}`) ?? [];
-    const to = evaluateUnitState(unit, [], inrCases);
+    const fullyRefunded = refundedOrders.has(unit.order_id);
+    const to = evaluateUnitState(unit, [], inrCases, fullyRefunded);
     if (to) {
       plan.push({
         unitId: unit.id,
@@ -124,9 +147,11 @@ export async function planInventoryTransitions(db: Db = prisma): Promise<Planned
         to,
         reason: inrCases.length > 0
           ? `INR case on item (${inrCases.length}) — not a return`
-          : to === "to_be_returned"
-            ? "bad condition, no return filed"
-            : "good condition, no return filed (rescued from to_be_returned)"
+          : fullyRefunded
+            ? "order fully refunded, no return needed"
+            : to === "to_be_returned"
+              ? "bad condition, no return filed"
+              : "good condition, no return filed (rescued from to_be_returned)"
       });
     }
   }
@@ -203,8 +228,12 @@ export async function reevaluateUnit(unitId: string, db: Db = prisma): Promise<s
     where: { order_id: unit.order_id, ebay_item_id: unit.item_id },
     select: { case_id: true, ebay_status: true }
   });
+  const order = await db.orders.findUnique({
+    where: { order_id: unit.order_id },
+    select: { original_total: true, totals: true }
+  });
 
-  const to = evaluateUnitState(unit, returns, cases);
+  const to = evaluateUnitState(unit, returns, cases, isOrderFullyRefunded(order));
   if (!to) return null;
 
   await db.received_units.update({ where: { id: unitId }, data: { inventory_state: to } });

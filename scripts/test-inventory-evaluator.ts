@@ -28,6 +28,13 @@ check("INR case, no return, good in to_be_returned -> on_hand", evaluateUnitStat
 check("INR case, no return, bad on_hand -> parts_repair (never to_be_returned)", evaluateUnitState(bad, [], [{ case_id: null, ebay_status: "OPEN" }]), "parts_repair");
 check("INR case, no return, damaged already fair -> no change", evaluateUnitState({ condition_status: "damaged", inventory_state: "fair" }, [], [{ case_id: "5555", ebay_status: "CLOSED" }]), null);
 check("INR case does not override open return lifecycle", evaluateUnitState(badTBR, [R({ ebay_state: "RETURN_REQUESTED" })], [{ case_id: null, ebay_status: "OPEN" }]), "return_filed");
+// Order fully refunded, no return, no INR — nothing left to claim; never needs-return
+check("full refund, no return, damaged in to_be_returned -> fair", evaluateUnitState({ condition_status: "damaged", inventory_state: "to_be_returned" }, [], [], true), "fair");
+check("full refund, no return, cracked in to_be_returned -> parts_repair", evaluateUnitState(badTBR, [], [], true), "parts_repair");
+check("full refund, no return, good in to_be_returned -> on_hand", evaluateUnitState(good, [], [], true), "on_hand");
+check("full refund, no return, bad on_hand -> parts_repair (never flagged)", evaluateUnitState(bad, [], [], true), "parts_repair");
+check("partial refund only (flag false) keeps orphan rule", evaluateUnitState(bad, [], [], false), "to_be_returned");
+check("full refund does not override open return lifecycle", evaluateUnitState(badTBR, [R({ ebay_state: "RETURN_REQUESTED" })], [], true), "return_filed");
 // open return
 check("open return -> return_filed (bad)", evaluateUnitState(badTBR, [R({ ebay_state: "RETURN_REQUESTED", ebay_status: "RETURN_REQUESTED" })], []), "return_filed");
 check("open return -> return_filed (good)", evaluateUnitState(good, [R({ ebay_state: "ITEM_READY_TO_SHIP", ebay_status: "READY_FOR_SHIPPING" })], []), "return_filed");
