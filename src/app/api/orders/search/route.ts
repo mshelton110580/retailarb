@@ -289,9 +289,14 @@ export async function GET(req: Request) {
             ebay_state: true,
             ebay_status: true,
             escalated: true,
+            case_id: true,
             refund_amount: true,
             actual_refund: true,
             ebay_item_id: true,
+            label_url: true,
+            label_pdf_path: true,
+            return_tracking_number: true,
+            return_shipped_date: true,
           },
           orderBy: { created_at: "desc" },
         },
@@ -442,12 +447,21 @@ export async function GET(req: Request) {
         returnCase: (() => {
           const r = o.returns[0];
           if (!r) return null;
+          // A return escalation continues as a case; surface that case's status
+          // on the return itself instead of presenting it as a separate INR.
+          const linkedCase = r.case_id ? o.inr_cases.find(c => c.case_id === r.case_id) ?? null : null;
           return {
             id: r.id,
             ebayReturnId: r.ebay_return_id,
             state: r.ebay_state,
             status: r.ebay_status,
             escalated: r.escalated,
+            caseId: r.case_id,
+            caseStatus: linkedCase?.ebay_status ?? null,
+            caseClaimAmount: linkedCase?.claim_amount ? Number(linkedCase.claim_amount) : null,
+            labelAvailable: Boolean(r.label_url || r.label_pdf_path),
+            returnTracking: r.return_tracking_number,
+            shippedBack: Boolean(r.return_shipped_date),
             refundAmount: r.refund_amount ? Number(r.refund_amount) : null,
             url: `https://www.ebay.com/rt/ReturnDetails?returnId=${r.ebay_return_id}`,
           };
@@ -455,7 +469,9 @@ export async function GET(req: Request) {
         // Escalated if ANY return or INR is escalated
         hasEscalatedReturn: o.returns.some(r => r.escalated),
         inrCase: (() => {
-          const c = o.inr_cases[0];
+          // Exclude return-escalation cases — they are returns, not INRs
+          const returnCaseIds = new Set(o.returns.map(r => r.case_id).filter(Boolean));
+          const c = o.inr_cases.find(c => !(c.case_id && returnCaseIds.has(c.case_id)));
           if (!c) return null;
           const linkId = c.escalated_to_case && c.case_id ? c.case_id : c.ebay_inquiry_id;
           return {

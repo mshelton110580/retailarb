@@ -6,6 +6,8 @@ import {
   searchReturns,
   searchInquiries,
   searchCases,
+  getCaseDetail,
+  extractCaseTracking,
   getReturnTracking,
   getReturnDetail,
   getInquiry,
@@ -150,7 +152,7 @@ export async function syncReturnsAndINR(): Promise<{ returns: number; inquiries:
 
           for (const cs of result.members) {
             try {
-              await upsertCase(cs);
+              await upsertCase(cs, token);
               totalCases++;
             } catch (err: any) {
               console.error(`[Sync Cases] Failed to upsert case ${cs.caseId}:`, err.message);
@@ -552,7 +554,7 @@ async function upsertInquiry(inq: EbayInquirySummary, token: string) {
 // UPSERT CASE (escalated or direct INR case)
 // ============================================================
 
-async function upsertCase(cs: EbayCaseSummary) {
+async function upsertCase(cs: EbayCaseSummary, token: string) {
   const caseId = String(cs.caseId);
   const itemId = cs.itemId ? String(cs.itemId) : null;
 
@@ -574,6 +576,22 @@ async function upsertCase(cs: EbayCaseSummary) {
       where: { order_id: resolvedOrderId, ebay_item_id: itemId, escalated: true, case_id: null },
       data: { case_id: caseId },
     });
+
+    // Ship-back tracking/label for an escalated return lives on the CASE detail,
+    // not the return record — copy it onto the linked return so the UI can show
+    // "label available / shipped back" instead of a bare escalated status.
+    try {
+      const detail = await getCaseDetail(token, caseId);
+      const trk = extractCaseTracking(detail);
+      if (trk) {
+        await prisma.returns.updateMany({
+          where: { order_id: resolvedOrderId, ebay_item_id: itemId, case_id: caseId, return_tracking_number: null },
+          data: { return_tracking_number: trk.trackingNumber, return_carrier: trk.carrier, return_tracking_status: trk.currentStatus },
+        });
+      }
+    } catch (err: any) {
+      console.error(`[Sync Cases] Case ${caseId} detail fetch failed:`, err.message);
+    }
   }
 
   // First, check if this case already exists as an escalated inquiry

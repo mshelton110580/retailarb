@@ -316,6 +316,53 @@ export async function searchCases(
 }
 
 // ============================================================
+// GET SINGLE CASE DETAILS
+// ============================================================
+
+export type CaseShipmentTracking = {
+  trackingNumber: string;
+  carrier: string | null;
+  currentStatus: string | null;
+};
+
+/**
+ * Fetch full case detail. For escalated returns the buyer's ship-back
+ * tracking/label lives here, not on the return record.
+ */
+export async function getCaseDetail(token: string, caseId: string): Promise<any | null> {
+  const response = await fetch(`${POST_ORDER_BASE}/casemanagement/${caseId}`, {
+    method: "GET",
+    headers: buildHeaders(token),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    console.error(`[Post-Order] Get case ${caseId} failed (${response.status}):`, text.slice(0, 300));
+    return null;
+  }
+  return response.json();
+}
+
+/**
+ * The shipmentTrackingDetails node is nested inside the case history rather
+ * than top-level — depth-search the detail for the first one with a tracking
+ * number.
+ */
+export function extractCaseTracking(detail: any): CaseShipmentTracking | null {
+  if (detail == null || typeof detail !== "object") return null;
+  if (!Array.isArray(detail)) {
+    const t = (detail as any).shipmentTrackingDetails;
+    if (t?.trackingNumber) {
+      return { trackingNumber: String(t.trackingNumber), carrier: t.carrier ?? null, currentStatus: t.currentStatus ?? null };
+    }
+  }
+  for (const value of Array.isArray(detail) ? detail : Object.values(detail)) {
+    const found = extractCaseTracking(value);
+    if (found) return found;
+  }
+  return null;
+}
+
+// ============================================================
 // GET SINGLE RETURN DETAILS
 // ============================================================
 

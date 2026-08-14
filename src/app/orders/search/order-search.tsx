@@ -54,6 +54,12 @@ type ReturnCase = {
   state: string | null;
   status: string | null;
   escalated: boolean;
+  caseId: string | null;
+  caseStatus: string | null;
+  caseClaimAmount: number | null;
+  labelAvailable: boolean;
+  returnTracking: string | null;
+  shippedBack: boolean;
   refundAmount: number | null;
   url: string;
 };
@@ -213,9 +219,14 @@ function ReturnBadge({ r }: { r: ReturnCase }) {
     : state.includes("closed") || state.includes("refund")
       ? "bg-slate-700 text-slate-400"
       : "bg-orange-900 text-orange-300";
+  const title = r.escalated
+    ? `Return escalated · case ${r.caseId ?? "—"}: ${(r.caseStatus ?? "unknown").replace(/_/g, " ")}` +
+      `${r.caseClaimAmount != null ? ` · ${fmt$(r.caseClaimAmount)}` : ""}` +
+      `${r.shippedBack ? " · shipped back" : r.labelAvailable || r.returnTracking ? " · label available" : ""}`
+    : `Return: ${r.state ?? r.status ?? "—"}${r.refundAmount != null ? ` · ${fmt$(r.refundAmount)}` : ""}`;
   return (
     <a href={r.url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
-      title={`Return: ${r.state ?? r.status ?? "—"}${r.refundAmount != null ? ` · ${fmt$(r.refundAmount)}` : ""}`}
+      title={title}
       className={`inline-block rounded px-2 py-0.5 text-[10px] font-medium hover:opacity-80 ${color}`}>
       {r.escalated ? "⚠ Esc" : "Return"} ↗
     </a>
@@ -1207,10 +1218,23 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
           <div className="flex flex-wrap gap-4 text-xs">
             {order.returnCase && (
               <div><span className="text-slate-500">Return </span>
-                <a href={order.returnCase.url} target="_blank" rel="noreferrer" className="text-orange-400 hover:underline">
-                  {order.returnCase.state ?? order.returnCase.status ?? "Open"}
-                  {order.returnCase.refundAmount != null ? ` · ${fmt$(order.returnCase.refundAmount)}` : ""}
-                  {order.returnCase.escalated ? " · Escalated" : ""}
+                <a href={order.returnCase.url} target="_blank" rel="noreferrer" className={order.returnCase.escalated ? "text-amber-400 hover:underline" : "text-orange-400 hover:underline"}>
+                  {order.returnCase.escalated ? (
+                    <>
+                      Escalated · case {(order.returnCase.caseStatus ?? "unknown").replace(/_/g, " ").toLowerCase()}
+                      {order.returnCase.caseClaimAmount != null ? ` · ${fmt$(order.returnCase.caseClaimAmount)}` : ""}
+                      {order.returnCase.shippedBack
+                        ? " · shipped back"
+                        : order.returnCase.labelAvailable || order.returnCase.returnTracking
+                          ? ` · label available${order.returnCase.returnTracking ? ` — ${order.returnCase.returnTracking}` : ""}`
+                          : ""}
+                    </>
+                  ) : (
+                    <>
+                      {order.returnCase.state ?? order.returnCase.status ?? "Open"}
+                      {order.returnCase.refundAmount != null ? ` · ${fmt$(order.returnCase.refundAmount)}` : ""}
+                    </>
+                  )}
                 </a>
               </div>
             )}
@@ -1300,10 +1324,23 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
           <div className="flex flex-wrap gap-4 text-xs">
             {order.returnCase && (
               <div><span className="text-slate-500">Return </span>
-                <a href={order.returnCase.url} target="_blank" rel="noreferrer" className="text-orange-400 hover:underline">
-                  {order.returnCase.state ?? order.returnCase.status ?? "Open"}
-                  {order.returnCase.refundAmount != null ? ` · ${fmt$(order.returnCase.refundAmount)}` : ""}
-                  {order.returnCase.escalated ? " · Escalated" : ""}
+                <a href={order.returnCase.url} target="_blank" rel="noreferrer" className={order.returnCase.escalated ? "text-amber-400 hover:underline" : "text-orange-400 hover:underline"}>
+                  {order.returnCase.escalated ? (
+                    <>
+                      Escalated · case {(order.returnCase.caseStatus ?? "unknown").replace(/_/g, " ").toLowerCase()}
+                      {order.returnCase.caseClaimAmount != null ? ` · ${fmt$(order.returnCase.caseClaimAmount)}` : ""}
+                      {order.returnCase.shippedBack
+                        ? " · shipped back"
+                        : order.returnCase.labelAvailable || order.returnCase.returnTracking
+                          ? ` · label available${order.returnCase.returnTracking ? ` — ${order.returnCase.returnTracking}` : ""}`
+                          : ""}
+                    </>
+                  ) : (
+                    <>
+                      {order.returnCase.state ?? order.returnCase.status ?? "Open"}
+                      {order.returnCase.refundAmount != null ? ` · ${fmt$(order.returnCase.refundAmount)}` : ""}
+                    </>
+                  )}
                 </a>
               </div>
             )}
