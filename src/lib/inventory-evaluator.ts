@@ -27,9 +27,17 @@ export function evaluateUnitState(unit: UnitForEval, returns: ReturnForEval[], c
   };
 
   if (returns.length === 0) {
+    // INR cases are not returns: a unit with an INR case (open or resolved) never
+    // sits in needs-return. The item was kept; the INR page tracks the dispute.
+    if (cases.length > 0) {
+      if (unit.inventory_state === "to_be_returned" || unit.inventory_state === "on_hand") return pickNoReturn(closedOutcome());
+      return null;
+    }
     if (isBad && unit.inventory_state === "on_hand") return "to_be_returned";
     if (!isBad && unit.inventory_state === "to_be_returned") return "on_hand";
     return null;
+
+    function pickNoReturn(s: string): string | null { return s === unit.inventory_state ? null : s; }
   }
 
   const ret = [...returns].sort((a, b) => (b.creation_date?.getTime() ?? 0) - (a.creation_date?.getTime() ?? 0))[0];

@@ -94,13 +94,27 @@ export async function planInventoryTransitions(db: Db = prisma): Promise<Planned
   // Orphan pass: units with no return. Covers both directions the evaluator
   // can flip an orphan: bad-condition on_hand -> to_be_returned, and
   // good-condition to_be_returned (stuck with no return record) -> on_hand.
+  // INR cases are consulted here too: a unit with an INR case is never
+  // needs-return (INR cases are not returns) — it lands in the kept outcomes.
   const orphans = await db.received_units.findMany({
     where: { inventory_state: { in: ["on_hand", "to_be_returned"] } },
     select: { id: true, order_id: true, item_id: true, inventory_state: true, condition_status: true }
   });
+  // Prefetch all INR/case rows once and index by (order_id, ebay_item_id)
+  const allInrRows = await db.inr_cases.findMany({
+    where: { order_id: { not: null }, ebay_item_id: { not: null } },
+    select: { order_id: true, ebay_item_id: true, case_id: true, ebay_status: true }
+  });
+  const inrByPair = new Map<string, { case_id: string | null; ebay_status: string | null }[]>();
+  for (const c of allInrRows) {
+    const k = `${c.order_id}::${c.ebay_item_id}`;
+    if (!inrByPair.has(k)) inrByPair.set(k, []);
+    inrByPair.get(k)!.push({ case_id: c.case_id, ebay_status: c.ebay_status });
+  }
   for (const unit of orphans) {
     if (coveredUnitIds.has(unit.id)) continue;
-    const to = evaluateUnitState(unit, [], []);
+    const inrCases = inrByPair.get(`${unit.order_id}::${unit.item_id}`) ?? [];
+    const to = evaluateUnitState(unit, [], inrCases);
     if (to) {
       plan.push({
         unitId: unit.id,
@@ -108,9 +122,11 @@ export async function planInventoryTransitions(db: Db = prisma): Promise<Planned
         itemId: unit.item_id,
         from: unit.inventory_state,
         to,
-        reason: to === "to_be_returned"
-          ? "bad condition, no return filed"
-          : "good condition, no return filed (rescued from to_be_returned)"
+        reason: inrCases.length > 0
+          ? `INR case on item (${inrCases.length}) — not a return`
+          : to === "to_be_returned"
+            ? "bad condition, no return filed"
+            : "good condition, no return filed (rescued from to_be_returned)"
       });
     }
   }
@@ -150,7 +166,7 @@ export async function recomputeAllInventoryStates(): Promise<{
   await applyInventoryTransitions(plan);
   return {
     returnPass: plan.filter(t => t.reason.startsWith("return group")).length,
-    orphanPass: plan.filter(t => t.reason.startsWith("bad condition") || t.reason.startsWith("good condition")).length
+    orphanPass: plan.filter(t => !t.reason.startsWith("return group")).length
   };
 }
 
@@ -181,8 +197,10 @@ export async function reevaluateUnit(unitId: string, db: Db = prisma): Promise<s
       return_delivered_date: true
     }
   });
+  // No case_id filter: plain INR inquiries (case_id null) matter too — the
+  // evaluator treats any INR row as "not needs-return" when no return exists.
   const cases = await db.inr_cases.findMany({
-    where: { order_id: unit.order_id, ebay_item_id: unit.item_id, case_id: { not: null } },
+    where: { order_id: unit.order_id, ebay_item_id: unit.item_id },
     select: { case_id: true, ebay_status: true }
   });
 

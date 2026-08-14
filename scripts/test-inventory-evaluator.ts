@@ -21,6 +21,13 @@ check("bad condition, no return, already to_be_returned -> no change", evaluateU
 check("good condition, no return -> no change", evaluateUnitState(goodOnHand, [], []), null);
 check("good condition, no return, stuck at to_be_returned -> on_hand", evaluateUnitState({ condition_status: "good", inventory_state: "to_be_returned" }, [], []), "on_hand");
 check("bad condition, no return, already returned -> no change", evaluateUnitState({ condition_status: "cracked", inventory_state: "returned" }, [], []), null);
+// INR case present, no return — INR cases are NOT returns; unit never sits in needs-return
+check("INR case, no return, damaged in to_be_returned -> fair", evaluateUnitState({ condition_status: "damaged", inventory_state: "to_be_returned" }, [], [{ case_id: "5555", ebay_status: "CLOSED" }]), "fair");
+check("INR case, no return, cracked in to_be_returned -> parts_repair", evaluateUnitState(badTBR, [], [{ case_id: null, ebay_status: "OPEN" }]), "parts_repair");
+check("INR case, no return, good in to_be_returned -> on_hand", evaluateUnitState(good, [], [{ case_id: "5555", ebay_status: "CS_CLOSED" }]), "on_hand");
+check("INR case, no return, bad on_hand -> parts_repair (never to_be_returned)", evaluateUnitState(bad, [], [{ case_id: null, ebay_status: "OPEN" }]), "parts_repair");
+check("INR case, no return, damaged already fair -> no change", evaluateUnitState({ condition_status: "damaged", inventory_state: "fair" }, [], [{ case_id: "5555", ebay_status: "CLOSED" }]), null);
+check("INR case does not override open return lifecycle", evaluateUnitState(badTBR, [R({ ebay_state: "RETURN_REQUESTED" })], [{ case_id: null, ebay_status: "OPEN" }]), "return_filed");
 // open return
 check("open return -> return_filed (bad)", evaluateUnitState(badTBR, [R({ ebay_state: "RETURN_REQUESTED", ebay_status: "RETURN_REQUESTED" })], []), "return_filed");
 check("open return -> return_filed (good)", evaluateUnitState(good, [R({ ebay_state: "ITEM_READY_TO_SHIP", ebay_status: "READY_FOR_SHIPPING" })], []), "return_filed");
