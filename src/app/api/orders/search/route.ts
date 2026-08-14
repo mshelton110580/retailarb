@@ -481,6 +481,7 @@ export async function GET(req: Request) {
             escalatedToCase: c.escalated_to_case,
             caseId: c.case_id,
             claimAmount: c.claim_amount ? Number(c.claim_amount) : null,
+            itemId: c.ebay_item_id,
             url: `https://www.ebay.com/ItemNotReceived/${linkId}`,
           };
         })(),

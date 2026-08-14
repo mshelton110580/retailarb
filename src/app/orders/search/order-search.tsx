@@ -71,6 +71,7 @@ type InrCase = {
   escalatedToCase: boolean;
   caseId: string | null;
   claimAmount: number | null;
+  itemId: string | null;
   url: string;
 };
 
@@ -233,14 +234,21 @@ function ReturnBadge({ r }: { r: ReturnCase }) {
   );
 }
 
-function InrBadge({ c }: { c: InrCase }) {
+// eBay has no stable inquiry-view URL — link through the same per-item route the
+// working File INR chips use (eBay routes to the existing inquiry in context).
+function inrChipUrl(order: Order, c: InrCase): string {
+  const item = (c.itemId ? order.items.find(i => i.itemId === c.itemId) : undefined) ?? order.items[0];
+  return buildInrUrl(order.orderId, item);
+}
+
+function InrBadge({ c, order }: { c: InrCase; order: Order }) {
   const color = c.escalatedToCase
     ? "bg-red-900 text-red-300"
     : c.status === "CLOSED" || c.status === "CS_CLOSED"
       ? "bg-slate-700 text-slate-400"
       : "bg-yellow-900 text-yellow-300";
   return (
-    <a href={c.url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+    <a href={inrChipUrl(order, c)} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
       title={`INR: ${c.status ?? "—"}${c.claimAmount != null ? ` · ${fmt$(c.claimAmount)}` : ""}${c.escalatedToCase && c.caseId ? ` (Case ${c.caseId})` : ""}`}
       className={`inline-block rounded px-2 py-0.5 text-[10px] font-medium hover:opacity-80 ${color}`}>
       {c.escalatedToCase ? "⚠ Esc INR" : "INR"} ↗
@@ -530,8 +538,9 @@ function caseFilterKeysFor(order: Order): CaseFilter[] {
   if (order.returnCase) keys.push(isReturnClosed(order.returnCase) ? "hasClosedReturn" : "hasOpenReturn");
   if (order.inrCase) keys.push(isInrClosed(order.inrCase) ? "hasClosedInr" : "hasOpenInr");
   const s = order.shipment?.derivedStatus;
-  // Only actionable for active (non-cancelled, non-refunded) orders with unshipped/undelivered items
-  if ((s === "not_received" || s === "not_delivered") && !order.inrCase
+  // Only actionable for active (non-cancelled, non-refunded) orders with unshipped/undelivered
+  // items. An order with a return can't need an INR — the item arrived.
+  if ((s === "not_received" || s === "not_delivered") && !order.inrCase && !order.returnCase
       && order.orderStatus !== "Cancelled" && !order.hasRefund) {
     keys.push("needsInr");
   }
@@ -1033,7 +1042,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
         );
         return <span className="text-xs text-slate-600">—</span>;
       case "inrCase": {
-        if (order.inrCase) return <InrBadge c={order.inrCase} />;
+        if (order.inrCase) return <InrBadge c={order.inrCase} order={order} />;
         const inrStatus = order.shipment?.derivedStatus;
         const canFileInr = (inrStatus === "not_received" || inrStatus === "not_delivered")
           && order.orderStatus !== "Cancelled" && !order.hasRefund;
@@ -1144,7 +1153,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
         );
         return <span className="text-xs text-slate-600">—</span>;
       case "inrCase": {
-        if (order.inrCase) return <InrBadge c={order.inrCase} />;
+        if (order.inrCase) return <InrBadge c={order.inrCase} order={order} />;
         const inrStatus = order.shipment?.derivedStatus;
         const canFileInr = (inrStatus === "not_received" || inrStatus === "not_delivered")
           && order.orderStatus !== "Cancelled" && !order.hasRefund;
@@ -1240,7 +1249,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
             )}
             {order.inrCase && (
               <div><span className="text-slate-500">INR </span>
-                <a href={order.inrCase.url} target="_blank" rel="noreferrer" className="text-yellow-400 hover:underline">
+                <a href={inrChipUrl(order, order.inrCase)} target="_blank" rel="noreferrer" className="text-yellow-400 hover:underline">
                   {order.inrCase.status ?? "Open"}
                   {order.inrCase.claimAmount != null ? ` · ${fmt$(order.inrCase.claimAmount)}` : ""}
                   {order.inrCase.escalatedToCase ? ` · Case ${order.inrCase.caseId}` : ""}
@@ -1346,7 +1355,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
             )}
             {order.inrCase && (
               <div><span className="text-slate-500">INR </span>
-                <a href={order.inrCase.url} target="_blank" rel="noreferrer" className="text-yellow-400 hover:underline">
+                <a href={inrChipUrl(order, order.inrCase)} target="_blank" rel="noreferrer" className="text-yellow-400 hover:underline">
                   {order.inrCase.status ?? "Open"}
                   {order.inrCase.claimAmount != null ? ` · ${fmt$(order.inrCase.claimAmount)}` : ""}
                   {order.inrCase.escalatedToCase ? ` · Case ${order.inrCase.caseId}` : ""}
@@ -1480,7 +1489,7 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
         else counts.hasOpenInr++;
       }
       const s = o.shipment?.derivedStatus;
-      if ((s === "not_received" || s === "not_delivered") && !o.inrCase
+      if ((s === "not_received" || s === "not_delivered") && !o.inrCase && !o.returnCase
           && o.orderStatus !== "Cancelled" && !o.hasRefund) counts.needsInr++;
       if (o.hasRefund) {
         counts.anyRefund++;
