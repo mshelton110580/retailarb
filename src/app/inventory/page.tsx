@@ -84,6 +84,7 @@ export default async function InventoryPage({
   const shipments = await prisma.shipments.findMany({
     where: {
       order: {
+        superseded_by_order_id: null,
         purchase_date: {
           gte: dateRange.from,
           lte: dateRange.to,

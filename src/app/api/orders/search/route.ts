@@ -68,7 +68,10 @@ export async function GET(req: Request) {
   const shipStatusIncludes = expandPendingStatus(shipStatusIncludesRaw);
   const shipStatusExcludes = expandPendingStatus(shipStatusExcludesRaw);
 
-  const where: any = {};
+  const where: any = {
+    // Legacy composite-id duplicates tombstoned by scripts/supersede-legacy-orders.ts
+    superseded_by_order_id: null,
+  };
 
   // Date range
   if (dateFrom || dateTo) {

@@ -129,6 +129,7 @@ model orders {
   shipping_cost       Decimal? @db.Decimal(12, 2)  // eBay ShippingServiceCost at order level, immutable (may be 0 for free shipping)
   tax_amount          Decimal? @db.Decimal(12, 2)  // eBay-collected sales tax (Transaction.Taxes.TotalTaxAmount summed), updated each sync
   scrape_state        OrderScrapeState?             // Tracks order page scrape for original_total backfill
+  superseded_by_order_id String?                    // Legacy composite-id duplicate: points at its modern twin; excluded from order-facing surfaces
   scrape_attempts     Int      @default(0)
   last_scraped_at     DateTime?
   ship_to_city   String?

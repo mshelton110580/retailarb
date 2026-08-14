@@ -140,6 +140,7 @@ export default async function INRPage({
       derived_status: { in: ["late", "not_delivered", "not_received"] },
       order: {
         order_status: { not: "Cancelled" },
+        superseded_by_order_id: null,
       },
     },
     include: {
