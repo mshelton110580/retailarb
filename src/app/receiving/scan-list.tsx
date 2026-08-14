@@ -76,6 +76,7 @@ export default function ScanList({ entries }: { entries: ScanEntry[] }) {
   const [newProductName, setNewProductName] = useState<string>("");
   const [editingCondition, setEditingCondition] = useState<string | null>(null);
   const [conditionDraft, setConditionDraft] = useState<string>("");
+  const [notesDraft, setNotesDraft] = useState<string>("");
   const [conditionOptions, setConditionOptions] = useState<string[]>([]);
   const [loadingConditions, setLoadingConditions] = useState(false);
   const [savingCondition, setSavingCondition] = useState<string | null>(null);
@@ -221,9 +222,10 @@ export default function ScanList({ entries }: { entries: ScanEntry[] }) {
     }
   }
 
-  function handleEditCondition(unitId: string, currentCondition: string) {
+  function handleEditCondition(unitId: string, currentCondition: string, currentNotes: string | null) {
     setEditingCondition(unitId);
     setConditionDraft(currentCondition);
+    setNotesDraft(currentNotes ?? "");
     loadConditions();
   }
 
@@ -234,7 +236,7 @@ export default function ScanList({ entries }: { entries: ScanEntry[] }) {
       const res = await fetch(`/api/units/${unitId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ condition: conditionDraft })
+        body: JSON.stringify({ condition: conditionDraft, notes: notesDraft })
       });
       const data = await res.json();
       if (res.ok) {
@@ -276,6 +278,13 @@ export default function ScanList({ entries }: { entries: ScanEntry[] }) {
                     <option key={c} value={c}>{c.replace(/_/g, " ")}</option>
                   ))}
                 </select>
+                <input
+                  type="text"
+                  value={notesDraft}
+                  onChange={(e) => setNotesDraft(e.target.value)}
+                  placeholder="Notes (optional)"
+                  className="w-40 rounded border border-slate-700 bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-300"
+                />
                 <button
                   onClick={() => handleSaveCondition(unit.id)}
                   disabled={savingCondition === unit.id}
@@ -311,7 +320,7 @@ export default function ScanList({ entries }: { entries: ScanEntry[] }) {
           </button>
           {editingCondition !== unit.id && (
             <button
-              onClick={() => handleEditCondition(unit.id, unit.condition)}
+              onClick={() => handleEditCondition(unit.id, unit.condition, unit.notes)}
               className="rounded border border-amber-800 px-1.5 py-0.5 text-[10px] text-amber-400 hover:bg-amber-900"
               title="Edit condition"
             >

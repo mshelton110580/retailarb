@@ -1257,19 +1257,17 @@ export default function ReceivingForm() {
                                     ))
                                   )}
                                 </select>
-                                {!isGood && (
-                                  <input
-                                    type="text"
-                                    value={unit.notes}
-                                    onChange={(e) => {
-                                      const updated = [...lotUnits];
-                                      updated[unitIdx] = { ...unit, notes: e.target.value };
-                                      setLotUnits(updated);
-                                    }}
-                                    placeholder="Notes"
-                                    className="w-32 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-300"
-                                  />
-                                )}
+                                <input
+                                  type="text"
+                                  value={unit.notes}
+                                  onChange={(e) => {
+                                    const updated = [...lotUnits];
+                                    updated[unitIdx] = { ...unit, notes: e.target.value };
+                                    setLotUnits(updated);
+                                  }}
+                                  placeholder="Notes"
+                                  className="w-32 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-300"
+                                />
                               </div>
                             );
                           })}
