@@ -19,7 +19,7 @@ function isEscalated(r: ReturnForEval): boolean {
   return r.escalated || r.ebay_status === "ESCALATED" || r.ebay_state === "ESCALATED" || r.ebay_state === "RETURN_ESCALATED";
 }
 
-export function evaluateUnitState(unit: UnitForEval, returns: ReturnForEval[], cases: CaseForEval[], orderFullyRefunded = false): string | null {
+export function evaluateUnitState(unit: UnitForEval, returns: ReturnForEval[], cases: CaseForEval[], orderRefunded = false): string | null {
   const isBad = !GOOD_CONDITIONS.has(unit.condition_status?.toLowerCase() ?? "");
   const closedOutcome = () => {
     if (!isBad) return "on_hand";
@@ -29,9 +29,9 @@ export function evaluateUnitState(unit: UnitForEval, returns: ReturnForEval[], c
   if (returns.length === 0) {
     // INR cases are not returns: a unit with an INR case (open or resolved) never
     // sits in needs-return. The item was kept; the INR page tracks the dispute.
-    // Likewise a fully-refunded order: all money came back without a return, so
-    // there is nothing left to claim — never needs-return.
-    if (cases.length > 0 || orderFullyRefunded) {
+    // Likewise a refunded order (full or partial): the buyer was compensated
+    // without a return, so the unit is not a return action item.
+    if (cases.length > 0 || orderRefunded) {
       if (unit.inventory_state === "to_be_returned" || unit.inventory_state === "on_hand") return pickNoReturn(closedOutcome());
       return null;
     }
