@@ -7,6 +7,7 @@ import { saveFile } from "../lib/storage";
 import { chromium } from "playwright";
 import { placeProxyBid } from "../lib/ebay/offer";
 import { syncOrders } from "../app/api/orders/sync/route";
+import { syncReturnsAndINR } from "../app/api/sync/returns/route";
 
 const connection = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", { maxRetriesPerRequest: null });
 
@@ -20,6 +21,16 @@ const syncOrdersWorker = new Worker(
   async (job) => {
     if (ebayDisabled) return;
     await syncOrders(job.data.ebayAccountId);
+  },
+  { connection: connection as any }
+);
+
+const syncReturnsWorker = new Worker(
+  "sync_returns_job",
+  async () => {
+    if (ebayDisabled) return;
+    const result = await syncReturnsAndINR();
+    console.log(`[Worker] Returns sync complete: ${result.returns} returns, ${result.inquiries} INR, ${result.cases} cases${result.errors.length ? ` (${result.errors.length} errors)` : ""}`);
   },
   { connection: connection as any }
 );
@@ -229,8 +240,21 @@ const alertsWorker = new Worker(
 
 async function scheduleRepeatableJobs() {
   const syncQueue = new Queue("sync_orders_job", { connection: connection as any });
+  const returnsQueue = new Queue("sync_returns_job", { connection: connection as any });
   const alertsQueue = new Queue("alerts_job", { connection: connection as any });
   await syncQueue.add(
+    "sync",
+    {},
+    {
+      repeat: { every: 30 * 60 * 1000 },
+      removeOnComplete: true,
+      removeOnFail: 10
+    }
+  );
+  // Returns/INR/cases on the same 30-minute cadence as orders, so return
+  // status and inventory states never sit stale between button presses.
+  // (Runs updateInventoryStatesFromReturns at the end, same as the button.)
+  await returnsQueue.add(
     "sync",
     {},
     {
@@ -256,6 +280,9 @@ scheduleRepeatableJobs().catch((error) => {
 
 syncOrdersWorker.on("failed", (job, err) => {
   console.error("sync_orders_job failed", job?.id, err);
+});
+syncReturnsWorker.on("failed", (job, err) => {
+  console.error("sync_returns_job failed", job?.id, err);
 });
 enrichListingWorker.on("failed", (job, err) => {
   console.error("enrich_listing_job failed", job?.id, err);
