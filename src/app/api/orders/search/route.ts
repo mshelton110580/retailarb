@@ -229,7 +229,11 @@ export async function GET(req: Request) {
     status: { order_status: sortDir },
     items: { order_id: sortDir }, // proxy sort
   };
-  const orderBy = orderByMap[sortBy] ?? { purchase_date: sortDir };
+  // Always append order_id as a deterministic tiebreaker: multi-order checkouts
+  // share the exact purchase timestamp, and without a stable total order the
+  // paged fetches slice tie groups differently per query — duplicating some
+  // rows and dropping others across accumulated pages.
+  const orderBy = [orderByMap[sortBy] ?? { purchase_date: sortDir }, { order_id: sortDir }];
 
   const [orders, total] = await Promise.all([
     prisma.orders.findMany({

@@ -745,7 +745,12 @@ export default function OrderSearch({ accounts }: { accounts: Account[] }) {
         if (gen !== fetchGenRef.current) { setLoadingMore(false); return; }
         const data = await res.json();
         if (gen !== fetchGenRef.current) { setLoadingMore(false); return; }
-        setOrders(prev => [...prev, ...(data.orders ?? [])]);
+        // Dedupe by orderId across accumulated pages — duplicate rows break
+        // React list keys and render mismatched row content.
+        setOrders(prev => {
+          const seen = new Set(prev.map(o => o.orderId));
+          return [...prev, ...(data.orders ?? []).filter((o: Order) => !seen.has(o.orderId))];
+        });
         setLoadedPages(prev => prev + 1);
       } catch {
         if (gen !== fetchGenRef.current) { setLoadingMore(false); return; }
