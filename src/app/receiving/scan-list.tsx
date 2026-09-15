@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 type ReceivedUnit = {
   id: string;
@@ -63,8 +63,62 @@ type Product = {
   gtin: string | null;
 };
 
-export default function ScanList({ entries }: { entries: ScanEntry[] }) {
+export default function ScanList({
+  initialEntries,
+  totalEntries
+}: {
+  initialEntries: ScanEntry[];
+  totalEntries: number;
+}) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const [extraEntries, setExtraEntries] = useState<ScanEntry[]>([]);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [exhausted, setExhausted] = useState(false);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+  // A server refresh (new scan, deletion, range change) replaces initialEntries;
+  // drop the lazily loaded batches so the list matches the fresh data.
+  useEffect(() => {
+    setExtraEntries([]);
+    setExhausted(false);
+  }, [initialEntries]);
+
+  const entries = [...initialEntries, ...extraEntries];
+  const hasMore = !exhausted && entries.length < totalEntries;
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel || !hasMore || loadingMore) return;
+    const observer = new IntersectionObserver(
+      async (observed) => {
+        if (!observed[0].isIntersecting) return;
+        setLoadingMore(true);
+        try {
+          const params = new URLSearchParams(searchParams.toString());
+          params.set("offset", String(initialEntries.length + extraEntries.length));
+          const res = await fetch(`/api/receiving/entries?${params.toString()}`);
+          if (!res.ok) {
+            setExhausted(true);
+            return;
+          }
+          const data = await res.json();
+          if (data.entries.length === 0) {
+            setExhausted(true);
+            return;
+          }
+          setExtraEntries((prev) => [...prev, ...data.entries]);
+        } catch {
+          setExhausted(true);
+        } finally {
+          setLoadingMore(false);
+        }
+      },
+      { rootMargin: "400px" }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMore, loadingMore, searchParams, initialEntries, extraEntries.length]);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [deletingUnit, setDeletingUnit] = useState<string | null>(null);
   const [deletingOrder, setDeletingOrder] = useState<string | null>(null);
@@ -538,6 +592,11 @@ export default function ScanList({ entries }: { entries: ScanEntry[] }) {
               )}
             </div>
           ))
+        )}
+        {hasMore && (
+          <div ref={sentinelRef} className="py-3 text-center text-xs text-slate-500">
+            {loadingMore ? "Loading more…" : `Showing ${entries.length} of ${totalEntries}`}
+          </div>
         )}
       </div>
     </section>

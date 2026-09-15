@@ -20,9 +20,9 @@ function todayStr(): string {
 
 /**
  * Parse the current date range from URL search params.
- * Defaults to 90 days if nothing is set.
+ * Defaults to `defaultDays` (90 unless the page overrides) if nothing is set.
  */
-function parseDateRange(params: URLSearchParams): {
+function parseDateRange(params: URLSearchParams, defaultDays: 30 | 60 | 90): {
   from: string;
   to: string;
   activePreset: PresetDays | "custom" | null;
@@ -47,18 +47,18 @@ function parseDateRange(params: URLSearchParams): {
     return { from: fromParam, to: toParam, activePreset: "custom" };
   }
 
-  // Default: 90 days
-  return { from: daysAgo(90), to: todayStr(), activePreset: 90 };
+  // Default when no params are set
+  return { from: daysAgo(defaultDays), to: todayStr(), activePreset: defaultDays };
 }
 
-export default function DateRangeFilter() {
+export default function DateRangeFilter({ defaultDays = 90 }: { defaultDays?: 30 | 60 | 90 }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
   const { from, to, activePreset } = useMemo(
-    () => parseDateRange(searchParams),
-    [searchParams]
+    () => parseDateRange(searchParams, defaultDays),
+    [searchParams, defaultDays]
   );
 
   const updateParams = useCallback(

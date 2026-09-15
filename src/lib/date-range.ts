@@ -6,7 +6,7 @@ export function getDateRangeFromParams(params: {
   range?: string;
   from?: string;
   to?: string;
-}): { from: Date; to: Date } {
+}, defaultDays: number = 90): { from: Date; to: Date } {
   const { range, from, to } = params;
 
   // If "All Time" is selected
@@ -32,9 +32,9 @@ export function getDateRangeFromParams(params: {
     return { from: fromDate, to: toDate };
   }
 
-  // Default: 90 days
+  // Default range when no params are given (90 days unless the page overrides)
   const fromDate = new Date();
-  fromDate.setDate(fromDate.getDate() - 90);
+  fromDate.setDate(fromDate.getDate() - defaultDays);
   fromDate.setHours(0, 0, 0, 0);
   return { from: fromDate, to: new Date() };
 }
