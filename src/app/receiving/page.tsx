@@ -33,91 +33,104 @@ export default async function ReceivingPage({
     }
   });
 
-  // Fetch tracking numbers so we can map order_id -> tracking last 8 for imported items
+  // Fetch all tracking numbers with their shipment once; scan matching and the
+  // order_id -> tracking last 8 map both work off this list in memory. Doing the
+  // matching per-scan against the DB fired thousands of concurrent queries and
+  // exhausted the connection pool on wide date ranges.
   const trackingNumbers = await prisma.tracking_numbers.findMany({
-    select: { tracking_number: true, shipment: { select: { order_id: true } } }
+    include: { shipment: true }
   });
 
-  // Helper to fetch matched orders for a tracking number query
-  async function fetchMatchedOrders(
-    trackingMatches: Awaited<ReturnType<typeof prisma.tracking_numbers.findMany<{
-      include: { shipment: { include: { order: { include: { order_items: true } } } } }
-    }>>>
-  ) {
-    return Promise.all(
-      trackingMatches
-        .filter((m) => m.shipment?.order)
-        .map(async (m) => {
-          const units = await prisma.received_units.findMany({
-            where: { order_id: m.shipment!.order_id },
-            orderBy: { unit_index: "asc" },
-            include: {
-              listing: { select: { title: true } },
-              product: { select: { id: true, product_name: true } }
-            }
-          });
-          const orderItems = m.shipment!.order!.order_items;
-          const orderQty = orderItems.reduce((s, i) => s + i.qty, 0);
-          const lotSize = m.shipment!.lot_size ??
-            (m.shipment!.is_lot && orderQty > 0 ? Math.ceil(m.shipment!.scanned_units / orderQty) : null);
-          return {
-            orderId: m.shipment!.order_id,
-            shipmentId: m.shipment!.id,
-            items: orderItems.map((i) => ({
-              title: i.title,
-              itemId: i.item_id,
-              qty: i.qty,
-              price: Number(i.transaction_price).toFixed(2)
-            })),
-            checkedIn: Boolean(m.shipment!.checked_in_at),
-            expectedUnits: m.shipment!.expected_units,
-            scannedUnits: m.shipment!.scanned_units,
-            scanStatus: m.shipment!.scan_status,
-            isLot: m.shipment!.is_lot,
-            lotSize,
-            orderQty,
-            receivedUnits: units.map((u) => ({
-              id: u.id,
-              unitIndex: u.unit_index,
-              title: u.listing?.title ?? "Unknown",
-              condition: u.condition_status,
-              receivedAt: u.received_at.toISOString(),
-              notes: u.notes,
-              product: u.product ? { id: u.product.id, name: u.product.product_name } : null
-            }))
-          };
-        })
-    );
+  // Exact match first, fall back to last-8 digit suffix
+  function trackingMatchesForScan(scan: { tracking_full: string | null; tracking_last8: string }) {
+    if (scan.tracking_full) {
+      const exact = trackingNumbers.filter((tn) => tn.tracking_number === scan.tracking_full);
+      if (exact.length > 0) return exact;
+    }
+    if (scan.tracking_last8.length > 0) {
+      return trackingNumbers.filter((tn) => tn.tracking_number.endsWith(scan.tracking_last8));
+    }
+    return [];
   }
 
-  // Enrich scans — exact match first, fall back to last-8 digit suffix
-  const enrichedScans = await Promise.all(
-    scans.map(async (scan) => {
-      let trackingMatches = scan.tracking_full
-        ? await prisma.tracking_numbers.findMany({
-            where: { tracking_number: scan.tracking_full },
-            include: { shipment: { include: { order: { include: { order_items: true } } } } }
-          })
-        : [];
+  const scanMatches = scans.map((scan) => ({ scan, matches: trackingMatchesForScan(scan) }));
 
-      if (trackingMatches.length === 0 && scan.tracking_last8.length > 0) {
-        trackingMatches = await prisma.tracking_numbers.findMany({
-          where: { tracking_number: { endsWith: scan.tracking_last8 } },
-          include: { shipment: { include: { order: { include: { order_items: true } } } } }
-        });
+  // Batch-fetch orders (with items) and received units for every matched order
+  const matchedOrderIds = [
+    ...new Set(scanMatches.flatMap(({ matches }) => matches.map((m) => m.shipment.order_id)))
+  ];
+
+  const [matchedOrders, matchedUnits] = await Promise.all([
+    prisma.orders.findMany({
+      where: { order_id: { in: matchedOrderIds } },
+      include: { order_items: true }
+    }),
+    prisma.received_units.findMany({
+      where: { order_id: { in: matchedOrderIds } },
+      orderBy: { unit_index: "asc" },
+      include: {
+        listing: { select: { title: true } },
+        product: { select: { id: true, product_name: true } }
       }
-
-      return {
-        id: scan.id,
-        tracking_last8: scan.tracking_last8,
-        resolution_state: scan.resolution_state,
-        scanned_at: scan.scanned_at.toISOString(),
-        scanned_by: scan.scanner?.email ?? "Unknown",
-        notes: scan.notes,
-        matchedOrders: await fetchMatchedOrders(trackingMatches)
-      };
     })
-  );
+  ]);
+
+  const orderById = new Map(matchedOrders.map((o) => [o.order_id, o]));
+  const unitsByOrder = new Map<string, typeof matchedUnits>();
+  for (const unit of matchedUnits) {
+    if (!unit.order_id) continue;
+    const arr = unitsByOrder.get(unit.order_id) ?? [];
+    arr.push(unit);
+    unitsByOrder.set(unit.order_id, arr);
+  }
+
+  function buildMatchedOrders(matches: typeof trackingNumbers) {
+    return matches
+      .filter((m) => orderById.has(m.shipment.order_id))
+      .map((m) => {
+        const units = unitsByOrder.get(m.shipment.order_id) ?? [];
+        const orderItems = orderById.get(m.shipment.order_id)!.order_items;
+        const orderQty = orderItems.reduce((s, i) => s + i.qty, 0);
+        const lotSize = m.shipment.lot_size ??
+          (m.shipment.is_lot && orderQty > 0 ? Math.ceil(m.shipment.scanned_units / orderQty) : null);
+        return {
+          orderId: m.shipment.order_id,
+          shipmentId: m.shipment.id,
+          items: orderItems.map((i) => ({
+            title: i.title,
+            itemId: i.item_id,
+            qty: i.qty,
+            price: Number(i.transaction_price).toFixed(2)
+          })),
+          checkedIn: Boolean(m.shipment.checked_in_at),
+          expectedUnits: m.shipment.expected_units,
+          scannedUnits: m.shipment.scanned_units,
+          scanStatus: m.shipment.scan_status,
+          isLot: m.shipment.is_lot,
+          lotSize,
+          orderQty,
+          receivedUnits: units.map((u) => ({
+            id: u.id,
+            unitIndex: u.unit_index,
+            title: u.listing?.title ?? "Unknown",
+            condition: u.condition_status,
+            receivedAt: u.received_at.toISOString(),
+            notes: u.notes,
+            product: u.product ? { id: u.product.id, name: u.product.product_name } : null
+          }))
+        };
+      });
+  }
+
+  const enrichedScans = scanMatches.map(({ scan, matches }) => ({
+    id: scan.id,
+    tracking_last8: scan.tracking_last8,
+    resolution_state: scan.resolution_state,
+    scanned_at: scan.scanned_at.toISOString(),
+    scanned_by: scan.scanner?.email ?? "Unknown",
+    notes: scan.notes,
+    matchedOrders: buildMatchedOrders(matches)
+  }));
 
   // Group scans by tracking_last8
   const groupedScans = enrichedScans.reduce((groups, scan) => {
